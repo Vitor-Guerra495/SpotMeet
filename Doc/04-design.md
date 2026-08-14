@@ -2,7 +2,7 @@
 
 ## 1. Ícone e Logo
 
-![Logo do SpotMeet](Doc/imagens/design/ícones%281%29.png)
+![Logo do SpotMeet](Doc/imagens/design/ícones.png)
 
 ### 1.1. Cor da Logo
 
