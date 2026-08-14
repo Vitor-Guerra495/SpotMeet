@@ -113,21 +113,21 @@ A documentação inicial do projeto está dividida nos seguintes arquivos:
 
 | Documento | Conteúdo |
 |---|---|
-| [01 - Análise de Mercado e RNF](01-analise-mercado-rnf.md) | Avaliação de concorrentes e requisitos não funcionais |
-| [02 - Arquitetura e Tecnologias](02-arquitetura-tecnologias.md) | Arquitetura cliente-servidor, tecnologias e segurança |
-| [03 - Padrões e Qualidade](03-padroes-qualidade.md) | Nomenclatura, práticas de programação, Git e estratégia de testes |
-| [04 - Design e UI/UX](04-design.md) | Identidade visual, cores, tipografia, componentes e telas |
+| [01 - Análise de Mercado e RNF](Doc/01-analise-mercado-rnf.md) | Avaliação de concorrentes e requisitos não funcionais |
+| [02 - Arquitetura e Tecnologias](Doc/02-arquitetura-tecnologias.md) | Arquitetura cliente-servidor, tecnologias e segurança |
+| [03 - Padrões e Qualidade](Doc/03-padroes-qualidade.md) | Nomenclatura, práticas de programação, Git e estratégia de testes |
+| [04 - Design e UI/UX](Doc/04-design.md) | Identidade visual, cores, tipografia, componentes e telas |
 
 ## Estrutura da Documentação
 
 ```text
 SpotMeet/
 |-- README.md
-|-- 01-analise-mercado-rnf.md
-|-- 02-arquitetura-tecnologias.md
-|-- 03-padroes-qualidade.md
-|-- 04-design.md
 `-- Doc/
+    |-- 01-analise-mercado-rnf.md
+    |-- 02-arquitetura-tecnologias.md
+    |-- 03-padroes-qualidade.md
+    |-- 04-design.md
     `-- imagens/
         `-- design/
             |-- ícones(1).png
