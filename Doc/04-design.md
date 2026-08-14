@@ -2,7 +2,7 @@
 
 ## 1. Ícone e Logo
 
-![Logo do SpotMeet](Doc/imagens/design/ícones.png)
+![Logo do SpotMeet](imagens/design/ícones.png)
 
 ### 1.1. Cor da Logo
 
@@ -125,7 +125,7 @@ As telas abaixo seguem a ordem principal de acesso e navegação proposta para o
 
 ### Tela de Login
 
-![Tela de Login](Doc/imagens/design/Tela_Login.jpeg)
+![Tela de Login](imagens/design/Tela_Login.jpeg)
 
 A tela de login é o primeiro contato do usuário com o aplicativo e permite o acesso à conta por meio de e-mail e senha.
 
@@ -135,25 +135,25 @@ O texto de apoio apresentado na tela é:
 
 ### Agenda
 
-![Tela de Agenda](Doc/imagens/design/Tela_Agenda.jpg)
+![Tela de Agenda](imagens/design/Tela_Agenda.jpg)
 
 A tela de agenda apresenta reuniões, filtros, status e ações relacionadas a pautas e atas.
 
 ### Calendário
 
-![Tela de Calendário](Doc/imagens/design/Tela_Calendario.jpg)
+![Tela de Calendário](imagens/design/Tela_Calendario.jpg)
 
 A tela de calendário apresenta os compromissos e reuniões agendadas em uma visão organizada.
 
 ### Atas
 
-![Tela de Atas](Doc/imagens/design/Tela_Atas.jpg)
+![Tela de Atas](imagens/design/Tela_Atas.jpg)
 
 A tela de atas centraliza o histórico de registros e decisões vinculados às reuniões.
 
 ### Ajustes
 
-![Tela de Ajustes](Doc/imagens/design/Tela_Ajuste.jpg)
+![Tela de Ajustes](imagens/design/Tela_Ajuste.jpg)
 
 A tela de ajustes permite gerenciar dados do perfil e preferências de aparência do aplicativo.
 
