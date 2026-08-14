@@ -1,6 +1,6 @@
 # SpotMeet
 
-![Logo do SpotMeet](Doc/imagens/design/ícones%281%29.png)
+![Logo do SpotMeet](Doc/imagens/design/ícones.png)
 
 O **SpotMeet** é um aplicativo mobile voltado ao gerenciamento e à organização de reuniões. A proposta é centralizar informações importantes do fluxo de uma reunião, facilitando o acompanhamento de agenda, pautas, participantes, registros e atas em uma interface simples e organizada.
 
