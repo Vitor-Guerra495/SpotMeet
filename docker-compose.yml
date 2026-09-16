@@ -1,0 +1,21 @@
+# Banco de dados local para desenvolvimento do SpotMeet.
+# Opcional: quem tem PostgreSQL instalado nativamente (Windows) nao precisa usar.
+# Subir:    docker compose up -d
+# Parar:    docker compose down
+# Remover tudo, inclusive dados: docker compose down -v
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: spotmeet-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-spotmeet_db}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-12345}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - spotmeet_pgdata:/var/lib/postgresql
+
+volumes:
+  spotmeet_pgdata:

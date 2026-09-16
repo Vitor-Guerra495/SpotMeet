@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "SpotMeetApp",
+    "slug": "SpotMeetApp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1E1E2E"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.SpotMeetApp",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "O SpotMeet procura o servidor da aplicação na sua rede Wi-Fi."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#901ECE",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.SpotMeetApp"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "360b936d-4272-4edc-b8da-ef46ee6fd867"
+      }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
+    ]
+  }
+}
