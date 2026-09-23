@@ -117,6 +117,10 @@ public class MembershipService {
                     "Organizacao com a chave '" + cleanKey + "' nao encontrada. Verifique a chave e tente novamente."
                 ));
 
+        if (!org.isApproved()) {
+            throw new IllegalStateException("Esta organizacao ainda nao foi aprovada pelo administrador do sistema ou esta bloqueada.");
+        }
+
         User requester = findUserByEmail(requesterEmail);
 
         if (org.getOwner() != null && org.getOwner().getId().equals(requester.getId())) {
@@ -167,6 +171,10 @@ public class MembershipService {
             throw new IllegalStateException(
                 "Apenas solicitacoes PENDENTES podem ser aprovadas. Status atual: " + request.getStatus()
             );
+        }
+
+        if (!request.getOrganization().isApproved()) {
+            throw new IllegalStateException("Esta organizacao ainda nao foi aprovada pelo administrador do sistema ou esta bloqueada.");
         }
 
         User leader = findUserByEmail(leaderEmail);
