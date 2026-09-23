@@ -117,26 +117,94 @@ A documentação inicial do projeto está dividida nos seguintes arquivos:
 | [02 - Arquitetura e Tecnologias](Doc/02-arquitetura-tecnologias.md) | Arquitetura cliente-servidor, tecnologias e segurança |
 | [03 - Padrões e Qualidade](Doc/03-padroes-qualidade.md) | Nomenclatura, práticas de programação, Git e estratégia de testes |
 | [04 - Design e UI/UX](Doc/04-design.md) | Identidade visual, cores, tipografia, componentes e telas |
+| [05 - Documento de Requisitos do Incremento 1](Doc/05-documento-requisitos.md) | Requisitos funcionais e não funcionais, diagramas de casos de uso, classes, relacional e sequência, dicionário de dados e testes |
 
 ## Estrutura da Documentação
 
 ```text
 SpotMeet/
 |-- README.md
+|-- backend/              # servidor (Java 21 + Spring Boot)
+|-- SpotMeetApp/          # aplicativo (React Native + Expo)
 `-- Doc/
     |-- 01-analise-mercado-rnf.md
     |-- 02-arquitetura-tecnologias.md
     |-- 03-padroes-qualidade.md
     |-- 04-design.md
+    |-- 05-documento-requisitos.md
     `-- imagens/
-        `-- design/
-            |-- ícones(1).png
-            |-- Tela_Login.jpeg
-            |-- Tela_Agenda.jpg
-            |-- Tela_Calendario.jpg
-            |-- Tela_Atas.jpg
-            `-- Tela_Ajuste.jpg
+        |-- design/
+        |   |-- ícones.png
+        |   |-- Tela_Login.jpeg
+        |   |-- Tela_Agenda.jpg
+        |   |-- Tela_Calendario.jpg
+        |   |-- Tela_Atas.jpg
+        |   `-- Tela_Ajuste.jpg
+        `-- diagramas/    # diagramas do Incremento 1
 ```
+
+## Como Executar
+
+### Pré-requisitos
+
+| Ferramenta | Versão |
+|---|---|
+| JDK | 21 |
+| PostgreSQL | 18 |
+| Node.js | 20 ou superior |
+| Expo Go | Instalado no celular (Android ou iOS) |
+
+O computador e o celular precisam estar na mesma rede Wi-Fi.
+
+### 1. Banco de dados
+
+Criar o banco `spotmeet_db` no PostgreSQL:
+
+```bash
+psql -U postgres -c "CREATE DATABASE spotmeet_db;"
+```
+
+As tabelas são criadas automaticamente na primeira execução do servidor.
+
+### 2. Configuração do servidor
+
+Copiar `backend/.env.example` para `backend/.env` e preencher:
+
+- `DB_PASSWORD`: senha do usuário `postgres`;
+- `JWT_SECRET`: chave em Base64 com pelo menos 32 bytes. No Linux ou macOS: `openssl rand -base64 48`. No PowerShell:
+
+```powershell
+$b = New-Object byte[] 48; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)
+```
+
+- `MAIL_USERNAME` e `MAIL_PASSWORD`: conta do Gmail e senha de app, usadas para enviar os códigos de verificação. Se ficarem vazios, o código é exibido na própria tela do aplicativo.
+
+### 3. Servidor
+
+```bash
+cd backend
+./mvnw spring-boot:run        # Windows: mvnw.cmd spring-boot:run
+```
+
+O servidor inicia na porta 8080. Na primeira execução é criada a conta do administrador do sistema:
+
+| E-mail | Senha |
+|---|---|
+| `sysadmin@spotmeet.com` | `Admin@123` |
+
+### 4. Aplicativo
+
+Em outro terminal:
+
+```bash
+cd SpotMeetApp
+npm install
+npx expo start
+```
+
+Ler o QR code exibido com o Expo Go (Android) ou com a câmera (iOS). O aplicativo localiza o servidor automaticamente pelo endereço do computador. Se não localizar, informar o IP do computador na opção "Servidor" da tela de login.
+
+No Windows, liberar no firewall as portas 8080 (servidor) e 8081 (Expo) para que o celular consiga acessar o computador.
 
 ## Padrões de Desenvolvimento
 

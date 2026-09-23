@@ -1,12 +1,14 @@
-# Documentacao da etapa AP: so existe aqui para eu analisar/verificar contra o codigo.
-# O original mora no repositorio oficial (github.com/Vitor-Guerra495/SpotMeet) e nao deve
-# ser mexido por aqui nem duplicado no repositorio de testes.
-Docs/
-
-# Segredos e configuracao local
+# Segredos e configuração local
 .env
 .env.*
 !.env.example
+
+# Arquivos de uso interno da equipe, fora do repositório
+DOCUMENTACAO.md
+docker-compose.yml
+documentacao_auditoria_seguranca_academica.md
+guia_inicializacao_ambiente.pdf
+Docs/
 
 # Ferramentas locais
 .claude/
@@ -14,17 +16,28 @@ Docs/
 .vscode/
 .idea/
 
-# Build e dependencias
+# Build e dependências
 backend/target/
 SpotMeetApp/node_modules/
 SpotMeetApp/.expo/
+SpotMeetApp/android/
+SpotMeetApp/ios/
+SpotMeetApp/dist/
+
+# Chaves de assinatura
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Builds gerados localmente
+*.apk
+*.aab
+*:Zone.Identifier
 
 # Sistema
 .DS_Store
 Thumbs.db
 *.log
-
-# Builds gerados localmente (76MB+, geram no Android Studio quando precisar)
-*.apk
-*.apk:Zone.Identifier
-*.aab
