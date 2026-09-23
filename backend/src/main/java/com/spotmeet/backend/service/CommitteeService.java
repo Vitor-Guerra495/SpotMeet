@@ -90,6 +90,10 @@ public class CommitteeService {
         Organization org = organizationRepo.findById(organizationId)
                 .orElseThrow(() -> new IllegalArgumentException("Organizacao nao encontrada."));
 
+        if (!org.isApproved()) {
+            throw new IllegalStateException("Esta organizacao ainda nao foi aprovada pelo administrador do sistema ou esta bloqueada.");
+        }
+
         Committee committee = new Committee();
         committee.setName(cleanName);
         committee.setDescription(dto.getDescription() != null ? dto.getDescription().trim() : null);
