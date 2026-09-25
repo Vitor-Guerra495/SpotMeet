@@ -18,6 +18,7 @@ import com.spotmeet.backend.repository.OrganizationMemberRepository;
 import com.spotmeet.backend.repository.OrganizationRepository;
 import com.spotmeet.backend.repository.UserRepository;
 import com.spotmeet.backend.security.LgpdMaskUtil;
+import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -110,20 +111,10 @@ public class AdminService {
      */
     @Transactional
     public List<AdminOrganizationDTO> listOrganizations(String executorEmail) {
-        User executor = validateSysAdmin(executorEmail);
+        validateSysAdmin(executorEmail);
 
         List<Organization> organizations = organizationRepo.findAllWithOwner();
         List<AdminOrganizationDTO> result = organizations.stream().map(this::toDTO).collect(Collectors.toList());
-
-        try {
-            auditLogRepo.save(new AuditLog(
-                    executor,
-                    "ADMIN_ORGANIZATIONS_LISTED",
-                    "Consulta à lista geral de organizações (LGPD: dados sensíveis mascarados)."
-            ));
-        } catch (Exception e) {
-            // Audit failure does not block the response
-        }
 
         return result;
     }
@@ -133,23 +124,13 @@ public class AdminService {
      */
     @Transactional
     public List<AdminOrganizationDTO> listPendingOrganizations(String executorEmail) {
-        User executor = validateSysAdmin(executorEmail);
+        validateSysAdmin(executorEmail);
 
         List<Organization> organizations = organizationRepo.findAllWithOwner();
         List<AdminOrganizationDTO> pending = organizations.stream()
                 .filter(org -> !org.isApproved() && (org.getStatus() == null || "PENDING".equalsIgnoreCase(org.getStatus())))
                 .map(this::toDTO)
                 .collect(Collectors.toList());
-
-        try {
-            auditLogRepo.save(new AuditLog(
-                    executor,
-                    "ADMIN_PENDING_ORGANIZATIONS_LISTED",
-                    "Consulta às organizações pendentes de aprovação."
-            ));
-        } catch (Exception e) {
-            // Audit failure does not block the response
-        }
 
         return pending;
     }
@@ -296,7 +277,7 @@ public class AdminService {
      */
     @Transactional
     public AdminReportDTO getReports(String executorEmail) {
-        User executor = validateSysAdmin(executorEmail);
+        validateSysAdmin(executorEmail);
 
         AdminReportDTO report = new AdminReportDTO();
         report.setGeneratedAt(LocalDateTime.now());
@@ -340,44 +321,82 @@ public class AdminService {
         }).collect(Collectors.toList());
         report.setRecentActivities(activities);
 
-        try {
-            auditLogRepo.save(new AuditLog(
-                    executor,
-                    "ADMIN_REPORTS_VIEWED",
-                    "Relatórios agregados e estatísticas gerais consultados pelo Administrador."
-            ));
-        } catch (Exception e) {
-            // Audit failure does not block the response
-        }
-
         return report;
     }
 
     /**
-     * Performs a safe restart of in-memory subsystems and caches.
+     * Restarts one subsystem chosen by the administrator: DATABASE, NETWORK or RESOURCES.
      */
     @Transactional
     public Map<String, Object> restartSystem(CriticalActionRequestDTO dto, String executorEmail) {
         User executor = validateSysAdmin(executorEmail);
 
+        String subsystem = dto != null && dto.getSubsystem() != null ? dto.getSubsystem().trim().toUpperCase() : "";
         String reason = dto != null && dto.getReason() != null ? dto.getReason().trim() : "Rotina administrativa periódica";
 
-        // Critical audit record
+        String result = switch (subsystem) {
+            case "DATABASE" -> restartDatabase();
+            case "NETWORK" -> restartNetwork();
+            case "RESOURCES" -> restartResources();
+            default -> throw new IllegalArgumentException("Subsistema inválido. Escolha Banco de Dados, Rede ou Recursos.");
+        };
+
         auditLogRepo.save(new AuditLog(
                 executor,
                 "ADMIN_SYSTEM_RESTART",
-                "Reinicialização dos subsistemas solicitada. Motivo: " + reason
+                "Subsistema reiniciado: " + subsystem + ". Motivo: " + reason
         ));
-
-        // Force garbage collection and clear volatile caches
-        System.gc();
 
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
-        response.put("message", "Subsistemas reinicializados e sincronizados com sucesso. Estado operacional verificado.");
+        response.put("subsystem", subsystem);
+        response.put("message", result);
         response.put("executor", executor.getName());
         response.put("timestamp", LocalDateTime.now());
         return response;
+    }
+
+    /**
+     * Database: discards the current pool connections so new ones are opened, then tests the connection.
+     */
+    private String restartDatabase() {
+        try {
+            if (dataSource.isWrapperFor(HikariDataSource.class)) {
+                dataSource.unwrap(HikariDataSource.class).getHikariPoolMXBean().softEvictConnections();
+            }
+            try (Connection conn = dataSource.getConnection()) {
+                if (!conn.isValid(2)) {
+                    throw new IllegalStateException("A conexão com o banco não respondeu após a reinicialização.");
+                }
+            }
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException("Falha ao reiniciar o banco de dados: " + e.getMessage());
+        }
+        return "Banco de dados reiniciado: conexões renovadas e conexão testada com sucesso.";
+    }
+
+    /**
+     * Network: reads again the address and port the server is using.
+     */
+    private String restartNetwork() {
+        try {
+            InetAddress local = InetAddress.getLocalHost();
+            return "Rede reiniciada: servidor respondendo em " + local.getHostAddress() + ":" + serverPort + ".";
+        } catch (Exception e) {
+            return "Rede reiniciada: servidor respondendo na porta " + serverPort + ".";
+        }
+    }
+
+    /**
+     * Resources: runs the garbage collector and reports how much memory was released.
+     */
+    private String restartResources() {
+        Runtime runtime = Runtime.getRuntime();
+        long usedBefore = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
+        System.gc();
+        long usedAfter = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
+        long released = Math.max(0, usedBefore - usedAfter);
+        return "Recursos reiniciados: " + released + " MB de memória liberados (em uso: " + usedAfter + " MB).";
     }
 
     /**

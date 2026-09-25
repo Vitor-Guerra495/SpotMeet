@@ -14,6 +14,15 @@ import { showAlert } from '../../utils/alerts';
 const RESTART_CONFIRMATION_CODE = 'RESTART_SYSTEM';
 const RESET_CONFIRMATION_CODE = 'CONFIRM_FULL_RESET';
 
+type Subsystem = 'DATABASE' | 'NETWORK' | 'RESOURCES';
+
+// Subsystems that can be restarted individually
+const SUBSYSTEMS: { key: Subsystem; label: string; description: string; icon: any }[] = [
+  { key: 'DATABASE', label: 'Banco de Dados', description: 'Renova as conexões com o PostgreSQL', icon: 'server-outline' },
+  { key: 'NETWORK', label: 'Rede', description: 'Confere novamente o endereço e a porta do servidor', icon: 'wifi-outline' },
+  { key: 'RESOURCES', label: 'Recursos', description: 'Libera a memória não utilizada', icon: 'hardware-chip-outline' },
+];
+
 export default function AdminControlsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const { token, role, name, email, signOut } = useAuth();
@@ -23,12 +32,23 @@ export default function AdminControlsScreen({ navigation }: any) {
   const [resetModal, setResetModal] = useState(false);
 
   const [restartReason, setRestartReason] = useState('');
+  const [restartSubsystem, setRestartSubsystem] = useState<Subsystem | null>(null);
   const [resetConfirmationCode, setResetConfirmationCode] = useState('');
   const [resetReason, setResetReason] = useState('');
 
   const isAdmin = role === 'ADMIN' || role === 'SYSADMIN';
 
+  const closeRestartModal = () => {
+    setRestartModal(false);
+    setRestartSubsystem(null);
+    setRestartReason('');
+  };
+
   const handleRestart = async () => {
+    if (!restartSubsystem) {
+      showAlert('Atenção', 'Escolha o subsistema que será reiniciado.');
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/system/restart`, {
@@ -39,6 +59,7 @@ export default function AdminControlsScreen({ navigation }: any) {
         },
         body: JSON.stringify({
           confirmation: RESTART_CONFIRMATION_CODE,
+          subsystem: restartSubsystem,
           reason: restartReason.trim() || 'Reinicialização rotineira de subsistemas',
         }),
       });
@@ -49,9 +70,8 @@ export default function AdminControlsScreen({ navigation }: any) {
       }
 
       const data = await res.json();
-      setRestartModal(false);
-      setRestartReason('');
-      showAlert('Sucesso', data.message || 'Subsistemas reinicializados.');
+      closeRestartModal();
+      showAlert('Sucesso', data.message || 'Subsistema reiniciado.');
     } catch (err: any) {
       showAlert('Erro', err.message || 'Não foi possível executar a reinicialização.');
     } finally {
@@ -174,7 +194,7 @@ export default function AdminControlsScreen({ navigation }: any) {
         <View style={styles.securityAlert}>
           <Ionicons name="information-circle-outline" size={13} color="#8A8A8A" style={{ marginRight: 6 }} />
           <Text style={styles.securityAlertText}>
-            Todas as ações críticas são auditadas e assinadas digitalmente com registro de IP e timestamp imutável no banco de dados.
+            Todas as ações críticas são registradas na auditoria com o administrador responsável e a data e hora.
           </Text>
         </View>
 
@@ -185,9 +205,9 @@ export default function AdminControlsScreen({ navigation }: any) {
           <View style={styles.actionHeader}>
             <Ionicons name="refresh-circle" size={24} color="#4FC3F7" />
             <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={styles.actionTitle}>Reiniciar Subsistemas & Cache</Text>
+              <Text style={styles.actionTitle}>Reiniciar Subsistemas</Text>
               <Text style={styles.actionDescription}>
-                Limpa memória volátil, reavalia pools de conexões e sincroniza provedores sem interromper a disponibilidade dos usuários.
+                Reinicia um subsistema por vez (Banco de Dados, Rede ou Recursos) sem interromper o acesso dos usuários.
               </Text>
             </View>
           </View>
@@ -196,7 +216,7 @@ export default function AdminControlsScreen({ navigation }: any) {
             onPress={() => setRestartModal(true)}
           >
             <Ionicons name="reload" size={16} color="#FFF" style={{ marginRight: 6 }} />
-            <Text style={styles.btnActionText}>Executar Reinicialização Segura</Text>
+            <Text style={styles.btnActionText}>Escolher Subsistema</Text>
           </TouchableOpacity>
         </View>
 
@@ -238,8 +258,31 @@ export default function AdminControlsScreen({ navigation }: any) {
               <Text style={styles.modalTitle}>Confirmar Reinicialização</Text>
             </View>
             <Text style={styles.modalText}>
-              Esta operação sincronizará os subsistemas e liberará memória da JVM. Deseja prosseguir?
+              Escolha o subsistema que será reiniciado:
             </Text>
+
+            {SUBSYSTEMS.map((item) => {
+              const selected = restartSubsystem === item.key;
+              return (
+                <TouchableOpacity
+                  key={item.key}
+                  style={[styles.subsystemOption, selected && styles.subsystemOptionSelected]}
+                  onPress={() => setRestartSubsystem(item.key)}
+                  disabled={loading}
+                >
+                  <Ionicons name={item.icon} size={20} color={selected ? '#4FC3F7' : '#AAA'} />
+                  <View style={{ marginLeft: 10, flex: 1 }}>
+                    <Text style={styles.subsystemOptionTitle}>{item.label}</Text>
+                    <Text style={styles.subsystemOptionDescription}>{item.description}</Text>
+                  </View>
+                  <Ionicons
+                    name={selected ? 'radio-button-on' : 'radio-button-off'}
+                    size={18}
+                    color={selected ? '#4FC3F7' : '#666'}
+                  />
+                </TouchableOpacity>
+              );
+            })}
 
             <TextInput
               style={styles.modalInput}
@@ -252,15 +295,15 @@ export default function AdminControlsScreen({ navigation }: any) {
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={styles.btnModalCancel}
-                onPress={() => setRestartModal(false)}
+                onPress={closeRestartModal}
                 disabled={loading}
               >
                 <Text style={styles.btnModalCancelText}>Cancelar</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.btnModalConfirmRestart}
+                style={[styles.btnModalConfirmRestart, !restartSubsystem && styles.btnDisabled]}
                 onPress={handleRestart}
-                disabled={loading}
+                disabled={loading || !restartSubsystem}
               >
                 {loading ? (
                   <ActivityIndicator color="#FFF" size="small" />
@@ -624,5 +667,29 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.4,
+  },
+  subsystemOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2A2A2A',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#444',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+  },
+  subsystemOptionSelected: {
+    borderColor: '#4FC3F7',
+  },
+  subsystemOptionTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  subsystemOptionDescription: {
+    fontSize: 11,
+    color: '#AAA',
+    marginTop: 2,
   },
 });
