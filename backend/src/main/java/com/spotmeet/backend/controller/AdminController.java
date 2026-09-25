@@ -191,6 +191,8 @@ public class AdminController {
         try {
             Map<String, Object> result = adminService.restartSystem(dto, authentication.getName());
             return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
         } catch (SecurityException e) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
         } catch (Exception e) {

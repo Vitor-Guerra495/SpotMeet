@@ -12,6 +12,9 @@ public class CriticalActionRequestDTO {
 
     private String reason;
 
+    // Subsystem to restart: DATABASE, NETWORK or RESOURCES (used only by the restart action)
+    private String subsystem;
+
     public CriticalActionRequestDTO() {}
 
     public CriticalActionRequestDTO(String confirmation, String reason) {
@@ -23,4 +26,7 @@ public class CriticalActionRequestDTO {
     public void setConfirmation(String confirmation) { this.confirmation = confirmation; }
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }
+
+    public String getSubsystem() { return subsystem; }
+    public void setSubsystem(String subsystem) { this.subsystem = subsystem; }
 }
