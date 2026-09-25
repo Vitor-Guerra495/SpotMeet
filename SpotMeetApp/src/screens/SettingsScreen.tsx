@@ -11,7 +11,6 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme, ThemeType } from '../context/ThemeContext';
 import { API_BASE_URL } from '../config/api';
 import { showAlert } from '../utils/alerts';
-import { useLiveSync } from '../hooks/useLiveSync';
 import { notifySync } from '../utils/syncBus';
 import { checkPasswordRules } from '../utils/validators';
 
@@ -113,17 +112,6 @@ export default function SettingsScreen({ navigation }: any) {
         }
       };
     }, [loadProfile, setTheme])
-  );
-
-  // Real-time profile synchronization
-  useLiveSync(
-    useCallback(() => {
-      loadProfile();
-    }, [loadProfile]),
-    {
-      intervalMs: 8000,
-      eventTypes: ['PROFILE_MUTATED', 'VISIBILITY_RESTORED'],
-    }
   );
 
   // Saves name, bio, status and theme changes

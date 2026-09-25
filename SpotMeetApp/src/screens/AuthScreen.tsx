@@ -305,6 +305,10 @@ export default function AuthScreen({ route, navigation }: any) {
       });
 
       const data = await res.json();
+      if (!res.ok) {
+        showAlert('Erro', data.message || 'Não foi possível solicitar a recuperação. Verifique o e-mail informado.');
+        return;
+      }
       if (data.devCode) {
         setRecoveryToken(data.devCode);
       }
