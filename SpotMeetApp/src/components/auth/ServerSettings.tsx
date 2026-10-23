@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@react-native-vector-icons/ionicons';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuthCompactLayout } from './AuthInputFocus';
 import {
   getApiHost,
   getApiPort,
@@ -20,6 +21,7 @@ import { clearDiscoveryCache, discoverBackendHost } from '../../config/discovery
  */
 export default function ServerSettings() {
   const { colors } = useTheme();
+  const compact = useAuthCompactLayout();
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState(getUserApiHost() ?? '');
   const [, forceRender] = useState(0);
@@ -61,10 +63,11 @@ export default function ServerSettings() {
   };
 
   return (
-    <View style={styles.container}>
-      <TouchableOpacity style={styles.summaryRow} onPress={() => setExpanded((v) => !v)}>
+    <View style={[styles.container, { marginTop: compact ? 8 : 18 }]}>
+      <TouchableOpacity style={styles.summaryRow} onPress={() => setExpanded((v) => !v)}
+        accessibilityRole="button" accessibilityLabel="Configurar servidor" accessibilityState={{ expanded }}>
         <Ionicons name="server-outline" size={14} color={colors.subtext} />
-        <Text style={[styles.summaryText, { color: colors.subtext }]}>
+        <Text numberOfLines={1} style={[styles.summaryText, { color: colors.subtext }]}>
           Servidor: {currentHost}:{getApiPort()} ({sourceLabel})
         </Text>
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.subtext} />
@@ -89,7 +92,10 @@ export default function ServerSettings() {
                   <Text style={[styles.buttonSecondaryText, { color: colors.primary }]}>Procurando... {scanProgress}</Text>
                 </View>
               ) : (
-                <Text style={[styles.buttonSecondaryText, { color: colors.primary }]}>Procurar na rede</Text>
+                <>
+                  <Ionicons name="search-outline" size={18} color={colors.primary} />
+                  <Text style={[styles.buttonSecondaryText, { color: colors.primary }]}>Procurar na rede</Text>
+                </>
               )}
             </TouchableOpacity>
           )}
@@ -105,12 +111,14 @@ export default function ServerSettings() {
           />
           <View style={styles.actions}>
             <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={save}>
+              <Ionicons name="save-outline" size={18} color="#FFFFFF" />
               <Text style={styles.buttonText}>Salvar</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.button, styles.buttonSecondary, { borderColor: colors.border }]}
               onPress={reset}
             >
+              <Ionicons name="refresh-outline" size={18} color={colors.text} />
               <Text style={[styles.buttonSecondaryText, { color: colors.text }]}>Automático</Text>
             </TouchableOpacity>
           </View>
@@ -125,6 +133,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
   },
   summaryRow: {
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -132,6 +141,7 @@ const styles = StyleSheet.create({
   },
   summaryText: {
     fontSize: 12,
+    flexShrink: 1,
   },
   editor: {
     marginTop: 10,
@@ -154,6 +164,10 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   button: {
+    minHeight: 48,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
     flex: 1,
     paddingVertical: 10,
     borderRadius: 10,

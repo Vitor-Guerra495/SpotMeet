@@ -1,0 +1,173 @@
+@startuml Sequencia_RF04
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF04 (Avaliar Solicitação de Acesso)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 230
+autonumber "<b>0"
+
+actor "Usuário\n(dono ou vice da organização)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MembershipController" as MCtrl
+participant ":MembershipService" as MSvc
+participant ":OrganizationInvitationController" as ICtrl
+participant ":OrganizationInvitationService" as ISvc
+participant ":OrganizationRepository" as OrgRepo
+participant ":UserRepository" as UserRepo
+participant ":OrganizationMemberRepository" as MemRepo
+participant ":AccessRequestRepository" as ReqRepo
+participant ":OrganizationInvitationRepository" as InvRepo
+participant ":AuditLogRepository" as AuditRepo
+end box
+
+group Consultar as solicitações pendentes
+  U -> Tela : tocar na organização em "Minhas" e no atalho "Solicitações"
+  note right of Tela : ao abrir a organização, o aplicativo já consulta\nos pedidos (somente para dono e vice)
+  Tela -> Filtro : GET /api/organizations/{organizationId}/access-requests
+  Filtro -> MCtrl : listPendingRequests(organizationId, authentication)
+  activate MCtrl
+  MCtrl -> MSvc : listPendingRequests(organizationId, email)
+  activate MSvc
+  MSvc -> UserRepo : findByEmail(email)
+  UserRepo --> MSvc : User
+  MSvc -> MSvc : requireOwnerOrViceOwner(executor, organizationId)
+  note right of MSvc : consulta a organização (findById) e o cargo do\nexecutor (findByUserIdAndOrganizationId)
+  alt o executor é dono ou vice
+    MSvc -> ReqRepo : findByOrganizationIdAndStatus(organizationId, PENDING)
+    ReqRepo --> MSvc : List<AccessRequest>
+    MSvc --> MCtrl : List<AccessRequestResponseDTO>
+    MCtrl --> Tela : 200 List<AccessRequestResponseDTO>
+    Tela --> U : seção "ENTRADA NA ORGANIZAÇÃO" com nome, e-mail e os botões "Aprovar" e "Rejeitar"
+  else o executor tem outro cargo
+    MSvc --> MCtrl : SecurityException
+    MCtrl --> Tela : 403 {mensagem}
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Aprovar uma solicitação
+  U -> Tela : tocar em "Aprovar" no pedido
+  Tela -> Filtro : POST /api/access-requests/{requestId}/approve
+  Filtro -> MCtrl : approveAccess(requestId, authentication)
+  activate MCtrl
+  MCtrl -> MSvc : approveAccess(requestId, leaderEmail)
+  activate MSvc
+  note right of MSvc : transação; descobre a organização do pedido\n(findOrganizationIdById) antes de bloqueá-la
+  MSvc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> MSvc : Organization (linha bloqueada)
+  MSvc -> ReqRepo : findById(requestId)
+  ReqRepo --> MSvc : AccessRequest
+  MSvc -> UserRepo : findByEmail(leaderEmail)
+  UserRepo --> MSvc : User
+  MSvc -> MSvc : requireOwnerOrViceOwner(leader, organizationId)
+  alt dono ou vice, pedido PENDING e organização aprovada
+    MSvc -> ReqRepo : save(AccessRequest APPROVED)
+    MSvc -> MemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+    MemRepo --> MSvc : boolean
+    opt o solicitante ainda não é membro
+      MSvc -> MemRepo : save(OrganizationMember MEMBER)
+    end
+    MSvc -> AuditRepo : save(AuditLog ACCESS_APPROVED)
+    MSvc --> MCtrl : AccessRequestResponseDTO
+    MCtrl --> Tela : 200 AccessRequestResponseDTO (APPROVED)
+    Tela --> U : aviso "Integrante aprovado." e listas atualizadas
+  else sem permissão, pedido inexistente, pedido não pendente ou organização não aprovada
+    MSvc --> MCtrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    MCtrl --> Tela : 403, 404 ou 409 {mensagem em texto}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Rejeitar uma solicitação
+  U -> Tela : tocar em "Rejeitar" no pedido
+  Tela -> Filtro : POST /api/access-requests/{requestId}/reject
+  Filtro -> MCtrl : rejectAccess(requestId, authentication)
+  activate MCtrl
+  MCtrl -> MSvc : rejectAccess(requestId, leaderEmail)
+  activate MSvc
+  note right of MSvc : transação; mesmas buscas, bloqueio da organização e\nverificação de liderança da aprovação
+  alt dono ou vice e pedido PENDING
+    MSvc -> ReqRepo : save(AccessRequest REJECTED)
+    MSvc -> AuditRepo : save(AuditLog ACCESS_REJECTED)
+    MSvc --> MCtrl : AccessRequestResponseDTO
+    MCtrl --> Tela : 200 AccessRequestResponseDTO (REJECTED)
+    Tela --> U : aviso "Solicitação rejeitada." e listas atualizadas
+  else sem permissão, pedido inexistente ou não pendente
+    MSvc --> MCtrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    MCtrl --> Tela : 403, 404 ou 409 {mensagem em texto}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Buscar a pessoa a convidar
+  U -> Tela : tocar em "Convidar para organização" e digitar o nome ou o e-mail (3 letras ou mais)
+  note right of Tela : o aplicativo espera 400 ms sem novas teclas
+  Tela -> Filtro : GET /api/organizations/{organizationId}/invitations/candidates?q=termo
+  Filtro -> ICtrl : candidates(organizationId, q, authentication)
+  activate ICtrl
+  ICtrl -> ISvc : findCandidates(organizationId, q, executorEmail)
+  activate ISvc
+  note right of ISvc : leitura; carrega o executor verificado (findByEmail); termo com menos de 3 caracteres devolve lista vazia sem consultar
+  ISvc -> OrgRepo : findById(organizationId)
+  OrgRepo --> ISvc : Organization
+  ISvc -> ISvc : requireOwnerOrVice(executor, organization)
+  alt dono ou vice e organização aprovada
+    ISvc -> UserRepo : findInviteCandidates(termo escapado, organizationId, donoId, agora, 10 itens)
+    UserRepo --> ISvc : List<User> (sem dono, membros e convite vigente)
+    ISvc --> ICtrl : List<InviteCandidateDTO>
+    ICtrl --> Tela : 200 [{name, email}]
+    Tela --> U : cartões com nome e e-mail; tocar em um preenche o campo com o e-mail
+  else sem permissão, organização inexistente ou não aprovada
+    ISvc --> ICtrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    ICtrl --> Tela : 403, 404 ou 409 {mensagem}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate ISvc
+  deactivate ICtrl
+end
+
+group Convidar uma pessoa para a organização
+  U -> Tela : escolher a pessoa na lista (ou digitar o e-mail completo) e tocar em "Enviar convite"
+  note right of Tela : o aplicativo confere o formato do e-mail antes de enviar
+  Tela -> Filtro : POST /api/organizations/{organizationId}/invitations (OrganizationInvitationRequestDTO)
+  Filtro -> ICtrl : invite(organizationId, dto, authentication)
+  activate ICtrl
+  ICtrl -> ISvc : invite(organizationId, dto, executorEmail)
+  activate ISvc
+  note right of ISvc : transação; carrega o executor verificado (findByEmail)
+  ISvc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> ISvc : Organization (linha bloqueada)
+  ISvc -> ISvc : requireOwnerOrVice(executor, organization)
+  ISvc -> UserRepo : findByEmail(emailConvidado)
+  UserRepo --> ISvc : Optional<User> (verificado)
+  ISvc -> MemRepo : existsByUserIdAndOrganizationId(convidadoId, organizationId)
+  MemRepo --> ISvc : boolean
+  ISvc -> InvRepo : findByOrganizationIdAndUserId(organizationId, convidadoId)
+  InvRepo --> ISvc : Optional<OrganizationInvitation>
+  alt dono ou vice, organização aprovada, convidado verificado e fora da organização, sem convite vigente
+    ISvc -> InvRepo : save(OrganizationInvitation PENDING, expiresAt = agora + 24 h)
+    ISvc -> AuditRepo : save(AuditLog ORGANIZATION_INVITATION_SENT)
+    ISvc --> ICtrl : OrganizationInvitationResponseDTO
+    ICtrl --> Tela : 201 OrganizationInvitationResponseDTO
+    Tela --> U : aviso "Convite enviado. A pessoa tem 24 horas para aceitar ou recusar."
+  else sem permissão, organização ou convidado inexistente, organização não aprovada ou convite vigente
+    ISvc --> ICtrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    ICtrl --> Tela : 403, 404 ou 409 {mensagem}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate ISvc
+  deactivate ICtrl
+end
+@enduml

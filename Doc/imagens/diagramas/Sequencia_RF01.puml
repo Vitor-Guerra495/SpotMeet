@@ -1,0 +1,127 @@
+@startuml Sequencia_RF01
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF01 (Cadastrar Usuário)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AuthScreen" as Tela
+participant ":AuthContext" as Ctx
+end box
+box "API (backend)" #F6FFF4
+participant ":AuthController" as Ctrl
+participant ":UserService" as Svc
+participant ":AuthenticationAttempts" as Att
+participant ":UserRepository" as Repo
+participant ":BCryptPasswordEncoder" as Enc
+participant ":EmailService" as Mail
+participant ":EmailDeliveryService" as Deliv
+participant ":AuditLogRepository" as AuditRepo
+participant ":JwtUtil" as Jwt
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Cadastrar a conta
+  U -> Tela : preencher "Nome completo", "E-mail" e "Senha" e tocar em "Criar Conta"
+  note right of Tela : handleRegister confere os campos antes de enviar:\nnome de 2 a 100 caracteres, e-mail válido e senha com\n6 ou mais caracteres, maiúscula, minúscula e número
+  Tela -> Ctrl : POST /api/auth/register (RegisterRequestDTO)
+  activate Ctrl
+  note over Ctrl, Svc : Bean Validation (@Valid) recusa dados fora das regras antes do método:\n:GlobalExceptionHandler responde 400 {message, errors}
+  Ctrl -> Svc : registerUser(dto)
+  activate Svc
+  note right of Svc : transação
+  Svc -> Repo : findByEmailForUpdate(emailNormalizado)
+  Repo --> Svc : Optional<User>
+  alt já existe conta com o e-mail verificado
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Tela : 409 {success: false, message}
+    Tela --> U : diálogo "Conta Já Cadastrada" com o botão "Fazer Login"
+  else e-mail novo ou conta ainda não verificada
+    Svc -> Enc : encode(senha)
+    Enc --> Svc : hash BCrypt
+    Svc -> Svc : generateCode(hashAnterior)
+    Svc -> Enc : encode(código de 6 dígitos)
+    Enc --> Svc : hash BCrypt
+    Svc -> Repo : save(User)
+    Svc -> Mail : sendVerificationEmail(email, nome, código, validade)
+    note right of Mail : registra o envio para depois do commit
+    Svc -> AuditRepo : save(AuditLog USER_REGISTERED)
+    Svc --> Ctrl : CodeDeliveryResultDTO
+    deactivate Svc
+    Mail ->> Deliv : sendEmail(destinatário, assunto, texto, código, validade) após o commit
+    Ctrl --> Tela : 201 {success, message, email, name, emailVerified: false}
+    Tela --> U : aviso "Código enviado" e formulário "Confirme seu e-mail"
+  end
+  deactivate Ctrl
+end
+
+group Confirmar o e-mail com o código
+  U -> Tela : digitar o código de 6 dígitos (envio automático) ou tocar em "Confirmar e Ativar Conta"
+  Tela -> Ctrl : POST /api/auth/verify-email (VerifyEmailDTO)
+  activate Ctrl
+  Ctrl -> Svc : verifyEmail(dto)
+  activate Svc
+  Svc -> Att : verify(EMAIL_VERIFICATION, email, conferência do código)
+  activate Att
+  Att -> Svc : conferência do código
+  Svc -> Repo : findByEmailForUpdate(email)
+  Repo --> Svc : Optional<User>
+  Svc -> Enc : matches(código, verification_token)
+  Enc --> Svc : boolean
+  Att --> Svc : User, IllegalArgumentException ou TooManyAttemptsException
+  deactivate Att
+  alt código correto e dentro da validade
+    Svc -> Repo : save(User com email_verified = true e código apagado)
+    Svc -> AuditRepo : save(AuditLog ACCOUNT_VERIFIED)
+    Svc --> Ctrl : User
+    deactivate Svc
+    Ctrl -> Ctrl : createSession(user, issuedAt)
+    Ctrl -> Jwt : generateToken(email, role, issuedAt)
+    Jwt --> Ctrl : token JWT
+    Ctrl --> Tela : 200 {success, message, token, role, name, email, userId, emailVerified: true}
+    Tela -> Ctx : signIn(AuthSession)
+    Tela --> U : abre a área principal (sessão iniciada como no RF02)
+  else código incorreto, inexistente ou expirado
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Tela : 400 {success: false, message}
+    Tela --> U : exibe a mensagem abaixo do campo do código
+  else 10 falhas em 15 minutos para o mesmo e-mail
+    Svc --> Ctrl : TooManyAttemptsException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 429 {error: TOO_MANY_ATTEMPTS, retryAfterSeconds}
+    Tela --> U : exibe "Muitas tentativas. Aguarde e tente novamente em alguns minutos."
+  end
+  deactivate Ctrl
+end
+
+group Reenviar o código
+  U -> Tela : tocar em "Reenviar código por E-mail"
+  Tela -> Ctrl : POST /api/auth/resend-verification (ResendVerificationDTO)
+  activate Ctrl
+  Ctrl -> Svc : resendVerification(dto)
+  activate Svc
+  Svc -> Repo : findByEmailForUpdate(email)
+  Repo --> Svc : Optional<User>
+  Svc -> Svc : generateCode(hashAnterior)
+  Svc -> Enc : encode(código de 6 dígitos)
+  Enc --> Svc : hash BCrypt
+  opt a conta existe e ainda não foi verificada
+    Svc -> Repo : save(User com novo código e nova validade)
+    Svc -> Mail : sendVerificationEmail(email, nome, código, validade)
+    Svc -> AuditRepo : save(AuditLog VERIFICATION_RESENT)
+  end
+  Svc --> Ctrl : CodeDeliveryResultDTO
+  deactivate Svc
+  opt e-mail agendado (conta pendente)
+    Mail ->> Deliv : sendEmail(destinatário, assunto, texto, código, validade) após o commit
+  end
+  Ctrl --> Tela : 200 {success: true, message} (igual para qualquer e-mail)
+  deactivate Ctrl
+  Tela --> U : aviso "Código enviado" e botão "Reenviar código em 60s"
+end
+@enduml

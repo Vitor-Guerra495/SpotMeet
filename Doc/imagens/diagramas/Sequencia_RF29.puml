@@ -1,0 +1,71 @@
+@startuml Sequencia_RF29
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF29 (Convidar Integrantes para a Reunião)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingForm" as Form
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":CommitteeController" as ComCtrl
+participant ":CommitteeService" as ComSvc
+participant ":MeetingController" as Ctrl
+participant ":MeetingService" as Svc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Escolher os convidados no formulário
+  U -> Form : abrir "Agendar reunião" ou "Editar reunião" (ou trocar a comissão)
+  Form -> Filtro : GET /api/committees/{committeeId}/members
+  Filtro -> ComCtrl : listActiveMembers(committeeId, auth)
+  ComCtrl -> ComSvc : listActiveMembers(committeeId, email)
+  ComSvc -> CmRepo : findByCommitteeIdAndStatus(committeeId, ACTIVE)
+  CmRepo --> ComSvc : List<CommitteeMember>
+  ComSvc --> ComCtrl : List<CommitteeMemberResponseDTO>
+  ComCtrl --> Form : 200 List<CommitteeMemberResponseDTO>
+  Form --> U : "CONVIDADOS (n de m)" com todos marcados e o presidente fixo, com a etiqueta "Presidente"
+  U -> Form : marcar ou desmarcar integrantes
+end
+
+group Gravar os convidados (no envio do formulário, RF25 ou RF26)
+  Form -> Filtro : POST /api/committees/{committeeId}/meetings ou PUT /api/meetings/{meetingId}\n(invitedUserIds no MeetingRequestDTO)
+  Filtro -> Ctrl : createMeeting(...) ou updateMeeting(...)
+  Ctrl -> Svc : createMeeting(...) ou updateMeeting(...)
+  activate Svc
+  Svc -> Svc : resolveInvitees(committeeId, president, invitedUserIds)
+  Svc -> CmRepo : findByCommitteeIdAndStatus(committeeId, ACTIVE)
+  CmRepo --> Svc : integrantes ativos
+  alt invitedUserIds ausente
+    note right of Svc : todos os integrantes ativos são convidados
+  else todos os ids são de integrantes ativos
+    note right of Svc : convidados = ids informados + o presidente
+  else algum id não é de integrante ativo
+    Svc --> Ctrl : IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Form : 409 "Só integrantes ativos da comissão podem ser convidados."
+  end
+  alt agendamento (RF25)
+    Svc -> PartRepo : saveAll(um MeetingParticipant por convidado)
+    note right of PartRepo : response = PENDING; o presidente já entra como ACCEPTED
+  else edição (RF26)
+    Svc -> Svc : syncInvitees(meeting, invitees)
+    Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
+    PartRepo --> Svc : participantes atuais
+    Svc -> PartRepo : deleteAll(quem saiu da lista)
+    Svc -> PartRepo : saveAll(novos convidados com response = PENDING)
+    note right of Svc : quem continua convidado mantém a resposta e o comentário
+  end
+  Svc --> Ctrl : MeetingResponseDTO (totalInvited, totalAccepted, totalDeclined, totalPending)
+  deactivate Svc
+  Ctrl --> Form : 201 ou 200 MeetingResponseDTO
+end
+@enduml

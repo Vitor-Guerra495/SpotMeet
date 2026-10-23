@@ -1,0 +1,374 @@
+[
+  {
+    "label": "simple address",
+    "input": "ana@example.com",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "short address",
+    "input": "a@b.co",
+    "normalized": "a@b.co",
+    "valid": true
+  },
+  {
+    "label": "subdomain",
+    "input": "ana@mail.example.com.br",
+    "normalized": "ana@mail.example.com.br",
+    "valid": true
+  },
+  {
+    "label": "dot in local part",
+    "input": "ana.silva@example.com",
+    "normalized": "ana.silva@example.com",
+    "valid": true
+  },
+  {
+    "label": "plus alias",
+    "input": "ana+spot@example.com",
+    "normalized": "ana+spot@example.com",
+    "valid": true
+  },
+  {
+    "label": "underscore in local part",
+    "input": "ana_silva@example.com",
+    "normalized": "ana_silva@example.com",
+    "valid": true
+  },
+  {
+    "label": "percent in local part",
+    "input": "ana%spot@example.com",
+    "normalized": "ana%spot@example.com",
+    "valid": true
+  },
+  {
+    "label": "hyphen in local part",
+    "input": "ana-silva@example.com",
+    "normalized": "ana-silva@example.com",
+    "valid": true
+  },
+  {
+    "label": "hyphen inside domain label",
+    "input": "ana@mail-server.example.com",
+    "normalized": "ana@mail-server.example.com",
+    "valid": true
+  },
+  {
+    "label": "numeric domain label",
+    "input": "ana@123.example.com",
+    "normalized": "ana@123.example.com",
+    "valid": true
+  },
+  {
+    "label": "one character domain label",
+    "input": "ana@a.example.com",
+    "normalized": "ana@a.example.com",
+    "valid": true
+  },
+  {
+    "label": "uppercase address",
+    "input": "ANA@EXAMPLE.COM",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "outer spaces",
+    "input": "  ana@example.com  ",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "outer tabs",
+    "input": " \tana@example.com\t ",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "zero width character at start",
+    "input": "​ana@example.com",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "zero width character at end",
+    "input": "ana@example.com​",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "invisible character inside address",
+    "input": "ana‍@example.com",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "word joiner and byte order mark",
+    "input": "⁠ANA@EXAMPLE.COM﻿",
+    "normalized": "ana@example.com",
+    "valid": true
+  },
+  {
+    "label": "missing domain dot",
+    "input": "teste@gmail",
+    "normalized": "teste@gmail",
+    "valid": false
+  },
+  {
+    "label": "mistyped domain",
+    "input": "jdjrjrjej@gma8k",
+    "normalized": "jdjrjrjej@gma8k",
+    "valid": false
+  },
+  {
+    "label": "consecutive local dots",
+    "input": "a..b@example.com",
+    "normalized": "a..b@example.com",
+    "valid": false
+  },
+  {
+    "label": "leading local dot",
+    "input": ".ana@example.com",
+    "normalized": ".ana@example.com",
+    "valid": false
+  },
+  {
+    "label": "trailing local dot",
+    "input": "ana.@example.com",
+    "normalized": "ana.@example.com",
+    "valid": false
+  },
+  {
+    "label": "underscore in domain",
+    "input": "ana@dom_x.com",
+    "normalized": "ana@dom_x.com",
+    "valid": false
+  },
+  {
+    "label": "one character suffix",
+    "input": "ana@example.c",
+    "normalized": "ana@example.c",
+    "valid": false
+  },
+  {
+    "label": "empty address",
+    "input": "",
+    "normalized": "",
+    "valid": false
+  },
+  {
+    "label": "spaces only",
+    "input": "   ",
+    "normalized": "",
+    "valid": false
+  },
+  {
+    "label": "missing at sign",
+    "input": "ana.example.com",
+    "normalized": "ana.example.com",
+    "valid": false
+  },
+  {
+    "label": "missing local part",
+    "input": "@example.com",
+    "normalized": "@example.com",
+    "valid": false
+  },
+  {
+    "label": "missing domain",
+    "input": "ana@",
+    "normalized": "ana@",
+    "valid": false
+  },
+  {
+    "label": "two at signs",
+    "input": "ana@@example.com",
+    "normalized": "ana@@example.com",
+    "valid": false
+  },
+  {
+    "label": "space in local part",
+    "input": "ana silva@example.com",
+    "normalized": "ana silva@example.com",
+    "valid": false
+  },
+  {
+    "label": "space in domain",
+    "input": "ana@exam ple.com",
+    "normalized": "ana@exam ple.com",
+    "valid": false
+  },
+  {
+    "label": "consecutive domain dots",
+    "input": "ana@example..com",
+    "normalized": "ana@example..com",
+    "valid": false
+  },
+  {
+    "label": "leading domain dot",
+    "input": "ana@.example.com",
+    "normalized": "ana@.example.com",
+    "valid": false
+  },
+  {
+    "label": "trailing domain dot",
+    "input": "ana@example.com.",
+    "normalized": "ana@example.com.",
+    "valid": false
+  },
+  {
+    "label": "numeric suffix",
+    "input": "ana@example.123",
+    "normalized": "ana@example.123",
+    "valid": false
+  },
+  {
+    "label": "leading domain hyphen",
+    "input": "ana@-example.com",
+    "normalized": "ana@-example.com",
+    "valid": false
+  },
+  {
+    "label": "trailing domain hyphen",
+    "input": "ana@example-.com",
+    "normalized": "ana@example-.com",
+    "valid": false
+  },
+  {
+    "label": "leading subdomain hyphen",
+    "input": "ana@-mail.example.com",
+    "normalized": "ana@-mail.example.com",
+    "valid": false
+  },
+  {
+    "label": "trailing subdomain hyphen",
+    "input": "ana@mail-.example.com",
+    "normalized": "ana@mail-.example.com",
+    "valid": false
+  },
+  {
+    "label": "hyphen only label",
+    "input": "ana@-.example.com",
+    "normalized": "ana@-.example.com",
+    "valid": false
+  },
+  {
+    "label": "two adjacent separators",
+    "input": "ana++spot@example.com",
+    "normalized": "ana++spot@example.com",
+    "valid": false
+  },
+  {
+    "label": "unicode local part",
+    "input": "aná@example.com",
+    "normalized": "aná@example.com",
+    "valid": false
+  },
+  {
+    "label": "unicode domain",
+    "input": "ana@exámple.com",
+    "normalized": "ana@exámple.com",
+    "valid": false
+  },
+  {
+    "label": "quoted local part",
+    "input": "\"ana\"@example.com",
+    "normalized": "\"ana\"@example.com",
+    "valid": false
+  },
+  {
+    "label": "SQL payload",
+    "input": "ana' OR '1'='1@example.com",
+    "normalized": "ana' or '1'='1@example.com",
+    "valid": false
+  },
+  {
+    "label": "HTML payload",
+    "input": "<script>alert(1)</script>@example.com",
+    "normalized": "<script>alert(1)</script>@example.com",
+    "valid": false
+  },
+  {
+    "label": "header injection",
+    "input": "ana@example.com\r\nBcc:other@example.com",
+    "normalized": "ana@example.com\r\nbcc:other@example.com",
+    "valid": false
+  },
+  {
+    "label": "embedded null",
+    "input": "ana\u0000@example.com",
+    "normalized": "ana\u0000@example.com",
+    "valid": false
+  },
+  {
+    "label": "embedded newline",
+    "input": "ana\n@example.com",
+    "normalized": "ana\n@example.com",
+    "valid": false
+  },
+  {
+    "label": "URL instead of address",
+    "input": "https://example.com",
+    "normalized": "https://example.com",
+    "valid": false
+  },
+  {
+    "label": "mail link instead of address",
+    "input": "mailto:ana@example.com",
+    "normalized": "mailto:ana@example.com",
+    "valid": false
+  },
+  {
+    "label": "64 character local part",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+    "valid": true
+  },
+  {
+    "label": "65 character local part",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+    "valid": false
+  },
+  {
+    "label": "63 character domain label",
+    "input": "ana@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+    "normalized": "ana@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+    "valid": true
+  },
+  {
+    "label": "64 character domain label",
+    "input": "ana@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+    "normalized": "ana@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+    "valid": false
+  },
+  {
+    "label": "63 character suffix",
+    "input": "ana@example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "ana@example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "label": "64 character suffix",
+    "input": "ana@example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "ana@example.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  },
+  {
+    "label": "255 character address",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "valid": true
+  },
+  {
+    "label": "256 character address",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "valid": false
+  },
+  {
+    "label": "oversized domain",
+    "input": "ana@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.com",
+    "normalized": "ana@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.com",
+    "valid": false
+  }
+]

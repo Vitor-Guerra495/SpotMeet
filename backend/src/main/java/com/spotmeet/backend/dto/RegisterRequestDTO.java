@@ -3,6 +3,7 @@ package com.spotmeet.backend.dto;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 /**
  * Registration DTO. Prevents sensitive fields (role, organization)
@@ -11,10 +12,11 @@ import jakarta.validation.constraints.Pattern;
 public class RegisterRequestDTO {
 
     @NotBlank(message = "Nome é obrigatório.")
+    @Size(min = 2, max = 100, message = "O nome deve ter entre 2 e 100 caracteres.")
     private String name;
 
     @NotBlank(message = "E-mail é obrigatório.")
-    @Email(message = "Formato de e-mail inválido.")
+    @Email(regexp = ValidationPatterns.EMAIL, message = "Formato de e-mail inválido.")
     private String email;
 
     /**
@@ -31,7 +33,7 @@ public class RegisterRequestDTO {
     public RegisterRequestDTO() {}
 
     public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
+    public void setName(String name) { this.name = name == null ? null : name.replaceAll(ValidationPatterns.NAME_WHITESPACE, ""); }
 
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }

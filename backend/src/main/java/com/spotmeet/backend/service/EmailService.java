@@ -3,34 +3,28 @@ package com.spotmeet.backend.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.time.LocalDateTime;
 
 /**
- * Transactional e-mail service (account verification and recovery).
- * Uses JavaMailSender with a resilient fallback to local logging.
+ * Queues account e-mails only after their transaction commits.
  */
 @Service
 public class EmailService {
 
     private static final Logger log = LoggerFactory.getLogger(EmailService.class);
 
-    @Autowired(required = false)
-    private JavaMailSender mailSender;
-
-    @Value("${spring.mail.username:}")
-    private String sender;
-
-    @Value("${spring.mail.password:}")
-    private String smtpPassword;
+    @Autowired
+    private EmailDeliveryService deliveryService;
 
     /**
      * Sends the e-mail with the registration confirmation code.
-     * @return true if delivered through real SMTP, false on local fallback.
      */
-    public boolean sendVerificationEmail(String recipient, String name, String code) {
+    public void sendVerificationEmail(String recipient, String name, String code, LocalDateTime expiresAt) {
         String subject = "SpotMeet - Confirmação de Cadastro";
         String content = "Olá " + (name != null && !name.isBlank() ? name : "Usuário") + ",\n\n"
                 + "Seja bem-vindo(a) ao SpotMeet! Para ativar sua conta, utilize o código de validação abaixo:\n\n"
@@ -42,14 +36,13 @@ public class EmailService {
                 + "Atenciosamente,\n"
                 + "Equipe de Segurança SpotMeet";
 
-        return sendEmailSafely(recipient, subject, content, code);
+        sendAfterCommit(recipient, subject, content, code, expiresAt);
     }
 
     /**
      * Sends the e-mail with the temporary password recovery token.
-     * @return true if delivered through real SMTP, false on local fallback.
      */
-    public boolean sendPasswordRecoveryEmail(String recipient, String name, String recoveryToken) {
+    public void sendPasswordRecoveryEmail(String recipient, String name, String recoveryToken, LocalDateTime expiresAt) {
         String subject = "SpotMeet - Recuperação de Senha";
         String content = "Olá " + (name != null && !name.isBlank() ? name : "Usuário") + ",\n\n"
                 + "Recebemos uma solicitação para redefinir a senha da sua conta SpotMeet.\n"
@@ -62,13 +55,13 @@ public class EmailService {
                 + "Atenciosamente,\n"
                 + "Equipe de Segurança SpotMeet";
 
-        return sendEmailSafely(recipient, subject, content, recoveryToken);
+        sendAfterCommit(recipient, subject, content, recoveryToken, expiresAt);
     }
 
     /**
      * Sends the authorization code to the current e-mail (step 1 of the LGPD e-mail change).
      */
-    public boolean sendCurrentEmailChangeCode(String recipient, String name, String code) {
+    public void sendCurrentEmailChangeCode(String recipient, String name, String code, LocalDateTime expiresAt) {
         String subject = "SpotMeet - Autorização de Alteração de E-mail (LGPD)";
         String content = "Olá " + (name != null && !name.isBlank() ? name : "Usuário") + ",\n\n"
                 + "Recebemos uma solicitação para alterar o e-mail cadastrado na sua conta SpotMeet.\n"
@@ -81,13 +74,13 @@ public class EmailService {
                 + "Atenciosamente,\n"
                 + "Equipe de Segurança & Privacidade SpotMeet";
 
-        return sendEmailSafely(recipient, subject, content, code);
+        sendAfterCommit(recipient, subject, content, code, expiresAt);
     }
 
     /**
      * Sends the validation code to the new e-mail (step 2 of the LGPD e-mail change).
      */
-    public boolean sendNewEmailConfirmationCode(String recipient, String name, String code) {
+    public void sendNewEmailConfirmationCode(String recipient, String name, String code, LocalDateTime expiresAt) {
         String subject = "SpotMeet - Validação do Novo Endereço de E-mail";
         String content = "Olá " + (name != null && !name.isBlank() ? name : "Usuário") + ",\n\n"
                 + "Você solicitou vincular este endereço de e-mail à sua conta SpotMeet.\n"
@@ -100,44 +93,44 @@ public class EmailService {
                 + "Atenciosamente,\n"
                 + "Equipe de Segurança & Privacidade SpotMeet";
 
-        return sendEmailSafely(recipient, subject, content, code);
+        sendAfterCommit(recipient, subject, content, code, expiresAt);
     }
 
-    /**
-     * Sends the e-mail through SMTP with failure handling and a development log fallback.
-     */
-    private boolean sendEmailSafely(String recipient, String subject, String content, String code) {
-        log.info("[SpotMeet-Email] Tentando envio para: {} | Assunto: {}", recipient, subject);
+    public void sendPasswordChangedEmail(String recipient) {
+        String subject = "SpotMeet - Senha alterada";
+        String content = "Olá,\n\n"
+                + "A senha da sua conta SpotMeet foi alterada. As sessões anteriores foram invalidadas.\n\n"
+                + "Se você não reconhece esta alteração, utilize a recuperação de senha no aplicativo para proteger sua conta.\n"
+                + "O SpotMeet nunca solicita sua senha ou códigos de verificação por e-mail.\n\n"
+                + "Equipe SpotMeet";
+        afterCommit(() -> deliveryService.sendPasswordChangedEmail(recipient, subject, content),
+                "Fila de e-mails indisponível. O aviso de alteração de senha não foi agendado.");
+    }
 
-        boolean hasSmtpCredentials = sender != null && !sender.isBlank()
-                && smtpPassword != null && !smtpPassword.isBlank();
+    private void sendAfterCommit(String recipient, String subject, String content, String code, LocalDateTime expiresAt) {
+        afterCommit(() -> deliveryService.sendEmail(recipient, subject, content, code, expiresAt),
+                "Fila de e-mails indisponível. Será necessário solicitar um novo código.");
+    }
 
-        if (mailSender != null && hasSmtpCredentials) {
+    private void afterCommit(Runnable send, String rejectionMessage) {
+        Runnable dispatch = () -> {
             try {
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom(sender);
-                message.setTo(recipient);
-                message.setSubject(subject);
-                message.setText(content);
-                mailSender.send(message);
-                log.info("[SpotMeet-Email] E-mail SMTP entregue com sucesso para {}", recipient);
-                return true;
-            } catch (Exception e) {
-                log.warn("[SpotMeet-Email] Falha no envio SMTP real ({}). Ativando modo fallback local.", e.getMessage());
+                send.run();
+            } catch (TaskRejectedException exception) {
+                log.warn(rejectionMessage);
             }
-        } else {
-            log.info("[SpotMeet-Email] Credenciais SMTP (SPRING_MAIL_USERNAME / SPRING_MAIL_PASSWORD) não preenchidas no application.properties. Ativando modo local/desenvolvimento.");
-        }
+        };
 
-        // Fallback for development and automated tests without SMTP
-        log.info("\n"
-                + "=================================================================\n"
-                + " [SPOTMEET EMAIL EMULADO - MODO DESENVOLVIMENTO / FALLBACK LOCAL] \n"
-                + " Para:        " + recipient + "\n"
-                + " Assunto:     " + subject + "\n"
-                + " Código OTP:  >>> " + code + " <<<\n"
-                + " Conteúdo:    \n" + content + "\n"
-                + "=================================================================");
-        return false;
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    dispatch.run();
+                }
+            });
+        } else {
+            dispatch.run();
+        }
     }
 }

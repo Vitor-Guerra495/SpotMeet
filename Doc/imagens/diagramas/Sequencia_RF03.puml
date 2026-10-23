@@ -1,0 +1,160 @@
+@startuml Sequencia_RF03
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF03 (Solicitar Acesso à Organização)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MembershipController" as MCtrl
+participant ":MembershipService" as MSvc
+participant ":OrganizationInvitationController" as ICtrl
+participant ":OrganizationInvitationService" as ISvc
+participant ":OrganizationRepository" as OrgRepo
+participant ":UserRepository" as UserRepo
+participant ":OrganizationMemberRepository" as MemRepo
+participant ":AccessRequestRepository" as ReqRepo
+participant ":OrganizationInvitationRepository" as InvRepo
+participant ":AuditLogRepository" as AuditRepo
+end box
+
+group Conferir a organização pela chave
+  U -> Tela : abrir a aba "Entrar" e digitar a "Chave da organização"
+  note right of Tela : com a chave em formato válido e 500 ms sem novas teclas
+  Tela -> Filtro : GET /api/organizations/preview?accessKey=#chave
+  Filtro -> MCtrl : previewOrganization(accessKey, authentication)
+  activate MCtrl
+  MCtrl -> MSvc : previewByKey(chave)
+  activate MSvc
+  note right of MSvc : leitura; as mesmas conferências do pedido, sem bloquear a organização
+  MSvc -> OrgRepo : findIdsByAccessKeyIgnoreCase(chave, espaços)
+  OrgRepo --> MSvc : List<Long>
+  alt organização aprovada com a chave
+    MSvc -> OrgRepo : findById(organizationId)
+    OrgRepo --> MSvc : Organization
+    MSvc --> MCtrl : OrganizationPreviewDTO
+    MCtrl --> Tela : 200 OrganizationPreviewDTO (name, accessKey, ownerName)
+    Tela --> U : cartão com o nome e "Responsável: {dono}"
+  else chave vazia ou inexistente, chave duplicada ou organização não aprovada
+    MSvc --> MCtrl : IllegalArgumentException ou IllegalStateException
+    MCtrl --> Tela : 404 ou 409 {message}
+    Tela --> U : exibe a mensagem abaixo do campo
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Solicitar acesso pela chave
+  U -> Tela : tocar em "Solicitar acesso" com a chave digitada na aba "Entrar"
+  note right of Tela : o campo traz o # fixo; validateAccessKey exige de 2 a 50\nletras, números, "_" ou "-" antes de enviar
+  Tela -> Filtro : POST /api/access-requests?accessKey=#chave
+  Filtro -> MCtrl : requestAccess(body, accessKey, authentication)
+  activate MCtrl
+  note right of MCtrl : normaliza a chave (ValidationPatterns.normalizeOrganizationValue);\nchave vazia responde 400 {message}
+  MCtrl -> MSvc : requestAccess(email, chave)
+  activate MSvc
+  note right of MSvc : transação
+  MSvc -> OrgRepo : findIdsByAccessKeyIgnoreCase(chave, espaços)
+  OrgRepo --> MSvc : List<Long>
+  alt nenhuma organização com a chave
+    MSvc --> MCtrl : IllegalArgumentException
+    MCtrl --> Tela : 404 {message}
+    Tela --> U : exibe a mensagem abaixo do campo
+  else duas ou mais organizações com a chave
+    MSvc --> MCtrl : IllegalStateException
+    MCtrl --> Tela : 409 {message}
+    Tela --> U : exibe a mensagem abaixo do campo
+  else uma organização
+    MSvc -> OrgRepo : findByIdForUpdate(organizationId)
+    OrgRepo --> MSvc : Organization (linha bloqueada)
+    MSvc -> UserRepo : findByEmail(email)
+    UserRepo --> MSvc : User
+    MSvc -> MemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+    MemRepo --> MSvc : boolean
+    MSvc -> ReqRepo : findByUserIdAndOrganizationId(userId, organizationId)
+    ReqRepo --> MSvc : List<AccessRequest>
+    alt organização aprovada, usuário não é dono nem membro e sem pedido pendente
+      MSvc -> ReqRepo : save(AccessRequest PENDING, requestedAt)
+      MSvc -> AuditRepo : save(AuditLog ACCESS_REQUESTED)
+      MSvc --> MCtrl : AccessRequestResponseDTO
+      MCtrl --> Tela : 201 AccessRequestResponseDTO
+      Tela --> U : aviso "Solicitação enviada. Aguarde a aprovação dos responsáveis." e campo limpo
+    else organização não aprovada ou bloqueada, usuário é dono ou já é membro, ou pedido já pendente
+      MSvc --> MCtrl : IllegalStateException
+      MCtrl --> Tela : 409 {message}
+      Tela --> U : exibe a mensagem abaixo do campo
+    end
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Consultar os convites recebidos
+  U -> Tela : tocar em "Ver convites" na aba "Minhas"
+  Tela -> Filtro : GET /api/organization-invitations/mine
+  Filtro -> ICtrl : listMine(authentication)
+  ICtrl -> ISvc : listMine(email)
+  ISvc -> UserRepo : findByEmail(email)
+  UserRepo --> ISvc : Optional<User>
+  ISvc -> InvRepo : findPendingForRecipient(userId, PENDING, agora)
+  InvRepo --> ISvc : List<OrganizationInvitation>
+  ISvc --> ICtrl : List<OrganizationInvitationResponseDTO>
+  ICtrl --> Tela : 200 List<OrganizationInvitationResponseDTO>
+  Tela --> U : lista "CONVITES DE ORGANIZAÇÃO" com nome, quem convidou e "Válido até"
+end
+
+group Responder um convite
+  U -> Tela : tocar em "Aceitar" ou "Recusar" no convite
+  Tela -> Filtro : POST /api/organization-invitations/{invitationId}/respond (RespondOrganizationInvitationDTO)
+  Filtro -> ICtrl : respond(invitationId, dto, authentication)
+  activate ICtrl
+  ICtrl -> ISvc : respond(invitationId, accept, email)
+  activate ISvc
+  note right of ISvc : transação
+  ISvc -> UserRepo : findByEmail(email)
+  UserRepo --> ISvc : Optional<User>
+  ISvc -> InvRepo : findOrganizationIdForRecipient(invitationId, userId)
+  InvRepo --> ISvc : Optional<Long>
+  alt o convite não é deste usuário
+    ISvc --> ICtrl : SecurityException
+    ICtrl --> Tela : 403 {mensagem}
+    Tela --> U : exibe a mensagem de erro
+  else convite do usuário
+    ISvc -> OrgRepo : findByIdForUpdate(organizationId)
+    OrgRepo --> ISvc : Organization (linha bloqueada)
+    ISvc -> InvRepo : findById(invitationId)
+    InvRepo --> ISvc : OrganizationInvitation
+    alt já respondido, vencido (24 horas), organização não aprovada ou usuário já é membro
+      ISvc --> ICtrl : IllegalStateException
+      ICtrl --> Tela : 409 {mensagem}
+      Tela --> U : exibe a mensagem de erro
+    else resposta válida
+      alt aceitar
+        ISvc -> MemRepo : save(OrganizationMember MEMBER)
+        ISvc -> ReqRepo : findByUserIdAndOrganizationId(userId, organizationId)
+        ReqRepo --> ISvc : List<AccessRequest>
+        opt há pedido PENDING da mesma organização
+          ISvc -> ReqRepo : save(AccessRequest APPROVED)
+        end
+        ISvc -> AuditRepo : save(AuditLog ORGANIZATION_INVITATION_ACCEPTED)
+      else recusar
+        ISvc -> AuditRepo : save(AuditLog ORGANIZATION_INVITATION_REJECTED)
+      end
+      ISvc -> InvRepo : save(convite com status e respondedAt)
+      ISvc --> ICtrl : OrganizationInvitationResponseDTO
+      ICtrl --> Tela : 200 OrganizationInvitationResponseDTO
+      Tela --> U : aviso "Convite aceito. Você entrou na organização." ou "Convite recusado."
+    end
+  end
+  deactivate ISvc
+  deactivate ICtrl
+end
+@enduml

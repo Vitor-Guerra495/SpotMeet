@@ -2,15 +2,18 @@ package com.spotmeet.backend.controller;
 
 import com.spotmeet.backend.dto.AccessRequestDTO;
 import com.spotmeet.backend.dto.AccessRequestResponseDTO;
+import com.spotmeet.backend.dto.ValidationPatterns;
 import com.spotmeet.backend.dto.OrganizationResponseDTO;
 import com.spotmeet.backend.service.MembershipService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Organization access and membership controller.
@@ -32,18 +35,19 @@ public class MembershipController {
      * POST /api/access-requests
      * Accepts a JSON body { "accessKey": "#aaa" } or the query param ?accessKey=#aaa
      */
-    @PostMapping("/api/access-requests")
+    @PostMapping(value = "/api/access-requests", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> requestAccess(
             @RequestBody(required = false) AccessRequestDTO body,
             @RequestParam(required = false) String accessKey,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "Usuário não autenticado."));
         }
 
         String finalKey = (body != null && body.getAccessKey() != null) ? body.getAccessKey() : accessKey;
-        if (finalKey == null || finalKey.trim().isEmpty()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Chave da organizacao e obrigatoria.");
+        finalKey = ValidationPatterns.normalizeOrganizationValue(finalKey);
+        if (finalKey == null || finalKey.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("message", "Chave da organização é obrigatória."));
         }
 
         try {
@@ -51,9 +55,29 @@ public class MembershipController {
             AccessRequestResponseDTO response = membershipService.requestAccess(email, finalKey);
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
         } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * GET /api/organizations/preview?accessKey=#aaa
+     * Name and responsible of an approved organization, so the user can check it before asking to join.
+     */
+    @GetMapping(value = "/api/organizations/preview", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> previewOrganization(
+            @RequestParam String accessKey,
+            Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "Usuário não autenticado."));
+        }
+        try {
+            return ResponseEntity.ok(membershipService.previewByKey(accessKey));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", e.getMessage()));
         }
     }
 
@@ -64,7 +88,7 @@ public class MembershipController {
             @PathVariable Long requestId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String leaderEmail = authentication.getName();
@@ -84,7 +108,7 @@ public class MembershipController {
             @PathVariable Long requestId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String leaderEmail = authentication.getName();
@@ -109,7 +133,7 @@ public class MembershipController {
             @PathVariable Long memberId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String executorEmail = authentication.getName();
@@ -131,7 +155,7 @@ public class MembershipController {
             @PathVariable Long organizationId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String executorEmail = authentication.getName();
@@ -151,7 +175,7 @@ public class MembershipController {
             @PathVariable Long organizationId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String executorEmail = authentication.getName();
@@ -175,7 +199,7 @@ public class MembershipController {
             @PathVariable Long userId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String email = authentication.getName();
@@ -201,7 +225,7 @@ public class MembershipController {
             @PathVariable Long userId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String email = authentication.getName();

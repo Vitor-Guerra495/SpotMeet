@@ -1,0 +1,155 @@
+@startuml Sequencia_RF05
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF05 (Manter Membros da Organização)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+skinparam dpi 88
+autonumber "<b>0"
+
+actor "Usuário\n(líder da organização)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MembershipController" as MCtrl
+participant ":OrganizationLeadershipController" as LCtrl
+participant ":MembershipService" as MSvc
+participant ":OrganizationRepository" as OrgRepo
+participant ":UserRepository" as UserRepo
+participant ":OrganizationMemberRepository" as MemRepo
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":AccessRequestRepository" as ReqRepo
+participant ":OrganizationInvitationRepository" as InvRepo
+participant ":AuditLogRepository" as AuditRepo
+end box
+
+group Consultar os membros
+  U -> Tela : tocar na organização em "Minhas" e no atalho "Membros"
+  Tela -> Filtro : GET /api/organizations/{organizationId}/members
+  Filtro -> MCtrl : listMembers(organizationId, authentication)
+  activate MCtrl
+  MCtrl -> MSvc : listMembers(organizationId, email)
+  activate MSvc
+  MSvc -> UserRepo : findByEmail(email)
+  UserRepo --> MSvc : User
+  MSvc -> MSvc : requireOrganizationMember(executor, organizationId)
+  note right of MSvc : consulta a organização (findById) e o vínculo do\nexecutor (existsByUserIdAndOrganizationId)
+  alt o executor é membro da organização
+    MSvc -> MemRepo : findByOrganizationId(organizationId)
+    MemRepo --> MSvc : List<OrganizationMember>
+    MSvc --> MCtrl : List<MemberDTO>
+    MCtrl --> Tela : 200 List<MemberDTO>
+    Tela --> U : cartões com nome, e-mail e cargo ("Dono", "Vice-líder", "Subdono" ou "Membro"), busca e filtro por cargo
+  else o executor não é membro
+    MSvc --> MCtrl : SecurityException
+    MCtrl --> Tela : 403 {mensagem em texto}
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Promover ou rebaixar um membro
+  U -> Tela : tocar no integrante, em "Elevar papel" ou "Rebaixar papel" e confirmar em "Elevar" ou "Rebaixar"
+  Tela -> Filtro : POST /api/organizations/{organizationId}/members/{userId}/promote (ou /demote)
+  Filtro -> MCtrl : promoteMember ou demoteMember(organizationId, userId, authentication)
+  activate MCtrl
+  MCtrl -> MSvc : promoteMember ou demoteMember(organizationId, targetUserId, executorEmail)
+  activate MSvc
+  note right of MSvc : transação; o executor é carregado por UserRepository.findByEmail
+  MSvc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> MSvc : Organization (linha bloqueada)
+  MSvc -> UserRepo : findById(targetUserId)
+  UserRepo --> MSvc : User
+  MSvc -> MemRepo : findByUserIdAndOrganizationId(targetUserId, organizationId)
+  MemRepo --> MSvc : OrganizationMember
+  MSvc -> MSvc : requireOwnerOrViceOwner ou requireOwner, conforme o cargo atual do alvo
+  alt cargo permitido para o executor
+    MSvc -> MemRepo : save(OrganizationMember com o novo cargo)
+    MSvc -> AuditRepo : save(AuditLog ROLE_PROMOTED_SUBOWNER, ROLE_PROMOTED_VICE_OWNER, ROLE_DEMOTED_SUBOWNER ou ROLE_DEMOTED_MEMBER)
+    MSvc --> MCtrl : MemberDTO
+    MCtrl --> Tela : 200 MemberDTO
+    Tela --> U : aviso "Papel atualizado." e lista atualizada
+  else sem permissão, alvo inexistente, alvo dono ou cargo já no limite
+    MSvc --> MCtrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    MCtrl --> Tela : 403, 404 ou 409 {mensagem em texto}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Revogar o acesso de um membro
+  U -> Tela : tocar no integrante, em "Remover integrante" e confirmar em "Remover"
+  Tela -> Filtro : DELETE /api/organizations/{organizationId}/members/{memberId}
+  Filtro -> MCtrl : revokeAccess(organizationId, memberId, authentication)
+  activate MCtrl
+  MCtrl -> MSvc : revokeAccess(memberId, organizationId, executorEmail)
+  activate MSvc
+  note right of MSvc : transação; o executor é carregado por UserRepository.findByEmail
+  MSvc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> MSvc : Organization (linha bloqueada)
+  MSvc -> MemRepo : findByUserIdAndOrganizationId(memberId, organizationId)
+  MemRepo --> MSvc : OrganizationMember (alvo)
+  opt o executor não é o dono da organização
+    MSvc -> MemRepo : findByUserIdAndOrganizationId(executorId, organizationId)
+    MemRepo --> MSvc : OrganizationMember (executor)
+  end
+  alt a hierarquia permite a remoção
+    MSvc -> CmRepo : findByUserIdAndCommitteeOrganizationId(memberId, organizationId)
+    CmRepo --> MSvc : List<CommitteeMember>
+    MSvc -> CmRepo : deleteAll(vínculos com as comissões da organização)
+    MSvc -> ReqRepo : findByUserIdAndOrganizationId(memberId, organizationId)
+    ReqRepo --> MSvc : List<AccessRequest>
+    MSvc -> ReqRepo : deleteAll(solicitações de acesso do membro)
+    MSvc -> InvRepo : deleteByOrganizationIdAndUserId(organizationId, memberId)
+    MSvc -> MemRepo : delete(vínculo com a organização)
+    MSvc -> AuditRepo : save(AuditLog ACCESS_REVOKED)
+    MSvc --> MCtrl : void
+    MCtrl --> Tela : 200 "Acesso revogado com sucesso."
+    Tela --> U : aviso "Integrante removido." e lista atualizada
+  else remoção do próprio executor ou do dono, alvo inexistente ou hierarquia não permite
+    MSvc --> MCtrl : IllegalArgumentException ou SecurityException
+    MCtrl --> Tela : 400 ou 403 {mensagem em texto}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate MSvc
+  deactivate MCtrl
+end
+
+group Transferir a liderança
+  U -> Tela : tocar em "Transferir liderança", em "Transferir para <nome>" e confirmar em "Transferir"
+  note over Tela : o botão só aparece quando a organização está aprovada
+  Tela -> Filtro : POST /api/organizations/{organizationId}/members/{userId}/make-owner
+  Filtro -> LCtrl : transfer(organizationId, userId, authentication)
+  activate LCtrl
+  LCtrl -> MSvc : transferLeadership(organizationId, userId, executorEmail)
+  activate MSvc
+  note right of MSvc : transação; o executor é carregado por UserRepository.findByEmail
+  MSvc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> MSvc : Organization (linha bloqueada)
+  MSvc -> MemRepo : findByOrganizationIdAndRole(organizationId, ORG_OWNER)
+  MemRepo --> MSvc : List<OrganizationMember>
+  MSvc -> MemRepo : findByUserIdAndOrganizationId(userId, organizationId)
+  MemRepo --> MSvc : OrganizationMember (destino)
+  alt o executor é o dono, a organização está aprovada, a liderança está consistente e o destino é outro integrante
+    MSvc -> MemRepo : save(vínculo do dono anterior com cargo MEMBER)
+    MSvc -> MemRepo : save(vínculo do destino com cargo ORG_OWNER)
+    MSvc -> OrgRepo : save(Organization com owner = destino)
+    MSvc -> AuditRepo : save(AuditLog ORGANIZATION_LEADER_CHANGED)
+    MSvc --> LCtrl : OrganizationLeadershipResponseDTO
+    LCtrl --> Tela : 200 OrganizationLeadershipResponseDTO
+    Tela --> U : aviso "Liderança transferida. Seu papel agora é membro."
+  else sem permissão, organização não aprovada, destino fora da organização ou liderança inconsistente
+    MSvc --> LCtrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    LCtrl --> Tela : 403, 404 ou 409 {mensagem em texto}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate MSvc
+  deactivate LCtrl
+end
+@enduml

@@ -1,16 +1,15 @@
 package com.spotmeet.backend.security;
 
 import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.MalformedJwtException;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
-import io.jsonwebtoken.security.SignatureException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
+import java.time.Instant;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -46,16 +45,21 @@ public class JwtUtil {
      * @return Signed JWT as a String.
      */
     public String generateToken(String email, String role) {
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("role", role);
-        return buildToken(claims, email);
+        return generateToken(email, role, Instant.now());
     }
 
-    private String buildToken(Map<String, Object> claims, String subject) {
+    public String generateToken(String email, String role, Instant issuedAt) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("role", role);
+        claims.put("issuedAtMillis", issuedAt.toEpochMilli());
+        return buildToken(claims, email, issuedAt);
+    }
+
+    private String buildToken(Map<String, Object> claims, String subject, Instant issuedAt) {
         return Jwts.builder()
                 .claims(claims)
                 .subject(subject)
-                .issuedAt(new Date())
+                .issuedAt(Date.from(issuedAt))
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(getSigningKey())
                 .compact();
@@ -73,6 +77,19 @@ public class JwtUtil {
 
     public Date extractExpiration(String token) {
         return extractClaim(token, Claims::getExpiration);
+    }
+
+    public Instant extractIssuedAt(String token) {
+        return issuedAt(extractAllClaims(token));
+    }
+
+    private Instant issuedAt(Claims claims) {
+        Date issuedAt = claims.getIssuedAt();
+        if (issuedAt == null) return null;
+        Long milliseconds = claims.get("issuedAtMillis", Long.class);
+        if (milliseconds == null) return issuedAt.toInstant();
+        if (Math.floorDiv(milliseconds, 1000) != Math.floorDiv(issuedAt.getTime(), 1000)) return null;
+        return Instant.ofEpochMilli(milliseconds);
     }
 
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
@@ -94,14 +111,19 @@ public class JwtUtil {
      * Returns false when the token is expired, malformed or has an invalid signature.
      */
     public boolean isTokenValid(String token, String email) {
-        try {
-            return extractEmail(token).equals(email) && !isTokenExpired(token);
-        } catch (ExpiredJwtException | MalformedJwtException | SignatureException e) {
-            return false;
-        }
+        return isTokenValid(token, email, null);
     }
 
-    private boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
+    public boolean isTokenValid(String token, String email, Instant tokensValidAfter) {
+        try {
+            Claims claims = extractAllClaims(token);
+            Instant issuedAt = issuedAt(claims);
+            Date expiration = claims.getExpiration();
+            return email.equals(claims.getSubject()) && issuedAt != null && expiration != null
+                    && expiration.after(new Date())
+                    && (tokensValidAfter == null || issuedAt.isAfter(tokensValidAfter));
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
     }
 }

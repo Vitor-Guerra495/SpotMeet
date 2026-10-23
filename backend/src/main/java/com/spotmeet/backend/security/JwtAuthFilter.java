@@ -1,10 +1,12 @@
 package com.spotmeet.backend.security;
 
+import com.spotmeet.backend.model.User;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -17,14 +19,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * JWT filter, executed once per request.
- *
- * Flow:
- * 1. Reads the Authorization header (Bearer token).
- * 2. Extracts and validates the JWT through JwtUtil.
- * 3. If valid, populates the SecurityContextHolder with the user authentication.
- * 4. If the token is missing or invalid, the request continues unauthenticated
- *    (the SecurityFilterChain returns 401 for protected routes).
+ * Loads the account and validates JWT expiration and revocation for each request.
+ * Missing or invalid tokens leave the request unauthenticated.
  */
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
@@ -59,10 +55,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
-                if (jwtUtil.isTokenValid(jwt, userDetails.getUsername())) {
+                if (userDetails instanceof User user
+                        && jwtUtil.isTokenValid(jwt, user.getUsername(), user.getTokensValidAfter())) {
                     // Users with a pending e-mail verification are not authenticated
                     if (!userDetails.isEnabled()) {
-                        logger.warn("[SpotMeet-JWT] Acesso restrito: e-mail pendente de validação para: " + email);
+                        logger.warn("JWT rejected for an unverified account.");
                     } else {
                         UsernamePasswordAuthenticationToken authToken =
                                 new UsernamePasswordAuthenticationToken(
@@ -75,10 +72,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     }
                 }
             }
+        } catch (DataAccessException e) {
+            logger.warn("JWT account lookup unavailable.");
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            return;
         } catch (Exception e) {
             // Corrupted or expired token, or user not found. No exception is thrown:
             // the chain continues and the SecurityFilterChain returns 401 for protected routes.
-            logger.warn("[SpotMeet-JWT] Token rejeitado: " + e.getMessage());
+            logger.warn("JWT rejected.");
         }
 
         filterChain.doFilter(request, response);

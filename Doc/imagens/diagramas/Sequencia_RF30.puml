@@ -1,0 +1,71 @@
+@startuml Sequencia_RF30
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF30 (Responder Convite de Reunião)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(convidado)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingInvitationActions" as Acoes
+participant ":MeetingsScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingInvitationController" as Ctrl
+participant ":MeetingInvitationService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Acoes : abrir o detalhe da reunião e tocar em "Aceitar", ou em "Recusar"
+opt recusa
+  Acoes --> U : campo "Motivo (opcional)", até 200 caracteres
+  U -> Acoes : informar o motivo e tocar em "Confirmar recusa"
+end
+Acoes -> Tela : onAccept() ou onDecline(comment)
+Tela -> Filtro : POST /api/meetings/{meetingId}/respond?accept=true|false (MeetingAnswerDTO)
+Filtro -> Ctrl : respond(meetingId, accept, answer, auth)
+alt comentário com mais de 200 caracteres (@Valid)
+  Ctrl --> Handler : MethodArgumentNotValidException
+  Handler --> Tela : 400 {message, errors}
+else corpo válido ou ausente
+  Ctrl -> Svc : respond(meetingId, email, accept, comment)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
+  Svc -> Acc : requireActiveMember(user, committee)
+  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Acc : CommitteeMember (ACTIVE)
+  Acc --> Svc : void
+  Svc -> Svc : statusAt(now) não pode ser CANCELED nem ENDED
+  Svc -> PartRepo : findForUpdate(meetingId, userId)
+  PartRepo --> Svc : MeetingParticipant (linha bloqueada)
+  alt integrante ativo, convidado e reunião ainda aberta
+    Svc -> PartRepo : save(participant com response, responseComment e respondedAt)
+    note right of PartRepo : o comentário só é guardado na recusa
+    Svc -> Acc : audit(user, "MEETING_INVITATION_ANSWERED", meeting, " | Resposta: ...")
+    Acc -> AuditRepo : save(AuditLog)
+    Svc -> Acc : detail(meeting, user, now)
+    Acc --> Svc : MeetingResponseDTO
+    Svc --> Ctrl : MeetingResponseDTO
+    Ctrl --> Tela : 200 MeetingResponseDTO
+    Tela --> U : aviso "Presença confirmada." ou "Recusa enviada." e detalhe atualizado
+    Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+  else não é integrante ativo, não foi convidado ou a reunião não aceita respostas
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 ou 409 {message}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+end
+@enduml

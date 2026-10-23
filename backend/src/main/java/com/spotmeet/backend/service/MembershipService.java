@@ -2,6 +2,9 @@ package com.spotmeet.backend.service;
 
 import com.spotmeet.backend.dto.AccessRequestResponseDTO;
 import com.spotmeet.backend.dto.OrganizationResponseDTO;
+import com.spotmeet.backend.dto.OrganizationLeadershipResponseDTO;
+import com.spotmeet.backend.dto.OrganizationPreviewDTO;
+import com.spotmeet.backend.dto.ValidationPatterns;
 import com.spotmeet.backend.model.*;
 import com.spotmeet.backend.model.AccessRequest.AccessRequestStatus;
 import com.spotmeet.backend.model.OrganizationMember.OrganizationRole;
@@ -29,6 +32,7 @@ public class MembershipService {
     @Autowired private OrganizationRepository organizationRepo;
     @Autowired private UserRepository userRepo;
     @Autowired private OrganizationMemberRepository organizationMemberRepo;
+    @Autowired private OrganizationInvitationRepository invitationRepo;
     @Autowired private CommitteeMemberRepository committeeMemberRepo;
     @Autowired private AuditLogRepository auditLogRepo;
 
@@ -36,7 +40,7 @@ public class MembershipService {
 
     private User findUserByEmail(String email) {
         return userRepo.findByEmail(email)
-                .orElseThrow(() -> new IllegalStateException("Usuario autenticado nao encontrado."));
+                .orElseThrow(() -> new IllegalStateException("Usuário autenticado não encontrado."));
     }
 
     /**
@@ -48,14 +52,14 @@ public class MembershipService {
         }
 
         Organization org = organizationRepo.findById(organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("Organizacao nao encontrada."));
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
 
         if (org.getOwner() != null && org.getOwner().getId().equals(executor.getId())) {
             return;
         }
 
         if (!organizationMemberRepo.existsByUserIdAndOrganizationId(executor.getId(), organizationId)) {
-            throw new SecurityException("Acesso negado. Voce nao e membro desta organizacao.");
+            throw new SecurityException("Acesso negado. Você não é membro desta organização.");
         }
     }
 
@@ -68,7 +72,7 @@ public class MembershipService {
         }
 
         Organization org = organizationRepo.findById(organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("Organizacao nao encontrada."));
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
 
         if (org.getOwner() != null && org.getOwner().getId().equals(executor.getId())) {
             return;
@@ -77,7 +81,7 @@ public class MembershipService {
         organizationMemberRepo.findByUserIdAndOrganizationId(executor.getId(), organizationId)
                 .filter(m -> m.getRole() == OrganizationRole.ORG_OWNER || m.getRole() == OrganizationRole.ORG_VICE_OWNER)
                 .orElseThrow(() -> new SecurityException(
-                    "Acesso negado. Apenas o Dono ou Vice-Lider da organizacao pode realizar esta operacao."
+                    "Acesso negado. Apenas o Dono ou Vice-Líder da organização pode realizar esta operação."
                 ));
     }
 
@@ -90,7 +94,7 @@ public class MembershipService {
         }
 
         Organization org = organizationRepo.findById(organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("Organizacao nao encontrada."));
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
 
         if (org.getOwner() != null && org.getOwner().getId().equals(executor.getId())) {
             return;
@@ -99,36 +103,58 @@ public class MembershipService {
         organizationMemberRepo.findByUserIdAndOrganizationId(executor.getId(), organizationId)
                 .filter(m -> m.getRole() == OrganizationRole.ORG_OWNER)
                 .orElseThrow(() -> new SecurityException(
-                    "Acesso negado. Operacao restrita exclusivamente ao Dono da organizacao."
+                    "Acesso negado. Operação restrita exclusivamente ao Dono da organização."
                 ));
     }
 
     // 1. Request access by key (any authenticated user)
 
-    @Transactional
-    public AccessRequestResponseDTO requestAccess(String requesterEmail, String accessKey) {
-        if (accessKey == null || accessKey.trim().isEmpty()) {
-            throw new IllegalArgumentException("Chave da organizacao e obrigatoria.");
+    /** Finds the approved organization behind an access key; the same checks serve the preview and the request. */
+    private Organization findApprovedByKey(String accessKey, boolean forUpdate) {
+        String cleanKey = ValidationPatterns.normalizeOrganizationValue(accessKey);
+        if (cleanKey == null || cleanKey.isEmpty()) {
+            throw new IllegalArgumentException("Chave da organização é obrigatória.");
         }
-        String cleanKey = accessKey.trim();
 
-        Organization org = organizationRepo.findByAccessKey(cleanKey)
-                .orElseThrow(() -> new IllegalArgumentException(
-                    "Organizacao com a chave '" + cleanKey + "' nao encontrada. Verifique a chave e tente novamente."
-                ));
+        List<Long> matches = organizationRepo.findIdsByAccessKeyIgnoreCase(cleanKey, ValidationPatterns.ORGANIZATION_WHITESPACE);
+        if (matches.isEmpty()) {
+            throw new IllegalArgumentException("Organização não encontrada. Verifique a chave e tente novamente.");
+        }
+        if (matches.size() > 1) {
+            throw new IllegalStateException("Esta chave corresponde a mais de uma organização. Peça ao responsável para atualizar a chave.");
+        }
+        Organization org = (forUpdate ? organizationRepo.findByIdForUpdate(matches.get(0)) : organizationRepo.findById(matches.get(0)))
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
+        if (!cleanKey.equalsIgnoreCase(ValidationPatterns.normalizeOrganizationValue(org.getAccessKey()))) {
+            throw new IllegalArgumentException("Organização não encontrada. Verifique a chave e tente novamente.");
+        }
 
         if (!org.isApproved()) {
-            throw new IllegalStateException("Esta organizacao ainda nao foi aprovada pelo administrador do sistema ou esta bloqueada.");
+            throw new IllegalStateException("Esta organização ainda não foi aprovada pelo administrador do sistema ou está bloqueada.");
         }
+        return org;
+    }
+
+    /** Name and responsible of the organization behind a key, shown before the user asks to join. */
+    @Transactional(readOnly = true)
+    public OrganizationPreviewDTO previewByKey(String accessKey) {
+        Organization org = findApprovedByKey(accessKey, false);
+        String owner = org.getOwner() != null ? org.getOwner().getName() : "Não informado";
+        return new OrganizationPreviewDTO(org.getName(), org.getAccessKey(), owner);
+    }
+
+    @Transactional
+    public AccessRequestResponseDTO requestAccess(String requesterEmail, String accessKey) {
+        Organization org = findApprovedByKey(accessKey, true);
 
         User requester = findUserByEmail(requesterEmail);
 
         if (org.getOwner() != null && org.getOwner().getId().equals(requester.getId())) {
-            throw new IllegalStateException("Voce e o proprietario desta organizacao.");
+            throw new IllegalStateException("Você é o proprietário desta organização.");
         }
 
         if (organizationMemberRepo.existsByUserIdAndOrganizationId(requester.getId(), org.getId())) {
-            throw new IllegalStateException("Voce ja e membro desta organizacao.");
+            throw new IllegalStateException("Você já é membro desta organização.");
         }
 
         List<AccessRequest> existing = accessRequestRepo.findByUserIdAndOrganizationId(requester.getId(), org.getId());
@@ -136,7 +162,7 @@ public class MembershipService {
         if (!existing.isEmpty()) {
             request = existing.get(0);
             if (request.getStatus() == AccessRequestStatus.PENDING) {
-                throw new IllegalStateException("Voce ja possui uma solicitacao pendente para esta organizacao.");
+                throw new IllegalStateException("Você já possui uma solicitação pendente para esta organização.");
             }
             // Reopen the previous request (e.g. user removed or previously rejected)
             request.setStatus(AccessRequestStatus.PENDING);
@@ -164,21 +190,25 @@ public class MembershipService {
 
     @Transactional
     public AccessRequestResponseDTO approveAccess(Long requestId, String leaderEmail) {
+        Long organizationId = accessRequestRepo.findOrganizationIdById(requestId)
+                .orElseThrow(() -> new IllegalArgumentException("Solicitação não encontrada."));
+        organizationRepo.findByIdForUpdate(organizationId)
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
         AccessRequest request = accessRequestRepo.findById(requestId)
-                .orElseThrow(() -> new IllegalArgumentException("Solicitacao nao encontrada."));
+                .orElseThrow(() -> new IllegalArgumentException("Solicitação não encontrada."));
+
+        User leader = findUserByEmail(leaderEmail);
+        requireOwnerOrViceOwner(leader, request.getOrganization().getId());
 
         if (request.getStatus() != AccessRequestStatus.PENDING) {
             throw new IllegalStateException(
-                "Apenas solicitacoes PENDENTES podem ser aprovadas. Status atual: " + request.getStatus()
+                "Apenas solicitações PENDENTES podem ser aprovadas. Status atual: " + request.getStatus()
             );
         }
 
         if (!request.getOrganization().isApproved()) {
-            throw new IllegalStateException("Esta organizacao ainda nao foi aprovada pelo administrador do sistema ou esta bloqueada.");
+            throw new IllegalStateException("Esta organização ainda não foi aprovada pelo administrador do sistema ou está bloqueada.");
         }
-
-        User leader = findUserByEmail(leaderEmail);
-        requireOwnerOrViceOwner(leader, request.getOrganization().getId());
 
         request.setStatus(AccessRequestStatus.APPROVED);
         accessRequestRepo.save(request);
@@ -198,7 +228,7 @@ public class MembershipService {
         auditLogRepo.save(new AuditLog(
             leader,
             "ACCESS_APPROVED",
-            "Solicitacao #" + requestId + " | Usuario: " + request.getUser().getEmail()
+            "Solicitação #" + requestId + " | Usuário: " + request.getUser().getEmail()
                 + " | Org: " + request.getOrganization().getName()
         ));
 
@@ -209,17 +239,21 @@ public class MembershipService {
 
     @Transactional
     public AccessRequestResponseDTO rejectAccess(Long requestId, String leaderEmail) {
+        Long organizationId = accessRequestRepo.findOrganizationIdById(requestId)
+                .orElseThrow(() -> new IllegalArgumentException("Solicitação não encontrada."));
+        organizationRepo.findByIdForUpdate(organizationId)
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
         AccessRequest request = accessRequestRepo.findById(requestId)
-                .orElseThrow(() -> new IllegalArgumentException("Solicitacao nao encontrada."));
-
-        if (request.getStatus() != AccessRequestStatus.PENDING) {
-            throw new IllegalStateException(
-                "Apenas solicitacoes PENDENTES podem ser rejeitadas. Status atual: " + request.getStatus()
-            );
-        }
+                .orElseThrow(() -> new IllegalArgumentException("Solicitação não encontrada."));
 
         User leader = findUserByEmail(leaderEmail);
         requireOwnerOrViceOwner(leader, request.getOrganization().getId());
+
+        if (request.getStatus() != AccessRequestStatus.PENDING) {
+            throw new IllegalStateException(
+                "Apenas solicitações PENDENTES podem ser rejeitadas. Status atual: " + request.getStatus()
+            );
+        }
 
         request.setStatus(AccessRequestStatus.REJECTED);
         accessRequestRepo.save(request);
@@ -227,7 +261,7 @@ public class MembershipService {
         auditLogRepo.save(new AuditLog(
             leader,
             "ACCESS_REJECTED",
-            "Solicitacao #" + requestId + " | Usuario: " + request.getUser().getEmail()
+            "Solicitação #" + requestId + " | Usuário: " + request.getUser().getEmail()
                 + " | Org: " + request.getOrganization().getName()
         ));
 
@@ -244,15 +278,17 @@ public class MembershipService {
     @Transactional
     public OrganizationResponseDTO.MemberDTO promoteMember(Long organizationId, Long targetUserId, String executorEmail) {
         User executor = findUserByEmail(executorEmail);
+        organizationRepo.findByIdForUpdate(organizationId)
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
         User target = userRepo.findById(targetUserId)
-                .orElseThrow(() -> new IllegalArgumentException("Usuario informado nao encontrado."));
+                .orElseThrow(() -> new IllegalArgumentException("Usuário informado não encontrado."));
 
         OrganizationMember targetMembership = organizationMemberRepo
                 .findByUserIdAndOrganizationId(target.getId(), organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("O usuario informado nao pertence a esta organizacao."));
+                .orElseThrow(() -> new IllegalArgumentException("O usuário informado não pertence a esta organização."));
 
         if (targetMembership.getRole() == OrganizationRole.ORG_OWNER) {
-            throw new IllegalStateException("Nao e possivel alterar o cargo do Dono da organizacao.");
+            throw new IllegalStateException("Não é possível alterar o cargo do Dono da organização.");
         }
 
         if (targetMembership.getRole() == OrganizationRole.MEMBER) {
@@ -264,7 +300,7 @@ public class MembershipService {
             auditLogRepo.save(new AuditLog(
                 executor,
                 "ROLE_PROMOTED_SUBOWNER",
-                "Usuario: " + target.getEmail() + " elevado a SUBDONO na Org ID: " + organizationId
+                "Usuário: " + target.getEmail() + " elevado a SUBDONO na Org ID: " + organizationId
             ));
         } else if (targetMembership.getRole() == OrganizationRole.ORG_SUBOWNER) {
             // Owner only
@@ -275,10 +311,10 @@ public class MembershipService {
             auditLogRepo.save(new AuditLog(
                 executor,
                 "ROLE_PROMOTED_VICE_OWNER",
-                "Usuario: " + target.getEmail() + " elevado a VICE-LIDER na Org ID: " + organizationId
+                "Usuário: " + target.getEmail() + " elevado a VICE-LÍDER na Org ID: " + organizationId
             ));
         } else if (targetMembership.getRole() == OrganizationRole.ORG_VICE_OWNER) {
-            throw new IllegalStateException("O integrante ja possui o cargo maximo de Vice-Lider.");
+            throw new IllegalStateException("O integrante já possui o cargo máximo de Vice-Líder.");
         }
 
         return new OrganizationResponseDTO.MemberDTO(
@@ -297,15 +333,17 @@ public class MembershipService {
     @Transactional
     public OrganizationResponseDTO.MemberDTO demoteMember(Long organizationId, Long targetUserId, String executorEmail) {
         User executor = findUserByEmail(executorEmail);
+        organizationRepo.findByIdForUpdate(organizationId)
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
         User target = userRepo.findById(targetUserId)
-                .orElseThrow(() -> new IllegalArgumentException("Usuario informado nao encontrado."));
+                .orElseThrow(() -> new IllegalArgumentException("Usuário informado não encontrado."));
 
         OrganizationMember targetMembership = organizationMemberRepo
                 .findByUserIdAndOrganizationId(target.getId(), organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("O usuario informado nao pertence a esta organizacao."));
+                .orElseThrow(() -> new IllegalArgumentException("O usuário informado não pertence a esta organização."));
 
         if (targetMembership.getRole() == OrganizationRole.ORG_OWNER) {
-            throw new IllegalStateException("Nao e possivel alterar o cargo do Dono da organizacao.");
+            throw new IllegalStateException("Não é possível alterar o cargo do Dono da organização.");
         }
 
         if (targetMembership.getRole() == OrganizationRole.ORG_VICE_OWNER) {
@@ -316,7 +354,7 @@ public class MembershipService {
             auditLogRepo.save(new AuditLog(
                 executor,
                 "ROLE_DEMOTED_SUBOWNER",
-                "Usuario: " + target.getEmail() + " rebaixado a SUBDONO na Org ID: " + organizationId
+                "Usuário: " + target.getEmail() + " rebaixado a SUBDONO na Org ID: " + organizationId
             ));
         } else if (targetMembership.getRole() == OrganizationRole.ORG_SUBOWNER) {
             requireOwnerOrViceOwner(executor, organizationId);
@@ -326,10 +364,10 @@ public class MembershipService {
             auditLogRepo.save(new AuditLog(
                 executor,
                 "ROLE_DEMOTED_MEMBER",
-                "Usuario: " + target.getEmail() + " rebaixado a MEMBRO na Org ID: " + organizationId
+                "Usuário: " + target.getEmail() + " rebaixado a MEMBRO na Org ID: " + organizationId
             ));
         } else if (targetMembership.getRole() == OrganizationRole.MEMBER) {
-            throw new IllegalStateException("O integrante ja esta no nivel base de Membro.");
+            throw new IllegalStateException("O integrante já está no nível base de Membro.");
         }
 
         return new OrganizationResponseDTO.MemberDTO(
@@ -340,6 +378,49 @@ public class MembershipService {
         );
     }
 
+    @Transactional
+    public OrganizationLeadershipResponseDTO transferLeadership(Long organizationId, Long targetUserId, String executorEmail) {
+        User executor = userRepo.findByEmail(executorEmail)
+                .orElseThrow(() -> new SecurityException("Usuário autenticado não encontrado."));
+        Organization organization = organizationRepo.findByIdForUpdate(organizationId)
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
+        User previousOwner = organization.getOwner();
+        if (!"SYSADMIN".equalsIgnoreCase(executor.getRole())
+                && (previousOwner == null || !previousOwner.getId().equals(executor.getId()))) {
+            throw new SecurityException("Acesso negado. Somente o dono ou o SysAdmin pode transferir a liderança.");
+        }
+        if (!organization.isApproved()) {
+            throw new IllegalStateException("A liderança só pode ser transferida depois que a organização for aprovada.");
+        }
+
+        List<OrganizationMember> owners = organizationMemberRepo
+                .findByOrganizationIdAndRole(organizationId, OrganizationRole.ORG_OWNER);
+        if (previousOwner == null || owners.size() != 1 || !owners.get(0).getUser().getId().equals(previousOwner.getId())) {
+            throw new IllegalStateException("A liderança atual está inconsistente. A transferência não foi realizada.");
+        }
+        if (previousOwner.getId().equals(targetUserId)) {
+            throw new IllegalStateException("O integrante informado já é o dono da organização.");
+        }
+        OrganizationMember target = organizationMemberRepo.findByUserIdAndOrganizationId(targetUserId, organizationId)
+                .orElseThrow(() -> new IllegalArgumentException("O integrante informado não pertence a esta organização."));
+        if (target.getRole() == null || target.getRole() == OrganizationRole.ORG_OWNER) {
+            throw new IllegalStateException("O cargo do integrante está inconsistente. A transferência não foi realizada.");
+        }
+
+        OrganizationMember previousMembership = owners.get(0);
+        previousMembership.setRole(OrganizationRole.MEMBER);
+        target.setRole(OrganizationRole.ORG_OWNER);
+        organization.setOwner(target.getUser());
+        organizationMemberRepo.save(previousMembership);
+        organizationMemberRepo.save(target);
+        organizationRepo.save(organization);
+        auditLogRepo.save(new AuditLog(executor, "ORGANIZATION_LEADER_CHANGED",
+                "Organização ID: " + organizationId + " | Dono anterior ID: " + previousOwner.getId()
+                        + " | Novo dono ID: " + targetUserId));
+        return new OrganizationLeadershipResponseDTO(organizationId, previousOwner.getId(), targetUserId,
+                previousMembership.getRole().name(), target.getRole().name());
+    }
+
     // 5. Revoke an active member
 
     @Transactional
@@ -347,19 +428,19 @@ public class MembershipService {
         User executor = findUserByEmail(executorEmail);
 
         if (executor.getId().equals(memberId)) {
-            throw new IllegalArgumentException("Voce nao pode revogar o seu proprio acesso por esta acao.");
+            throw new IllegalArgumentException("Você não pode revogar o seu próprio acesso por esta ação.");
         }
 
-        Organization org = organizationRepo.findById(organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("Organizacao nao encontrada."));
+        Organization org = organizationRepo.findByIdForUpdate(organizationId)
+                .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada."));
 
         if (org.getOwner() != null && org.getOwner().getId().equals(memberId)) {
-            throw new IllegalArgumentException("Nao e possivel remover o Dono da organizacao.");
+            throw new IllegalArgumentException("Não é possível remover o Dono da organização.");
         }
 
         OrganizationMember targetMembership = organizationMemberRepo
                 .findByUserIdAndOrganizationId(memberId, organizationId)
-                .orElseThrow(() -> new IllegalArgumentException("Membro nao encontrado nesta organizacao."));
+                .orElseThrow(() -> new IllegalArgumentException("Membro não encontrado nesta organização."));
 
         OrganizationRole executorRole = null;
         if ("SYSADMIN".equalsIgnoreCase(executor.getRole())) {
@@ -369,7 +450,7 @@ public class MembershipService {
         } else {
             OrganizationMember executorMembership = organizationMemberRepo
                     .findByUserIdAndOrganizationId(executor.getId(), organizationId)
-                    .orElseThrow(() -> new SecurityException("Acesso negado. Voce nao pertence a esta organizacao."));
+                    .orElseThrow(() -> new SecurityException("Acesso negado. Você não pertence a esta organização."));
             executorRole = executorMembership.getRole();
         }
 
@@ -379,14 +460,14 @@ public class MembershipService {
         // - ORG_VICE_OWNER: can remove MEMBER and ORG_SUBOWNER
         // - ORG_OWNER / SYSADMIN: can remove anyone (except themselves)
         if (executorRole == OrganizationRole.MEMBER) {
-            throw new SecurityException("Acesso negado. Membros comuns nao podem remover integrantes da organizacao.");
+            throw new SecurityException("Acesso negado. Membros comuns não podem remover integrantes da organização.");
         } else if (executorRole == OrganizationRole.ORG_SUBOWNER) {
             if (targetMembership.getRole() != OrganizationRole.MEMBER) {
-                throw new SecurityException("Acesso negado. Subdonos so podem remover membros comuns da organizacao.");
+                throw new SecurityException("Acesso negado. Subdonos só podem remover membros comuns da organização.");
             }
         } else if (executorRole == OrganizationRole.ORG_VICE_OWNER) {
             if (targetMembership.getRole() == OrganizationRole.ORG_OWNER || targetMembership.getRole() == OrganizationRole.ORG_VICE_OWNER) {
-                throw new SecurityException("Acesso negado. Vice-Lideres nao podem remover o Dono nem outros Vice-Lideres.");
+                throw new SecurityException("Acesso negado. Vice-Líderes não podem remover o Dono nem outros Vice-Líderes.");
             }
         }
 
@@ -404,6 +485,8 @@ public class MembershipService {
             accessRequestRepo.deleteAll(memberRequests);
         }
 
+        // A removed member must not regain access through an earlier invitation.
+        invitationRepo.deleteByOrganizationIdAndUserId(organizationId, memberId);
         organizationMemberRepo.delete(targetMembership);
 
         auditLogRepo.save(new AuditLog(

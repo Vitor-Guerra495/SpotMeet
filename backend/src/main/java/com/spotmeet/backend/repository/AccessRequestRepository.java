@@ -3,6 +3,8 @@ package com.spotmeet.backend.repository;
 import com.spotmeet.backend.model.AccessRequest;
 import com.spotmeet.backend.model.AccessRequest.AccessRequestStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -13,6 +15,9 @@ import java.util.Optional;
  */
 @Repository
 public interface AccessRequestRepository extends JpaRepository<AccessRequest, Long> {
+
+    @Query("SELECT r.organization.id FROM AccessRequest r WHERE r.id = :id")
+    Optional<Long> findOrganizationIdById(@Param("id") Long id);
 
     /** Lists requests of an organization filtered by status. */
     List<AccessRequest> findByOrganizationIdAndStatus(Long organizationId, AccessRequestStatus status);

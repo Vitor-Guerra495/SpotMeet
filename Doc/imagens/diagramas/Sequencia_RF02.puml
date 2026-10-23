@@ -1,0 +1,126 @@
+@startuml Sequencia_RF02
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF02 (Autenticar Usuário)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário ou\nAdministrador do sistema" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AuthScreen" as Tela
+participant ":AuthContext" as Ctx
+participant ":BiometricContext" as Bio
+participant ":BiometricGate" as Gate
+participant ":SessionGuard" as SG
+end box
+box "API (backend)" #F6FFF4
+participant ":AuthController" as Ctrl
+participant ":AuthenticationAttempts" as Att
+participant ":AuthenticationManager" as Mgr
+participant ":UserDetailsServiceImpl" as UDS
+participant ":UserRepository" as Repo
+participant ":BCryptPasswordEncoder" as Enc
+participant ":JwtUtil" as Jwt
+participant ":JwtAuthFilter" as Filtro
+participant ":UserController" as UCtrl
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Entrar com e-mail e senha
+  U -> Tela : preencher "E-mail" e "Senha" e tocar em "Entrar no SpotMeet"
+  note right of Tela : handleLogin confere se os dois campos foram\npreenchidos e se o e-mail tem formato válido
+  Tela -> Ctrl : POST /api/auth/login (LoginRequestDTO)
+  activate Ctrl
+  note over Ctrl, Att : Bean Validation (@Valid) recusa e-mail inválido ou senha vazia antes do método:\n:GlobalExceptionHandler responde 400 {message, errors}
+  Ctrl -> Att : verify(LOGIN, email, autenticação)
+  activate Att
+  Att -> Mgr : authenticate(UsernamePasswordAuthenticationToken)
+  activate Mgr
+  Mgr -> UDS : loadUserByUsername(email)
+  UDS -> Repo : findByEmail(email)
+  Repo --> UDS : Optional<User>
+  UDS --> Mgr : User ou UsernameNotFoundException
+  Mgr -> Enc : matches(senha, hash)
+  Enc --> Mgr : boolean
+  note right of Mgr : com a senha correta, conta com\nemail_verified = false gera DisabledException
+  Mgr --> Att : Authentication, BadCredentialsException ou DisabledException
+  deactivate Mgr
+  Att --> Ctrl : Authentication, a exceção recebida ou TooManyAttemptsException
+  deactivate Att
+  alt senha correta e e-mail verificado
+    Ctrl -> Ctrl : createSession(user, issuedAt)
+    Ctrl -> Jwt : generateToken(email, role, issuedAt)
+    Jwt --> Ctrl : token JWT
+    Ctrl --> Tela : 200 AuthResponseDTO
+    Tela -> Ctx : signIn(AuthSession)
+    Ctx -> Bio : onSession(evento signIn)
+    Tela --> U : abre a área principal (abas conforme o papel)
+    opt aplicativo em Android ou iOS
+      Bio -> Bio : takeBiometricRearm()
+      alt login logo depois de uma troca de senha com a biometria habilitada (RF14)
+        Bio -> Bio : enable()
+        note right of Bio : pede só a confirmação da digital e guarda a nova sessão (RF36)
+      else demais logins
+        Gate --> U : diálogo "Deseja habilitar a biometria?" com "Sim" e "Não"
+      end
+    end
+  else senha correta e e-mail ainda não verificado
+    Ctrl --> Tela : 403 {error: EMAIL_NOT_VERIFIED, message, email}
+    Tela --> U : aviso "Confirmação Necessária" e formulário "Confirme seu e-mail" (RF01)
+  else e-mail ou senha incorretos
+    Ctrl --> Tela : 401 {error: BAD_CREDENTIALS, message}
+    Tela --> U : exibe "E-mail ou senha incorretos."
+  else 10 falhas em 15 minutos para o mesmo e-mail
+    Ctrl --> Handler : TooManyAttemptsException propagada
+    Handler --> Tela : 429 {error: TOO_MANY_ATTEMPTS, retryAfterSeconds}
+    Tela --> U : exibe "Muitas tentativas. Aguarde e tente novamente em alguns minutos."
+  end
+  deactivate Ctrl
+end
+
+group Validar a sessão nas requisições seguintes
+  SG -> Filtro : GET /api/users/me (Authorization: Bearer token), a cada 15 s com o app ativo
+  activate Filtro
+  Filtro -> Jwt : extractEmail(token)
+  Jwt --> Filtro : email
+  Filtro -> UDS : loadUserByUsername(email)
+  UDS -> Repo : findByEmail(email)
+  Repo --> UDS : Optional<User>
+  UDS --> Filtro : User
+  Filtro -> Jwt : isTokenValid(token, email, tokensValidAfter)
+  Jwt --> Filtro : boolean
+  alt assinatura válida, token não expirado, emitido após tokens_valid_after e conta verificada
+    Filtro -> UCtrl : getMyProfile(authentication)
+    UCtrl --> SG : 200 UserProfileResponseDTO
+  else token ausente, inválido, expirado ou revogado
+    Filtro --> SG : 401
+    note right of SG : o fetch instalado por sessionFetch.ts\ndetecta o 401 e chama onExpired
+    SG -> Ctx : signOut()
+    SG --> U : aviso "Sessão encerrada" e volta à tela de acesso
+  end
+  deactivate Filtro
+end
+
+group Reabrir o aplicativo com a biometria habilitada
+  U -> Gate : tocar em "Desbloquear"
+  Gate -> Bio : unlock()
+  activate Bio
+  note right of Bio : autentica o aparelho (biometria ou PIN) e lê o token\nguardado no cofre do aparelho
+  Bio -> Filtro : GET /api/users/me (Authorization: Bearer token guardado)
+  alt o filtro aceita o token (mesma validação do grupo anterior)
+    Filtro -> UCtrl : getMyProfile(authentication)
+    UCtrl --> Bio : 200 UserProfileResponseDTO
+    Bio -> Ctx : signIn(AuthSession)
+    Bio --> Gate : locked = false
+    Gate --> U : mostra a área principal
+  else o filtro recusa o token
+    Filtro --> Bio : 401
+    Bio -> Ctx : signOut()
+    Bio --> U : aviso "Sessão encerrada" e volta à tela de acesso
+  end
+  deactivate Bio
+end
+@enduml

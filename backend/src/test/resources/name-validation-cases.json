@@ -1,0 +1,188 @@
+[
+  {
+    "label": "two characters",
+    "input": "Li",
+    "normalized": "Li",
+    "valid": true
+  },
+  {
+    "label": "three characters",
+    "input": "Ana",
+    "normalized": "Ana",
+    "valid": true
+  },
+  {
+    "label": "accents",
+    "input": "João da Silva",
+    "normalized": "João da Silva",
+    "valid": true
+  },
+  {
+    "label": "outer spaces",
+    "input": "  Ana  ",
+    "normalized": "Ana",
+    "valid": true
+  },
+  {
+    "label": "outer tabs and newline",
+    "input": "\t Ana \r\n",
+    "normalized": "Ana",
+    "valid": true
+  },
+  {
+    "label": "internal spaces preserved",
+    "input": " Ana  Maria ",
+    "normalized": "Ana  Maria",
+    "valid": true
+  },
+  {
+    "label": "hyphen",
+    "input": "Anne-Marie",
+    "normalized": "Anne-Marie",
+    "valid": true
+  },
+  {
+    "label": "apostrophe",
+    "input": "O'Connor",
+    "normalized": "O'Connor",
+    "valid": true
+  },
+  {
+    "label": "non Latin characters",
+    "input": "李雷",
+    "normalized": "李雷",
+    "valid": true
+  },
+  {
+    "label": "numeric name",
+    "input": "12",
+    "normalized": "12",
+    "valid": true
+  },
+  {
+    "label": "100 characters",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "label": "100 characters with padding",
+    "input": "  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  ",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "label": "99 characters",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "label": "non breaking space",
+    "input": " Ana ",
+    "normalized": "Ana",
+    "valid": true
+  },
+  {
+    "label": "em space",
+    "input": " Ana ",
+    "normalized": "Ana",
+    "valid": true
+  },
+  {
+    "label": "byte order mark",
+    "input": "﻿Ana﻿",
+    "normalized": "Ana",
+    "valid": true
+  },
+  {
+    "label": "mixed Unicode padding",
+    "input": " \tAna　",
+    "normalized": "Ana",
+    "valid": true
+  },
+  {
+    "label": "empty",
+    "input": "",
+    "normalized": "",
+    "valid": false
+  },
+  {
+    "label": "spaces only",
+    "input": "    ",
+    "normalized": "",
+    "valid": false
+  },
+  {
+    "label": "one character",
+    "input": "a",
+    "normalized": "a",
+    "valid": false
+  },
+  {
+    "label": "one character with padding",
+    "input": " a ",
+    "normalized": "a",
+    "valid": false
+  },
+  {
+    "label": "one character with non breaking spaces",
+    "input": " a ",
+    "normalized": "a",
+    "valid": false
+  },
+  {
+    "label": "one character with tab",
+    "input": "\ta\n",
+    "normalized": "a",
+    "valid": false
+  },
+  {
+    "label": "tabs and newlines only",
+    "input": "\t\r\n",
+    "normalized": "",
+    "valid": false
+  },
+  {
+    "label": "101 characters",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  },
+  {
+    "label": "255 characters",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  },
+  {
+    "label": "256 characters",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  },
+  {
+    "label": "Unicode spaces only",
+    "input": "  ﻿",
+    "normalized": "",
+    "valid": false
+  },
+  {
+    "label": "one accented character",
+    "input": "É",
+    "normalized": "É",
+    "valid": false
+  },
+  {
+    "label": "one non Latin character",
+    "input": "李",
+    "normalized": "李",
+    "valid": false
+  },
+  {
+    "label": "one non Latin character with padding",
+    "input": " 　李 ",
+    "normalized": "李",
+    "valid": false
+  }
+]

@@ -11,6 +11,7 @@ import com.spotmeet.backend.dto.VerifyRecoveryCodeDTO;
 import com.spotmeet.backend.dto.VerifyEmailDTO;
 import com.spotmeet.backend.model.User;
 import com.spotmeet.backend.security.JwtUtil;
+import com.spotmeet.backend.security.AuthenticationAttempts;
 import com.spotmeet.backend.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Locale;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 /**
  * Authentication controller, public routes (/api/auth/**).
@@ -45,6 +49,9 @@ public class AuthController {
     @Autowired
     private JwtUtil jwtUtil;
 
+    @Autowired
+    private AuthenticationAttempts attempts;
+
     /**
      * POST /api/auth/register
      * Registers a new user and sends the confirmation code.
@@ -60,14 +67,7 @@ public class AuthController {
             response.put("message", result.getMessage());
             response.put("email", newUser.getEmail());
             response.put("name", newUser.getName());
-            response.put("channel", "EMAIL");
-            response.put("delivered", result.isDelivered());
             response.put("emailVerified", false);
-
-            if (!result.isDelivered()) {
-                response.put("devCode", result.getOtpCode());
-                response.put("warning", result.getWarning());
-            }
 
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
 
@@ -85,22 +85,14 @@ public class AuthController {
      */
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequestDTO dto) {
+        Instant issuedAt = Instant.now().truncatedTo(ChronoUnit.MILLIS);
         try {
-            Authentication authentication = authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(dto.getEmail().trim().toLowerCase(), dto.getPassword())
-            );
+            Authentication authentication = attempts.verify(AuthenticationAttempts.Purpose.LOGIN, dto.getEmail(),
+                    () -> authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(
+                            dto.getEmail().trim().toLowerCase(Locale.ROOT), dto.getPassword())));
 
             User user = (User) authentication.getPrincipal();
-            String token = jwtUtil.generateToken(user.getEmail(), user.getRole());
-
-            return ResponseEntity.ok(new AuthResponseDTO(
-                    token,
-                    user.getRole(),
-                    user.getName(),
-                    user.getEmail(),
-                    user.getId(),
-                    user.isEmailVerified()
-            ));
+            return ResponseEntity.ok(createSession(user, issuedAt));
 
         } catch (DisabledException e) {
             Map<String, Object> errorResponse = new HashMap<>();
@@ -123,15 +115,22 @@ public class AuthController {
 
     /**
      * POST /api/auth/verify-email
-     * Validates the code received by the user and activates the account.
+     * Consumes the verification code and starts a session for the verified account.
      */
     @PostMapping("/verify-email")
     public ResponseEntity<?> verifyEmail(@Valid @RequestBody VerifyEmailDTO dto) {
+        Instant issuedAt = Instant.now().truncatedTo(ChronoUnit.MILLIS);
         try {
-            String message = userService.verifyEmail(dto);
+            AuthResponseDTO session = createSession(userService.verifyEmail(dto), issuedAt);
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
-            response.put("message", message);
+            response.put("message", "Conta verificada com sucesso.");
+            response.put("token", session.getToken());
+            response.put("role", session.getRole());
+            response.put("name", session.getName());
+            response.put("email", session.getEmail());
+            response.put("userId", session.getUserId());
+            response.put("emailVerified", session.isEmailVerified());
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             Map<String, Object> error = new HashMap<>();
@@ -139,6 +138,14 @@ public class AuthController {
             error.put("message", e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
+    }
+
+    private AuthResponseDTO createSession(User user, Instant issuedAt) {
+        if (user.getTokensValidAfter() != null && !issuedAt.isAfter(user.getTokensValidAfter())) {
+            issuedAt = user.getTokensValidAfter().plusMillis(1);
+        }
+        String token = jwtUtil.generateToken(user.getEmail(), user.getRole(), issuedAt);
+        return new AuthResponseDTO(token, user.getRole(), user.getName(), user.getEmail(), user.getId(), user.isEmailVerified());
     }
 
     /**
@@ -151,13 +158,6 @@ public class AuthController {
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("message", result.getMessage());
-        response.put("channel", result.getChannel());
-        response.put("delivered", result.isDelivered());
-
-        if (!result.isDelivered() && result.getOtpCode() != null) {
-            response.put("devCode", result.getOtpCode());
-            response.put("warning", result.getWarning());
-        }
 
         return ResponseEntity.ok(response);
     }
@@ -173,13 +173,6 @@ public class AuthController {
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("message", result.getMessage());
-        response.put("channel", result.getChannel());
-        response.put("delivered", result.isDelivered());
-
-        if (!result.isDelivered() && result.getOtpCode() != null) {
-            response.put("devCode", result.getOtpCode());
-            response.put("warning", result.getWarning());
-        }
 
         return ResponseEntity.ok(response);
     }

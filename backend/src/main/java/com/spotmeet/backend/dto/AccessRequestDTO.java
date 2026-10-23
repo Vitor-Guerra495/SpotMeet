@@ -7,7 +7,7 @@ import jakarta.validation.constraints.NotBlank;
  */
 public class AccessRequestDTO {
 
-    @NotBlank(message = "Chave da organizacao e obrigatoria.")
+    @NotBlank(message = "Chave da organização é obrigatória.")
     private String accessKey;
 
     public AccessRequestDTO() {}

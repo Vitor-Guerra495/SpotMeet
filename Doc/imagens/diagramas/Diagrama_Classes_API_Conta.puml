@@ -1,0 +1,107 @@
+@startuml Diagrama_Classes_API_Conta
+!pragma layout smetana
+title
+SpotMeet - Diagrama de classes da API: Conta de usuário (RF01, RF02, RF14 a RF18)
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+package "API (backend)" {
+class AuthController <<controller>> {
+  +register()
+  +login()
+  +verifyEmail()
+  +resendVerification()
+  +forgotPassword()
+  +verifyRecoveryCode()
+  +resetPassword()
+}
+class UserController <<controller>> {
+  +getMyProfile()
+  +updateMyProfile()
+  +changeMyPassword()
+  +requestEmailChange()
+  +confirmEmailChange()
+  +resendNewEmailCode()
+  +completeEmailChange()
+}
+class ProfilePhotoController <<controller>> {
+  +get()
+  +save()
+  +remove()
+  +missingPhoto()
+  +oversizedPhoto()
+}
+class UserService <<service>> {
+  +registerUser()
+  +getMyProfile()
+  +updateMyProfile()
+  +updateAvailabilityStatus()
+  +updatePreferredTheme()
+  +verifyEmail()
+  +resendVerification()
+  +forgotPassword()
+  +verifyRecoveryCode()
+  +resetPassword()
+  +changePassword()
+  +requestEmailChange()
+  +confirmEmailChange()
+  +resendNewEmailCode()
+  +completeEmailChange()
+}
+class ProfilePhotoService <<service>> {
+  +get()
+  +save()
+  +remove()
+}
+class EmailService <<service>> {
+  +sendVerificationEmail()
+  +sendPasswordRecoveryEmail()
+  +sendCurrentEmailChangeCode()
+  +sendNewEmailConfirmationCode()
+  +sendPasswordChangedEmail()
+}
+class EmailDeliveryService <<service>> {
+  +sendEmail()
+  +sendPasswordChangedEmail()
+}
+class JwtUtil <<segurança>> {
+  +generateToken()
+  +generateToken()
+  +extractEmail()
+  +extractRole()
+  +extractExpiration()
+  +extractIssuedAt()
+  +extractClaim()
+  +isTokenValid()
+  +isTokenValid()
+}
+class JwtAuthFilter <<segurança>> {
+
+}
+class AuthenticationAttempts <<segurança>> {
+  +verify()
+}
+class UserDetailsServiceImpl <<segurança>> {
+  +loadUserByUsername()
+}
+interface AuditLogRepository <<repository>>
+interface UserProfilePhotoRepository <<repository>>
+interface UserRepository <<repository>>
+}
+AuthController --> AuthenticationAttempts
+AuthController --> JwtUtil
+AuthController --> UserService
+UserController --> JwtUtil
+UserController --> UserService
+ProfilePhotoController --> ProfilePhotoService
+UserService ..> AuditLogRepository
+UserService --> AuthenticationAttempts
+UserService --> EmailService
+UserService ..> UserRepository
+ProfilePhotoService ..> UserProfilePhotoRepository
+ProfilePhotoService ..> UserRepository
+EmailService --> EmailDeliveryService
+JwtAuthFilter --> JwtUtil
+UserDetailsServiceImpl ..> UserRepository
+@enduml

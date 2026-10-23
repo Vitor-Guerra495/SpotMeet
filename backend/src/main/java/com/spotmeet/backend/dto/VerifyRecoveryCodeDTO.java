@@ -1,6 +1,8 @@
 package com.spotmeet.backend.dto;
 
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 
 /**
  * Checks a recovery code on its own, before the new password is typed
@@ -9,9 +11,11 @@ import jakarta.validation.constraints.NotBlank;
 public class VerifyRecoveryCodeDTO {
 
     @NotBlank(message = "E-mail é obrigatório.")
+    @Email(regexp = ValidationPatterns.EMAIL, message = "Formato de e-mail inválido.")
     private String email;
 
     @NotBlank(message = "O token ou código de recuperação é obrigatório.")
+    @Pattern(regexp = ValidationPatterns.OTP, message = "O código de verificação deve conter 6 dígitos numéricos.")
     private String token;
 
     public VerifyRecoveryCodeDTO() {}
