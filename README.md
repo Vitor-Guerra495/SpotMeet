@@ -117,7 +117,7 @@ A documentação inicial do projeto está dividida nos seguintes arquivos:
 | [02 - Arquitetura e Tecnologias](Doc/02-arquitetura-tecnologias.md) | Arquitetura cliente-servidor, tecnologias e segurança |
 | [03 - Padrões e Qualidade](Doc/03-padroes-qualidade.md) | Nomenclatura, práticas de programação, Git e estratégia de testes |
 | [04 - Design e UI/UX](Doc/04-design.md) | Identidade visual, cores, tipografia, componentes e telas |
-| [05 - Documento de Requisitos do Incremento 1](Doc/05-documento-requisitos.md) | Requisitos funcionais e não funcionais, diagramas de casos de uso, classes, relacional e sequência, dicionário de dados e testes |
+| [05 - Documento de Requisitos dos Incrementos 1 e 2](Doc/05-documento-requisitos.md) | Requisitos funcionais e não funcionais, diagramas de casos de uso, classes, relacional e sequência, dicionário de dados e testes |
 
 ## Estrutura da Documentação
 
@@ -140,7 +140,7 @@ SpotMeet/
         |   |-- Tela_Calendario.jpg
         |   |-- Tela_Atas.jpg
         |   `-- Tela_Ajuste.jpg
-        `-- diagramas/    # diagramas do Incremento 1
+        `-- diagramas/    # diagramas dos Incrementos 1 e 2 (PNG e fonte PlantUML)
 ```
 
 ## Como Executar
