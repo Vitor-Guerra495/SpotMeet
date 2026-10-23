@@ -1,0 +1,83 @@
+@startuml Sequencia_RF23
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF23 (Resetar Sistema)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Administrador\ndo sistema" as A
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AdminControlsScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":AdminController" as Ctrl
+participant ":AdminService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":OrganizationInvitation\nRepository" as InvRepo
+participant ":AccessRequest\nRepository" as AccRepo
+participant ":CommitteeMember\nRepository" as CmRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":OrganizationMember\nRepository" as OmRepo
+participant ":Organization\nRepository" as OrgRepo
+end box
+
+A -> Tela : tocar na aba "Controles" e em "Executar Reset Total do Sistema"
+Tela --> A : abre a janela "Confirmar reset total" (campos "Confirmação" e "Motivo (opcional)")
+A -> Tela : digitar CONFIRM_FULL_RESET e tocar em "Executar Reset"
+alt texto diferente de CONFIRM_FULL_RESET
+  Tela --> A : exibe "Digite exatamente CONFIRM_FULL_RESET." e não envia a requisição
+else texto correto
+  note right of Tela : useAdminOperation.execute envia a requisição; o motivo vazio\nvira "Manutenção administrativa de segurança"
+  Tela -> Filtro : POST /api/admin/system/reset (CriticalActionRequestDTO)
+  Filtro -> Ctrl : resetSystem(dto, authentication)
+  note right of Ctrl : @Valid: confirmation em branco gera 400 pelo GlobalExceptionHandler\n("O token ou chave de confirmação é obrigatório.")
+  activate Ctrl
+  Ctrl -> Svc : resetSystem(dto, email)
+  activate Svc
+  note over Svc : transação única
+  Svc -> UserRepo : findByEmailForUpdate(email)
+  UserRepo --> Svc : Optional<User> (linha bloqueada)
+  alt confirmation diferente de CONFIRM_FULL_RESET
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Tela : 400 "Código de confirmação inválido. ..."
+    Tela --> A : exibe a mensagem na janela
+  else confirmation correta
+    Svc -> AuditRepo : deleteAllExceptAdminLogs(adminId)
+    AuditRepo --> Svc : void
+    Svc -> InvRepo : deleteAllInBatch()
+    InvRepo --> Svc : void
+    Svc -> AccRepo : deleteAllInBatch()
+    AccRepo --> Svc : void
+    Svc -> CmRepo : deleteAllInBatch()
+    CmRepo --> Svc : void
+    Svc -> ComRepo : deleteAllInBatch()
+    ComRepo --> Svc : void
+    Svc -> OmRepo : deleteAllInBatch()
+    OmRepo --> Svc : void
+    Svc -> OrgRepo : deleteAllInBatch()
+    OrgRepo --> Svc : void
+    Svc -> UserRepo : deleteAllExceptAdmin(adminId)
+    UserRepo --> Svc : void
+    Svc -> UserRepo : save(User com tokensValidAfter = agora)
+    UserRepo --> Svc : User
+    Svc -> AuditRepo : save(AuditLog ADMIN_SYSTEM_FULL_RESET)
+    AuditRepo --> Svc : AuditLog
+    alt reset concluído
+      Svc --> Ctrl : Map {success, message, adminPreserved, reason, timestamp}
+      Ctrl --> Tela : 200 {success, message, adminPreserved, reason, timestamp}
+      Tela --> A : encerra a sessão (signOut), volta ao login e exibe "Reset concluído"
+    else erro durante o reset
+      Svc --> Ctrl : Exception (transação desfeita)
+      Ctrl --> Tela : 500 "Erro ao executar reset: <mensagem>"
+      Tela --> A : exibe "Não foi possível concluir a operação. Tente novamente."
+    end
+  end
+  deactivate Svc
+  deactivate Ctrl
+end
+@enduml

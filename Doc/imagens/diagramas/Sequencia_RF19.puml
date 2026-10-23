@@ -1,0 +1,113 @@
+@startuml Sequencia_RF19
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF19 (Inicializar Sistema)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":App" as App
+participant ":api" as Api
+participant ":discovery" as Disc
+participant ":ServerSettings" as Srv
+participant ":AppUpdateNotice" as Notice
+end box
+box "API (backend)" #F6FFF4
+participant ":InfoEndpoint" as Info
+participant ":AppRelease\nController" as RelCtrl
+participant ":AppRelease\nService" as RelSvc
+participant ":BackendApplication" as Main
+participant ":DatabaseCreator" as Criador
+participant ":UserRepository" as Repo
+participant ":PasswordEncoder" as Enc
+end box
+actor "Administrador\ndo sistema" as A
+
+group Iniciar o servidor
+  A -> Main : iniciar o servidor (mvnw spring-boot:run): main(args)
+  activate Main
+  Main -> Criador : createIfMissing(environment)
+  note right of Criador : ouvinte de ApplicationEnvironmentPreparedEvent: roda depois de ler\no .env e antes de abrir o pool de conexões, com DB_URL, DB_USERNAME e DB_PASSWORD
+  alt o banco não existe
+    note right of Criador : cria o banco e escreve "Banco <nome> criado." no console
+  else a conexão com o PostgreSQL falha
+    note right of Criador : escreve "Nao foi possivel verificar o banco <nome>" e segue
+  end
+  Criador --> Main : void
+  note over Main : SpringApplication.run(args) abre o pool; o Hibernate (ddl-auto=update)\ncria tabelas e colunas ausentes, sem apagar dados
+  Main -> Repo : findByEmail("sysadmin@spotmeet.com") (ApplicationRunner sysAdminBootstrap)
+  Repo --> Main : Optional<User>
+  alt conta ausente
+    Main -> Enc : encode("Admin@123")
+    Enc --> Main : hash BCrypt (custo 12)
+    Main -> Repo : save(User SYSADMIN, e-mail verificado)
+    Repo --> Main : User
+    Main --> A : console: "[SpotMeet] SysAdmin Provisionado", com e-mail e senha padrão
+  else conta existente
+    note over Main : nada é alterado
+  end
+  deactivate Main
+end
+
+group Abrir o aplicativo e localizar o servidor
+  U -> App : abrir o aplicativo
+  activate App
+  App -> Api : loadPersistedApiHost()
+  Api --> App : void (lê "@spotmeet/api-host")
+  App -> Api : needsDiscovery()
+  Api --> App : boolean
+  opt sem host salvo, sem EXPO_PUBLIC_API_HOST e sem servidor do Expo
+    App --> U : exibe "Procurando o servidor na rede..."
+    App -> Disc : discoverBackendHost(onProgress)
+    loop host em cache e depois a sub-rede /24, em lotes de 64, até achar
+      Disc -> Disc : isSpotMeetBackend(host)
+      Disc -> Info : GET /actuator/info (limite de 1,2 s)
+      Info --> Disc : 200 {app: {name: "SpotMeet"}}
+    end
+    Disc --> App : DiscoveryResult {host, ownIp, fromCache}
+    App -> Api : setDiscoveredHost(host)
+    Api --> App : void
+  end
+  App --> U : exibe a tela de login ("Acessar conta") e o rodapé "Servidor: <host>:<porta> (<origem>)"
+  deactivate App
+end
+
+group Configurar o endereço do servidor
+  U -> Srv : tocar em "Servidor: <host>:<porta>"
+  Srv --> U : exibe o campo de IP e os botões "Procurar na rede", "Salvar" e "Automático"
+  alt tocar em "Salvar" ou "Automático"
+    Srv -> Api : setApiHost(IP digitado ou null)
+    Api --> Srv : void (grava ou remove "@spotmeet/api-host")
+  else tocar em "Procurar na rede"
+    Srv -> Disc : discoverBackendHost(onProgress)
+    Disc -> Info : GET /actuator/info (em cada host candidato)
+    Info --> Disc : 200 {app: {name: "SpotMeet"}}
+    Disc --> Srv : DiscoveryResult
+    Srv -> Api : setDiscoveredHost(host)
+    Api --> Srv : void
+  end
+  Srv --> U : atualiza o rodapé "Servidor: <host>:<porta> (<origem>)"
+end
+
+group Avisar sobre nova versão do aplicativo (APK Android)
+  Notice -> RelCtrl : GET /api/app/android-release
+  activate RelCtrl
+  RelCtrl -> RelSvc : getAndroidRelease()
+  RelSvc --> RelCtrl : Optional<AndroidReleaseDTO>
+  alt configuração APP_ANDROID_* válida
+    RelCtrl --> Notice : 200 AndroidReleaseDTO (Cache-Control: no-store)
+    opt versionCode maior que o instalado
+      Notice --> U : exibe "Nova versão disponível", com "Atualizar" e "Agora não"
+      U -> Notice : tocar em "Atualizar"
+      Notice --> U : abre a página da build no Expo (Linking.openURL)
+    end
+  else configuração ausente ou inválida
+    RelCtrl --> Notice : 204 sem corpo
+  end
+  deactivate RelCtrl
+end
+@enduml

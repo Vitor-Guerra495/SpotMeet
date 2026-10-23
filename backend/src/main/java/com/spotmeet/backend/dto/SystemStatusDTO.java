@@ -40,10 +40,16 @@ public class SystemStatusDTO {
     }
 
     public static class MemoryInfo {
+        private String name;
+        private String status;
+        private String details;
         private long totalMb;
         private long usedMb;
         private long freeMb;
         private int processors;
+        private Long maxMb;
+        private Double usagePercent;
+        private Double processCpuPercent;
 
         public MemoryInfo() {}
 
@@ -54,6 +60,12 @@ public class SystemStatusDTO {
             this.processors = processors;
         }
 
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
+        public String getDetails() { return details; }
+        public void setDetails(String details) { this.details = details; }
         public long getTotalMb() { return totalMb; }
         public void setTotalMb(long totalMb) { this.totalMb = totalMb; }
         public long getUsedMb() { return usedMb; }
@@ -62,6 +74,12 @@ public class SystemStatusDTO {
         public void setFreeMb(long freeMb) { this.freeMb = freeMb; }
         public int getProcessors() { return processors; }
         public void setProcessors(int processors) { this.processors = processors; }
+        public Long getMaxMb() { return maxMb; }
+        public void setMaxMb(Long maxMb) { this.maxMb = maxMb; }
+        public Double getUsagePercent() { return usagePercent; }
+        public void setUsagePercent(Double usagePercent) { this.usagePercent = usagePercent; }
+        public Double getProcessCpuPercent() { return processCpuPercent; }
+        public void setProcessCpuPercent(Double processCpuPercent) { this.processCpuPercent = processCpuPercent; }
     }
 
     // Getters and setters

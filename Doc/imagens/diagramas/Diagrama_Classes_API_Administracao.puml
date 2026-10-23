@@ -1,0 +1,68 @@
+@startuml Diagrama_Classes_API_Administracao
+!pragma layout smetana
+title
+SpotMeet - Diagrama de classes da API: Administração do sistema (RF19 a RF23)
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+package "API (backend)" {
+class AdminController <<controller>> {
+  +listOrganizations()
+  +listPendingOrganizations()
+  +invalidModerationBody()
+  +approveOrganization()
+  +rejectOrganization()
+  +updateOrganizationStatus()
+  +getSystemStatus()
+  +getSystemDetails()
+  +getReports()
+  +restartSystem()
+  +resetSystem()
+}
+class AppReleaseController <<controller>> {
+  +androidRelease()
+}
+class AdminService <<service>> {
+  +listOrganizations()
+  +listPendingOrganizations()
+  +approveOrganization()
+  +rejectOrganization()
+  +updateOrganizationStatus()
+  +getSystemStatus()
+  +getSystemDetails()
+  +getReports()
+  +restartSystem()
+  +resetSystem()
+}
+class SystemMonitoringService <<service>> {
+  +getVersion()
+  +getUptimeSeconds()
+  +collect()
+  +collectResources()
+  +getOverallStatus()
+}
+class AppReleaseService <<service>> {
+  +getAndroidRelease()
+}
+interface AccessRequestRepository <<repository>>
+interface AuditLogRepository <<repository>>
+interface CommitteeMemberRepository <<repository>>
+interface CommitteeRepository <<repository>>
+interface OrganizationInvitationRepository <<repository>>
+interface OrganizationMemberRepository <<repository>>
+interface OrganizationRepository <<repository>>
+interface UserRepository <<repository>>
+}
+AdminController --> AdminService
+AppReleaseController --> AppReleaseService
+AdminService ..> AccessRequestRepository
+AdminService ..> AuditLogRepository
+AdminService ..> CommitteeMemberRepository
+AdminService ..> CommitteeRepository
+AdminService ..> OrganizationInvitationRepository
+AdminService ..> OrganizationMemberRepository
+AdminService ..> OrganizationRepository
+AdminService --> SystemMonitoringService
+AdminService ..> UserRepository
+@enduml

@@ -1,0 +1,70 @@
+@startuml Sequencia_RF21
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF21 (Consultar Relatórios)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Administrador\ndo sistema" as A
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AdminMonitoring\nReportsScreen" as Tela
+participant ":useLiveSync" as Live
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":AdminController" as Ctrl
+participant ":AdminService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":LgpdMaskUtil" as Lgpd
+end box
+
+A -> Tela : tocar na aba "Monitoramento"
+Live -> Tela : loadData(silent = true) a cada 4 s, em foco
+Tela -> Filtro : GET /api/admin/reports
+note right of Tela : o mesmo ciclo envia GET /api/admin/system/status (RF20)
+Filtro -> Ctrl : getReports(authentication)
+activate Ctrl
+Ctrl -> Svc : getReports(email)
+activate Svc
+Svc -> UserRepo : findByEmail(email)
+UserRepo --> Svc : Optional<User>
+alt executor com perfil ADMIN ou SYSADMIN
+  Svc -> UserRepo : findAll()
+  UserRepo --> Svc : List<User>
+  note right of Svc : conta o total, os verificados e os perfis USER, ADMIN e SYSADMIN
+  Svc -> OrgRepo : findAll()
+  OrgRepo --> Svc : List<Organization>
+  note right of Svc : conta o total, as aprovadas e as pendentes
+  Svc -> ComRepo : count()
+  ComRepo --> Svc : long
+  Svc -> AuditRepo : count()
+  AuditRepo --> Svc : long
+  Svc -> AuditRepo : findTop100ByOrderByCreatedAtDesc()
+  AuditRepo --> Svc : List<AuditLog>
+  loop até 15 registros mais recentes
+    Svc -> Lgpd : maskEmail(e-mail do autor)
+    Lgpd --> Svc : String
+    Svc -> Lgpd : sanitizeDetails(details)
+    Lgpd --> Svc : String
+  end
+  Svc --> Ctrl : AdminReportDTO
+  Ctrl --> Tela : 200 AdminReportDTO
+  Tela --> A : exibe "Usuários cadastrados", "Visão geral", "API" e "Atividades recentes"
+else conta não encontrada ou perfil sem permissão
+  Svc --> Ctrl : SecurityException
+  Ctrl --> Tela : 403 texto da mensagem
+  Tela --> A : exibe "Acesso negado pelo servidor. Esta área exige permissão administrativa."
+else falha inesperada
+  Svc --> Ctrl : Exception
+  Ctrl --> Tela : 500 "Erro ao gerar relatórios: <mensagem>"
+  Tela --> A : mantém os últimos dados e exibe "Não foi possível atualizar o monitoramento."
+end
+deactivate Svc
+deactivate Ctrl
+@enduml

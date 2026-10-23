@@ -1,10 +1,12 @@
 package com.spotmeet.backend;
 
+import com.spotmeet.backend.config.DatabaseCreator;
 import com.spotmeet.backend.model.User;
 import com.spotmeet.backend.repository.UserRepository;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.event.ApplicationEnvironmentPreparedEvent;
 import org.springframework.context.annotation.Bean;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -12,7 +14,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 public class BackendApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(BackendApplication.class, args);
+        SpringApplication app = new SpringApplication(BackendApplication.class);
+        // Fires after the .env is loaded and before the connection pool is created
+        app.addListeners((ApplicationEnvironmentPreparedEvent event) ->
+                DatabaseCreator.createIfMissing(event.getEnvironment()));
+        app.run(args);
     }
 
     /**

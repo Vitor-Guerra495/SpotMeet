@@ -1,0 +1,72 @@
+@startuml Sequencia_RF22
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF22 (Reiniciar Subsistemas)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Administrador\ndo sistema" as A
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AdminControlsScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":AdminController" as Ctrl
+participant ":AdminService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":DataSource" as DS
+participant ":System" as Sys
+participant ":TomcatWebServer" as Tomcat
+participant ":AuditLogRepository" as AuditRepo
+end box
+
+A -> Tela : tocar na aba "Controles"
+A -> Tela : selecionar "Banco de dados" ou "Recursos" e tocar em "Reiniciar subsistema"
+Tela --> A : abre a janela "Reiniciar <subsistema>" com o campo "Motivo (opcional)"
+A -> Tela : preencher o motivo e tocar em "Confirmar reinício"
+note right of Tela : useAdminOperation.execute envia a requisição, com o\ncampo confirmation = "RESTART_SYSTEM" e o motivo (padrão\n"Reinicialização rotineira de subsistemas")
+Tela -> Filtro : POST /api/admin/system/restart (CriticalActionRequestDTO)
+Filtro -> Ctrl : restartSystem(dto, authentication)
+activate Ctrl
+Ctrl -> Svc : restartSystem(dto, email)
+activate Svc
+note over Svc : transação única
+Svc -> UserRepo : findByEmail(email)
+UserRepo --> Svc : Optional<User>
+alt subsystem ausente ou inválido
+  Svc --> Ctrl : IllegalArgumentException
+  Ctrl --> Tela : 400 "Subsistema inválido. Escolha Banco de Dados, Rede ou Recursos."
+  Tela --> A : exibe a mensagem na janela
+else subsystem DATABASE, RESOURCES ou NETWORK
+  alt DATABASE
+    Svc -> DS : unwrap(HikariDataSource).getHikariPoolMXBean().softEvictConnections()
+    DS --> Svc : void
+    Svc -> DS : getConnection()
+    DS --> Svc : Connection (testada com isValid(2))
+  else RESOURCES
+    Svc -> Sys : gc()
+    Sys --> Svc : void
+    note right of Svc : calcula a memória liberada com Runtime.totalMemory() e freeMemory()
+  else NETWORK (aceito pela API; o aplicativo não oferece esta opção)
+    Svc -> Tomcat : getTomcat().getService().findConnectors()
+    Tomcat --> Svc : Connector[]
+    note right of Svc : a thread "network-restart" fecha e reabre o conector HTTP\ncerca de 1 s depois de a resposta ser enviada
+  end
+  alt reinício aceito
+    Svc -> AuditRepo : save(AuditLog ADMIN_SYSTEM_RESTART)
+    AuditRepo --> Svc : AuditLog
+    Svc --> Ctrl : Map {success, subsystem, message, executor, timestamp}
+    Ctrl --> Tela : 200 {success, subsystem, message, executor, timestamp}
+    Tela --> A : fecha a janela, exibe "Solicitação aceita" e atualiza o Monitoramento
+  else a conexão nova do banco não é válida
+    Svc --> Ctrl : IllegalStateException
+    Ctrl --> Tela : 500 "Erro ao reiniciar subsistemas: <mensagem>"
+    Tela --> A : exibe "Não foi possível concluir a operação. Tente novamente."
+  end
+end
+deactivate Svc
+deactivate Ctrl
+@enduml

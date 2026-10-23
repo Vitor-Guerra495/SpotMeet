@@ -1,611 +1,165 @@
-import React, { useState, useCallback } from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, ActivityIndicator,
-  RefreshControl, Platform,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { showAlert } from '../../utils/alerts';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { Ionicons, type IoniconsIconName } from '@react-native-vector-icons/ionicons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme, type ThemeColors } from '../../context/ThemeContext';
 import { API_BASE_URL } from '../../config/api';
 import { useLiveSync } from '../../hooks/useLiveSync';
+import { useRefreshRequest } from '../../hooks/useRefreshRequest';
+import { AdminHeader, AdminCard, AdminAction, AdminError, AdminEmpty, AdminSheet, AdminMetric, StatusBadge } from '../../components/admin/AdminUi';
+import { isAdminRole, isRecord, recordValue, textValue, parseStatus, parseReport, parseDetails, formatNumber, formatPercent, formatBytes, formatUptime, formatTimestamp, auditLabel,
+  type SystemStatus, type AdminReport, type SystemDetails, type ResourceInfo } from '../../utils/adminData';
 
-interface SubsystemInfo {
-  name: string;
-  status: string;
-  details: string;
-}
-
-interface MemoryInfo {
-  totalMb: number;
-  usedMb: number;
-  freeMb: number;
-  processors: number;
-}
-
-interface SystemStatus {
-  overallStatus: string;
-  version: string;
-  uptimeSeconds: number;
-  timestamp: string;
-  database: SubsystemInfo;
-  network: SubsystemInfo;
-  memory: MemoryInfo;
-}
-
-interface AuditActivity {
-  id: number;
-  action: string;
-  executorName: string;
-  executorEmailMasked: string;
-  sanitizedDetails: string;
-  createdAt: string;
-}
-
-interface AggregatedReports {
-  totalUsers: number;
-  verifiedUsers: number;
-  usersByRole: { [key: string]: number };
-  totalOrganizations: number;
-  approvedOrganizations: number;
-  pendingOrganizations: number;
-  totalCommittees: number;
-  totalAuditLogs: number;
-  recentActivities: AuditActivity[];
-  generatedAt: string;
-}
-
-// Portuguese labels for subsystem status values returned by the API
-const SUBSYSTEM_STATUS_LABELS: Record<string, string> = {
-  OPERATIONAL: 'OPERACIONAL',
-  DEGRADED: 'DEGRADADO',
-  ONLINE: 'ONLINE',
-  ACTIVE: 'ATIVO',
-  WARNING: 'ALERTA',
-  FAILURE: 'FALHA',
-};
-
-// Portuguese labels for audit log actions (falls back to the raw value)
-const ACTION_LABELS: Record<string, string> = {
-  USER_REGISTERED: 'USUARIO_CADASTRADO',
-  ACCOUNT_VERIFIED: 'CONTA_VERIFICADA',
-  VERIFICATION_RESENT: 'VERIFICACAO_REENVIADA',
-  PASSWORD_RECOVERY_REQUESTED: 'SOLICITACAO_RECUPERACAO_SENHA',
-  PASSWORD_RESET: 'SENHA_REDEFINIDA',
-  PROFILE_UPDATED: 'PERFIL_ATUALIZADO',
-  LGPD_EMAIL_CHANGE_REQUESTED: 'LGPD_SOLICITACAO_TROCA_EMAIL',
-  LGPD_EMAIL_CHANGED: 'LGPD_EMAIL_ALTERADO_SUCESSO',
-  ORGANIZATION_CREATED: 'ORG_CRIADA',
-  ORGANIZATION_DELETED: 'ORGANIZACAO_EXCLUIDA',
-  ACCESS_REQUESTED: 'ACESSO_SOLICITADO',
-  ACCESS_APPROVED: 'ACESSO_APROVADO',
-  ACCESS_REJECTED: 'ACESSO_REJEITADO',
-  ACCESS_REVOKED: 'ACESSO_REVOGADO',
-  ROLE_PROMOTED_VICE_OWNER: 'CARGO_ELEVADO_VICELIDER',
-  ROLE_PROMOTED_SUBOWNER: 'CARGO_ELEVADO_SUBDONO',
-  ROLE_DEMOTED_SUBOWNER: 'CARGO_REBAIXADO_SUBDONO',
-  ROLE_DEMOTED_MEMBER: 'CARGO_REBAIXADO_MEMBRO',
-  COMMITTEE_CREATED: 'COMISSAO_CRIADA',
-  COMMITTEE_DELETED: 'COMISSAO_EXCLUIDA',
-  COMMITTEE_INVITATION_SENT: 'COMISSAO_CONVITE_ENVIADO',
-  COMMITTEE_INVITATION_ACCEPTED: 'COMISSAO_CONVITE_ACEITO',
-  COMMITTEE_INVITATION_DECLINED: 'COMISSAO_CONVITE_RECUSADO',
-  COMMITTEE_JOIN_REQUESTED: 'COMISSAO_ENTRADA_SOLICITADA',
-  COMMITTEE_JOIN_APPROVED: 'COMISSAO_SOLICITACAO_APROVADA',
-  COMMITTEE_JOIN_REJECTED: 'COMISSAO_SOLICITACAO_REJEITADA',
-  COMMITTEE_MEMBER_REMOVED: 'COMISSAO_INTEGRANTE_REMOVIDO',
-  ADMIN_ORGANIZATIONS_LISTED: 'ADMIN_LISTAR_ORGANIZACOES',
-  ADMIN_PENDING_ORGANIZATIONS_LISTED: 'ADMIN_LISTAR_PENDENTES',
-  ADMIN_ORGANIZATION_APPROVED: 'ADMIN_ORG_APROVADA',
-  ADMIN_ORGANIZATION_REJECTED: 'ADMIN_ORG_REJEITADA',
-  ADMIN_ORGANIZATION_STATUS_CHANGED: 'ADMIN_ORG_STATUS_ALTERADO',
-  ADMIN_REPORTS_VIEWED: 'ADMIN_RELATORIOS_CONSULTADOS',
-  ADMIN_SYSTEM_RESTART: 'ADMIN_SISTEMA_REINICIAR',
-  ADMIN_SYSTEM_FULL_RESET: 'ADMIN_SISTEMA_RESET_TOTAL',
-};
-
-const statusLabel = (value: string | undefined, fallback: string) =>
-  value ? (SUBSYSTEM_STATUS_LABELS[value] || value) : fallback;
-
-const actionLabel = (value: string) => ACTION_LABELS[value] || value;
+type Detail = 'DATABASE' | 'NETWORK' | 'RESOURCES' | 'API';
+const TITLES: Record<Detail, string> = { DATABASE: 'Banco de dados', NETWORK: 'Rede', RESOURCES: 'Recursos', API: 'API' };
+const TABLES: Record<string, string> = { users: 'Usuários', organizations: 'Organizações', organization_members: 'Integrantes de organizações', access_requests: 'Pedidos de acesso',
+  organization_invitations: 'Convites de organização', committees: 'Comissões', committee_members: 'Integrantes de comissões', audit_logs: 'Registros de auditoria' };
 
 export default function AdminMonitoringReportsScreen() {
-  const insets = useSafeAreaInsets();
-  const { token, role } = useAuth();
-  const [status, setStatus] = useState<SystemStatus | null>(null);
-  const [report, setReport] = useState<AggregatedReports | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const { token, role, getSession } = useAuth(); const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]), version = getSession().version;
+  const [status, setStatus] = useState<SystemStatus | null>(null), [report, setReport] = useState<AdminReport | null>(null);
+  const [loading, setLoading] = useState(true), [refreshing, setRefreshing] = useState(false), [error, setError] = useState('');
+  const [selected, setSelected] = useState<Detail | null>(null), [details, setDetails] = useState<SystemDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false), [detailsError, setDetailsError] = useState('');
+  const isAdmin = isAdminRole(role), refreshRequest = useRefreshRequest(role);
+  const detailsRequest = useRefreshRequest(`${role}:${selected ?? ''}`);
+  useEffect(() => {
+    setStatus(null); setReport(null); setDetails(null); setSelected(null); setError(''); setDetailsError('');
+    setLoading(!!token && isAdmin); setRefreshing(false); setDetailsLoading(false);
+  }, [token, role, version, isAdmin, API_BASE_URL]);
 
-  const isAdmin = role === 'ADMIN' || role === 'SYSADMIN';
-
-  const formatUptime = (seconds: number) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hrs}h ${mins}m ${secs}s`;
-  };
-
-  const loadData = useCallback(async (silent = false) => {
-    if (!token || !isAdmin) {
-      setLoading(false);
-      return;
-    }
+  const deny = () => { refreshRequest.cancel(); detailsRequest.cancel(); setStatus(null); setReport(null); setDetails(null); setSelected(null); setDetailsLoading(false); setError('Acesso negado pelo servidor. Esta área exige permissão administrativa.'); };
+  const loadData = useCallback((silent = false) => refreshRequest.run(async ({ signal, isCurrent, isCurrentScope }) => {
+    if (!token || !isAdmin) return;
     if (!silent) setLoading(true);
-
     try {
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      };
-
-      const [resStatus, resReports] = await Promise.all([
-        fetch(`${API_BASE_URL}/admin/system/status`, { method: 'GET', headers }),
-        fetch(`${API_BASE_URL}/admin/reports`, { method: 'GET', headers }),
+      const headers = { Authorization: `Bearer ${token}` };
+      const [statusResponse, reportResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/admin/system/status`, { headers, signal }), fetch(`${API_BASE_URL}/admin/reports`, { headers, signal }),
       ]);
-
-      if (resStatus.ok) {
-        const statusData: SystemStatus = await resStatus.json();
-        setStatus(statusData);
-      } else {
-        const errorText = await resStatus.text();
-        console.warn('Status do sistema indisponível:', errorText);
-      }
-
-      if (resReports.ok) {
-        const reportData: AggregatedReports = await resReports.json();
-        setReport(reportData);
-      } else {
-        const errorText = await resReports.text();
-        console.warn('Relatórios indisponíveis:', errorText);
-      }
-    } catch (err: any) {
-      if (!silent) {
-        const msg = err.message?.includes('fetch') || err.message?.includes('Network')
-          ? 'Não foi possível conectar ao servidor (localhost:8080). Verifique se o backend está iniciado.'
-          : (err.message || 'Falha ao carregar dados de monitoramento.');
-        showAlert('Atenção', msg);
-      }
-    } finally {
-      if (!silent) setLoading(false);
-      setRefreshing(false);
-    }
-  }, [token, isAdmin]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [loadData])
-  );
-
-  // Real-time sync of infrastructure metrics and audit while the tab is active
-  useLiveSync(
-    useCallback(() => {
-      loadData(true);
-    }, [loadData]),
-    {
-      intervalMs: 4000,
-      eventTypes: [
-        'MONITORING_REFRESH',
-        'ADMIN_ORGS_MUTATED',
-        'ORGANIZATIONS_MUTATED',
-        'VISIBILITY_RESTORED',
-      ],
-    }
-  );
-
-  if (loading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#5C6BC0" />
-        <Text style={styles.loadingText}>Carregando métricas e status seguro...</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <View style={styles.headerLeft}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="stats-chart" size={18} color="#FFF" />
-          </View>
-          <View>
-            <Text style={styles.headerTitle}>Monitoramento & Relatórios</Text>
-            <Text style={styles.headerSubtitle}>Métricas Agregadas & Conformidade</Text>
-          </View>
-        </View>
-        <View style={styles.healthTag}>
-          <View style={styles.greenPulse} />
-          <Text style={styles.healthText}>{statusLabel(status?.overallStatus, 'OPERACIONAL')}</Text>
-        </View>
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true);
-              loadData();
-            }}
-            tintColor="#5C6BC0"
-          />
-        }
-      >
-        {/* Data protection banner */}
-        <View style={styles.secBanner}>
-          <Ionicons name="shield-checkmark" size={16} color="#81C784" style={{ marginRight: 8 }} />
-          <Text style={styles.secBannerText}>
-            Relatórios em Conformidade LGPD: Dados sensíveis agregados e identificadores individuais ofuscados.
-          </Text>
-        </View>
-
-        {/* Section: subsystem status */}
-        <Text style={styles.sectionTitle}>Status dos Subsistemas</Text>
-
-        <View style={styles.cardsGrid}>
-          {/* Database */}
-          <View style={styles.subsystemCard}>
-            <View style={styles.subsystemHeader}>
-              <Ionicons name="server" size={18} color="#4FC3F7" />
-              <Text style={styles.subsystemName}>Banco</Text>
-              <View style={styles.statusPillActive}>
-                <Text style={styles.statusPillText}>{statusLabel(status?.database?.status, 'ONLINE')}</Text>
-              </View>
-            </View>
-            <Text style={styles.subsystemDetail}>{status?.database?.details || 'PostgreSQL Conectado'}</Text>
-          </View>
-
-          {/* Network */}
-          <View style={styles.subsystemCard}>
-            <View style={styles.subsystemHeader}>
-              <Ionicons name="wifi" size={18} color="#4DB6AC" />
-              <Text style={styles.subsystemName}>Rede</Text>
-              <View style={styles.statusPillActive}>
-                <Text style={styles.statusPillText}>{statusLabel(status?.network?.status, 'ONLINE')}</Text>
-              </View>
-            </View>
-            <Text style={styles.subsystemDetail}>{status?.network?.details || 'Servidor respondendo às requisições REST'}</Text>
-          </View>
-
-          {/* JVM resources */}
-          <View style={styles.subsystemCard}>
-            <View style={styles.subsystemHeader}>
-              <Ionicons name="hardware-chip" size={18} color="#BA68C8" />
-              <Text style={styles.subsystemName}>Recursos</Text>
-              <View style={styles.statusPillActive}>
-                <Text style={styles.statusPillText}>Uptime: {status ? formatUptime(status.uptimeSeconds) : '--'}</Text>
-              </View>
-            </View>
-            <Text style={styles.subsystemDetail}>
-              RAM Usada: {status?.memory?.usedMb || 0} MB / {status?.memory?.totalMb || 0} MB ({status?.memory?.processors || 0} CPUs)
-            </Text>
-          </View>
-        </View>
-
-        {/* Section: aggregated SpotMeet metrics */}
-        <Text style={styles.sectionTitle}>Métricas do Ecossistema</Text>
-
-        <View style={styles.statsContainer}>
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>{report?.totalUsers ?? 0}</Text>
-            <Text style={styles.statLabel}>Usuários Totais</Text>
-            <Text style={styles.statSub}>{report?.verifiedUsers ?? 0} verificados</Text>
-          </View>
-
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>{report?.totalOrganizations ?? 0}</Text>
-            <Text style={styles.statLabel}>Organizações</Text>
-            <Text style={styles.statSub}>{report?.approvedOrganizations ?? 0} ativas</Text>
-          </View>
-
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>{report?.totalCommittees ?? 0}</Text>
-            <Text style={styles.statLabel}>Comissões</Text>
-            <Text style={styles.statSub}>Equipes ativas</Text>
-          </View>
-
-          <View style={styles.statBox}>
-            <Text style={styles.statNumber}>{report?.totalAuditLogs ?? 0}</Text>
-            <Text style={styles.statLabel}>Auditorias</Text>
-            <Text style={styles.statSub}>Eventos rastreados</Text>
-          </View>
-        </View>
-
-        {/* Role distribution */}
-        <View style={styles.distributionCard}>
-          <Text style={styles.distributionTitle}>Distribuição de Perfis no Sistema</Text>
-          <View style={styles.distRow}>
-            <View style={styles.distItem}>
-              <View style={[styles.dot, { backgroundColor: '#5C6BC0' }]} />
-              <Text style={styles.distText}>Comum: {report?.usersByRole?.['USER'] ?? 0}</Text>
-            </View>
-            <View style={styles.distItem}>
-              <View style={[styles.dot, { backgroundColor: '#FFB74D' }]} />
-              <Text style={styles.distText}>Admin: {report?.usersByRole?.['ADMIN'] ?? 0}</Text>
-            </View>
-            <View style={styles.distItem}>
-              <View style={[styles.dot, { backgroundColor: '#E53935' }]} />
-              <Text style={styles.distText}>SysAdmin: {report?.usersByRole?.['SYSADMIN'] ?? 0}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Recent audit history (anonymized) */}
-        <Text style={styles.sectionTitle}>Auditoria Recente (Logs Anonimizados)</Text>
-
-        {report?.recentActivities && report.recentActivities.length > 0 ? (
-          report.recentActivities.map((log) => (
-            <View key={log.id} style={styles.logCard}>
-              <View style={styles.logHeader}>
-                <Text style={styles.logAction}>{actionLabel(log.action)}</Text>
-                <Text style={styles.logDate}>
-                  {log.createdAt ? log.createdAt.replace('T', ' ').substring(0, 19) : ''}
-                </Text>
-              </View>
-              <Text style={styles.logAuthor}>
-                Autor: {log.executorName} ({log.executorEmailMasked})
-              </Text>
-              {log.sanitizedDetails ? (
-                <Text style={styles.logDetails}>{log.sanitizedDetails}</Text>
-              ) : null}
-            </View>
-          ))
-        ) : (
-          <View style={styles.emptyLog}>
-            <Text style={styles.emptyLogText}>Nenhum registro de auditoria no período.</Text>
-          </View>
-        )}
-      </ScrollView>
-    </View>
-  );
+      if (!isCurrent()) return;
+      if (statusResponse.status === 401 || reportResponse.status === 401) return;
+      if (statusResponse.status === 403 || reportResponse.status === 403) { deny(); return; }
+      if (!statusResponse.ok || !reportResponse.ok) throw new Error('Monitoring unavailable');
+      const nextStatus = parseStatus(await statusResponse.json()), nextReport = parseReport(await reportResponse.json());
+      if (isCurrent()) { setStatus(nextStatus); setReport(nextReport); setError(''); }
+    } catch { if (isCurrent()) setError('Não foi possível atualizar o monitoramento. Os últimos dados recebidos foram preservados.'); }
+    finally { if (isCurrentScope()) { setLoading(false); setRefreshing(false); } }
+  }), [token, isAdmin, refreshRequest, detailsRequest.cancel]);
+  useFocusEffect(useCallback(() => { void loadData(true); }, [loadData]));
+  useLiveSync(useCallback(() => loadData(true), [loadData]), { intervalMs: 4000, enabled: !!token && isAdmin,
+    eventTypes: ['ADMIN_ORGS_MUTATED', 'ORGANIZATIONS_MUTATED', 'MEMBERS_MUTATED', 'COMMITTEES_MUTATED', 'MONITORING_REFRESH', 'VISIBILITY_RESTORED'] });
+  const refresh = () => { if (refreshRequest.isActive()) { setRefreshing(true); void loadData(true); } };
+  const loadDetails = useCallback(() => detailsRequest.run(async ({ signal, isCurrent, isCurrentScope }) => {
+    if (!token || !isAdmin || !selected || selected === 'NETWORK') return;
+    setDetailsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/system/details`, { headers: { Authorization: `Bearer ${token}` }, signal });
+      if (!isCurrent()) return;
+      if (res.status === 401) return;
+      if (res.status === 403) { deny(); return; }
+      if (!res.ok) throw new Error('Details unavailable');
+      const next = parseDetails(await res.json());
+      if (isCurrent()) { setDetails(next); setDetailsError(''); }
+    } catch { if (isCurrent()) setDetailsError('Não foi possível consultar os detalhes. Tente novamente.'); }
+    finally { if (isCurrentScope()) setDetailsLoading(false); }
+  }), [token, isAdmin, selected, detailsRequest, refreshRequest.cancel]);
+  useEffect(() => { if (selected) void loadDetails(); }, [selected, loadDetails]);
+  const open = (kind: Detail) => {
+    if (!isAdmin || !refreshRequest.isActive()) return;
+    detailsRequest.cancel(); setDetails(null); setDetailsError(''); setDetailsLoading(kind !== 'NETWORK'); setSelected(kind);
+  };
+  const close = () => { if (detailsRequest.isActive()) { detailsRequest.cancel(); setSelected(null); setDetails(null); setDetailsError(''); setDetailsLoading(false); } };
+  const tiles: { kind: Detail; icon: IoniconsIconName; state: string | null | undefined; summary: string }[] = [
+    { kind: 'DATABASE', icon: 'server-outline', state: status?.database.status, summary: status?.database.details ?? 'Sem leitura do banco' },
+    { kind: 'NETWORK', icon: 'globe-outline', state: status?.network.status, summary: status?.network.details ?? 'Sem leitura do conector HTTP' },
+    { kind: 'RESOURCES', icon: 'hardware-chip-outline', state: status?.memory.status, summary: `Heap: ${formatPercent(status?.memory.usagePercent)} do máximo` },
+  ];
+  const db = details?.database ?? {}, api = details?.api ?? {}, pool = recordValue(db.pool), tableRows = recordValue(db.tableRows);
+  const requestMetrics = api.requestMetricsAvailable === true;
+  const routes = Array.isArray(api.topRoutes) ? api.topRoutes.filter(isRecord).slice(0, 3) : [];
+  if (!isAdmin) return <View style={styles.container}><AdminHeader title="Monitoramento" subtitle="Área administrativa" /><AdminEmpty text="Acesso restrito a administradores." /></View>;
+  return <View style={styles.container}>
+    <AdminHeader title="Monitoramento" subtitle="Estado do servidor e atividades recentes" onRefresh={refresh} refreshing={refreshing} disabled={refreshing} />
+    <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.primary} colors={[colors.primary]} />}>
+      <AdminError message={error} />{error && <AdminAction label="Tentar novamente" onPress={refresh} icon="refresh-outline" />}
+      {loading && !status && !report && <ActivityIndicator color={colors.primary} />}
+      <View style={styles.row}><StatusBadge value={status?.overallStatus} /><Text style={styles.caption}>Consulta leve a cada 4 segundos</Text></View>
+      <Text style={styles.caption}>Última leitura: {formatTimestamp(status?.timestamp)}</Text>
+      <View style={styles.tiles}>{tiles.map(tile => <TouchableOpacity key={tile.kind} accessibilityRole="button" accessibilityLabel={`Detalhes de ${TITLES[tile.kind]}`} onPress={() => open(tile.kind)} style={styles.tile}>
+        <Ionicons name={tile.icon} size={24} color={colors.isDark ? '#ADB5EF' : colors.primary} /><Text style={styles.tileTitle}>{TITLES[tile.kind]}</Text><View style={styles.tileState}><StatusBadge value={tile.state} /></View>
+      </TouchableOpacity>)}</View>
+      {tiles.filter(tile => tile.kind !== 'NETWORK').map(tile => <Text key={tile.kind} style={styles.caption}>{TITLES[tile.kind]}: {tile.summary}</Text>)}
+      <AdminCard><View style={styles.usersHeader}><View style={styles.usersTitle}><Ionicons name="people-outline" size={26} color={colors.isDark ? '#ADB5EF' : colors.primary} />
+        <Text style={[styles.cardTitle, styles.flex]}>Usuários cadastrados</Text></View><Text style={styles.hero}>{formatNumber(report?.totalUsers)}</Text></View>
+        <AdminMetric label="E-mails verificados" value={formatNumber(report?.verifiedUsers)} />
+        <AdminMetric label="Usuários comuns" value={formatNumber(report?.usersByRole.USER)} /><AdminMetric label="Administradores" value={formatNumber(report?.usersByRole.ADMIN)} />
+        <AdminMetric label="Superadministradores" value={formatNumber(report?.usersByRole.SYSADMIN)} />
+      </AdminCard>
+      <AdminCard><Text style={styles.cardTitle}>Visão geral</Text><AdminMetric label="Organizações" value={formatNumber(report?.totalOrganizations)} />
+        <AdminMetric label="Aprovadas" value={formatNumber(report?.approvedOrganizations)} /><AdminMetric label="Pendentes" value={formatNumber(report?.pendingOrganizations)} />
+        <AdminMetric label="Comissões" value={formatNumber(report?.totalCommittees)} /><AdminMetric label="Registros de auditoria" value={formatNumber(report?.totalAuditLogs)} />
+        <Text style={styles.caption}>Relatório de {formatTimestamp(report?.generatedAt)}</Text>
+      </AdminCard>
+      <AdminCard><Text style={styles.cardTitle}>API</Text><AdminMetric label="Versão" value={status?.version ?? 'Indisponível'} /><AdminMetric label="Tempo em execução" value={formatUptime(status?.uptimeSeconds)} />
+        <AdminAction label="Detalhes da API" onPress={() => open('API')} icon="pulse-outline" />
+      </AdminCard>
+      <Text style={styles.cardTitle}>Atividades recentes</Text>
+      {report?.recentActivities.map(activity => <AdminCard key={activity.id}><Text style={styles.activityTitle}>{auditLabel(activity.action)}</Text>
+        <Text style={styles.caption}>{activity.executorName ?? 'Executor não informado'}{activity.executorEmailMasked ? ` (${activity.executorEmailMasked})` : ''}</Text>
+        {activity.sanitizedDetails && <Text style={styles.caption}>{activity.sanitizedDetails}</Text>}<Text style={styles.caption}>{formatTimestamp(activity.createdAt)}</Text>
+      </AdminCard>)}
+      {report && !report.recentActivities.length && <AdminEmpty text="Nenhuma atividade registrada." />}
+    </ScrollView>
+    <AdminSheet title={selected ? `Detalhes: ${TITLES[selected]}` : 'Detalhes'} visible={!!selected} onClose={close}>
+      <AdminError message={detailsError} />{detailsLoading && <ActivityIndicator color={colors.primary} />}
+      {selected === 'NETWORK' ? <AdminCard><StatusBadge value={status?.network.status} /><Text style={styles.caption}>{status?.network.details ?? 'Leitura indisponível.'}</Text>
+        <Text style={styles.caption}>A Rede representa o conector HTTP da API. O reinício fecha e reabre esse conector. Ele não reinicia o Wi-Fi nem a rede do aparelho.</Text>
+        <Text style={styles.caption}>Última leitura: {formatTimestamp(status?.timestamp)}</Text>
+      </AdminCard> : <><Text style={styles.caption}>Detalhes consultados sob demanda. Leitura de {formatTimestamp(details?.timestamp)}</Text>
+        <AdminAction label="Atualizar detalhes" onPress={loadDetails} disabled={detailsLoading} icon="refresh-outline" />
+        {details && selected === 'DATABASE' && <><AdminCard><StatusBadge value={textValue(db.status)} /><Text style={styles.caption}>{textValue(db.details) ?? 'Detalhes indisponíveis.'}</Text>
+          <AdminMetric label="Banco" value={textValue(db.name) ?? 'Indisponível'} /><AdminMetric label="PostgreSQL" value={textValue(db.version) ?? 'Indisponível'} />
+          <AdminMetric label="Tamanho" value={formatBytes(db.sizeBytes)} /><AdminMetric label="Tempo de consulta" value={formatNumber(db.responseTimeMs, ' ms')} />
+        </AdminCard><AdminCard><Text style={styles.cardTitle}>Conexões do backend</Text>
+          {([['active', 'Ativas'], ['idle', 'Livres'], ['waiting', 'Em espera'], ['total', 'Total'], ['maximum', 'Limite']] as const).map(([key, label]) => <AdminMetric key={key} label={label} value={formatNumber(pool[key])} />)}
+        </AdminCard><AdminCard><Text style={styles.cardTitle}>Linhas por tabela</Text>{Object.entries(TABLES).map(([key, label]) => <AdminMetric key={key} label={label} value={formatNumber(tableRows[key])} />)}</AdminCard></>}
+        {details && selected === 'RESOURCES' && <><ResourceDetails resources={details.resources} />
+          <Text style={styles.caption}>O heap é a memória usada pelo servidor Java. Ele sobe a cada requisição, inclusive as consultas deste painel, e cai quando a JVM faz a coleta de memória, sozinha ou pelo botão de coleta. Esse sobe e desce é normal.</Text></>}
+        {details && selected === 'API' && <><AdminCard><Text style={styles.cardTitle}>Execução e requisições</Text><AdminMetric label="Versão" value={textValue(api.version) ?? 'Indisponível'} /><AdminMetric label="Tempo em execução" value={formatUptime(api.uptimeSeconds)} />
+          <Text style={styles.caption}>Contadores desde {formatTimestamp(api.countersSince)}. Reiniciam com o processo do servidor. A leitura pode variar durante requisições em andamento.</Text>
+          {!requestMetrics && <Text style={styles.caption}>Métricas de requisições indisponíveis.</Text>}
+          {([['totalRequests', 'Requisições'], ['clientErrors', 'Erros 4xx'], ['serverErrors', 'Erros 5xx']] as const).map(([key, label]) => <AdminMetric key={key} label={label} value={formatNumber(requestMetrics ? api[key] : null)} />)}
+          <AdminMetric label="Resposta média" value={formatNumber(requestMetrics ? api.averageResponseTimeMs : null, ' ms')} /><AdminMetric label="Requisições ativas" value={formatNumber(api.activeRequests)} />
+          <AdminMetric label="Threads da JVM" value={formatNumber(api.jvmThreads)} /><AdminMetric label="Threads do Tomcat" value={formatNumber(api.tomcatCurrentThreads)} /><AdminMetric label="Threads ocupadas" value={formatNumber(api.tomcatBusyThreads)} />
+        </AdminCard><AdminCard><Text style={styles.cardTitle}>Rotas mais utilizadas</Text><Text style={styles.caption}>Até três rotas agrupadas pelo modelo do endpoint. Consultas de monitoramento não entram nesta lista.</Text>
+          {requestMetrics && routes.map((route, index) => <View key={index} style={styles.route}><Text style={styles.activityTitle}>{textValue(route.method) ?? ''} {textValue(route.route) ?? 'Rota indisponível'}</Text>
+            <AdminMetric label="Requisições" value={formatNumber(route.requests)} /><AdminMetric label="Resposta média" value={formatNumber(route.averageResponseTimeMs, ' ms')} /></View>)}
+          {(!requestMetrics || !routes.length) && <Text style={styles.caption}>{requestMetrics ? 'Sem requisições registradas para o ranking.' : 'Ranking indisponível.'}</Text>}
+        </AdminCard></>}
+      </>}
+    </AdminSheet>
+  </View>;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#121212',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 50,
-    paddingBottom: 15,
-    backgroundColor: '#1E1E1E',
-    borderBottomWidth: 1,
-    borderBottomColor: '#2C2C2C',
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  iconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: '#5C6BC0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: '#A0A0A0',
-  },
-  healthTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1B2E1E',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#2E7D32',
-  },
-  greenPulse: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#4CAF50',
-    marginRight: 6,
-  },
-  healthText: {
-    color: '#81C784',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  centerContainer: {
-    flex: 1,
-    backgroundColor: '#121212',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    color: '#A0A0A0',
-    fontSize: 14,
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 30,
-  },
-  secBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1B2E1E',
-    borderColor: '#2E7D32',
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  secBannerText: {
-    fontSize: 12,
-    color: '#A5D6A7',
-    flex: 1,
-    lineHeight: 16,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 12,
-    marginTop: 8,
-  },
-  cardsGrid: {
-    gap: 10,
-    marginBottom: 16,
-  },
-  subsystemCard: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 8,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#2D2D2D',
-  },
-  subsystemHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  subsystemName: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginLeft: 8,
-    flex: 1,
-  },
-  statusPillActive: {
-    backgroundColor: '#263238',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  statusPillText: {
-    fontSize: 11,
-    color: '#4FC3F7',
-    fontWeight: '600',
-  },
-  subsystemDetail: {
-    fontSize: 12,
-    color: '#A0A0A0',
-    lineHeight: 16,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 16,
-  },
-  statBox: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: '#1E1E1E',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#2D2D2D',
-  },
-  statNumber: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#5C6BC0',
-  },
-  statLabel: {
-    fontSize: 13,
-    color: '#FFF',
-    marginTop: 4,
-    fontWeight: '600',
-  },
-  statSub: {
-    fontSize: 11,
-    color: '#888',
-    marginTop: 2,
-  },
-  distributionCard: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 8,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#2D2D2D',
-  },
-  distributionTitle: {
-    fontSize: 13,
-    color: '#A0A0A0',
-    marginBottom: 10,
-    fontWeight: '600',
-  },
-  distRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  distItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  distText: {
-    fontSize: 12,
-    color: '#DDD',
-  },
-  logCard: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#5C6BC0',
-  },
-  logHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  logAction: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  logDate: {
-    fontSize: 11,
-    color: '#888',
-  },
-  logAuthor: {
-    fontSize: 12,
-    color: '#90CAF9',
-    marginBottom: 4,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
-  logDetails: {
-    fontSize: 12,
-    color: '#AAA',
-  },
-  emptyLog: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  emptyLogText: {
-    color: '#777',
-    fontSize: 13,
-  },
-});
+function ResourceDetails({ resources }: { resources: ResourceInfo }) {
+  const { colors } = useTheme();
+  return <AdminCard><StatusBadge value={resources.status} /><AdminMetric label="Heap utilizado" value={formatNumber(resources.usedMb, ' MiB')} />
+    <AdminMetric label="Heap reservado" value={formatNumber(resources.totalMb, ' MiB')} /><AdminMetric label="Livre no reservado" value={formatNumber(resources.freeMb, ' MiB')} />
+    <AdminMetric label="Heap máximo" value={formatNumber(resources.maxMb, ' MiB')} /><AdminMetric label="Uso do máximo" value={formatPercent(resources.usagePercent)} />
+    <AdminMetric label="CPU do processo" value={formatPercent(resources.processCpuPercent)} /><AdminMetric label="Processadores" value={formatNumber(resources.processors)} />
+    <Text style={{ marginTop: 8, color: colors.subtext, fontSize: 12, lineHeight: 19 }}>{resources.details ?? ''}</Text>
+  </AdminCard>;
+}
+function createStyles(colors: ThemeColors) { return StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background }, content: { paddingHorizontal: 20, paddingBottom: 24 }, flex: { flex: 1, minWidth: 0 },
+  row: { flexDirection: 'row', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' },
+  caption: { color: colors.subtext, fontSize: 12, lineHeight: 19, marginVertical: 4, flexShrink: 1 }, cardTitle: { color: colors.text, fontSize: 16, lineHeight: 23, fontWeight: '700', marginBottom: 8 },
+  hero: { color: colors.isDark ? '#ADB5EF' : colors.primary, fontSize: 34, lineHeight: 42, fontWeight: '700' },
+  tiles: { flexDirection: 'row', alignItems: 'stretch', gap: 8, marginVertical: 12 }, tile: { flex: 1, minWidth: 0, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: 10, alignItems: 'center', gap: 8 },
+  tileState: { marginTop: 'auto', paddingTop: 4, alignSelf: 'center', maxWidth: '100%' },
+  usersHeader: { alignItems: 'center', marginBottom: 16, gap: 8 }, usersTitle: { flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'stretch' },
+  tileTitle: { color: colors.text, fontSize: 13, lineHeight: 19, fontWeight: '600', textAlign: 'center' },
+  activityTitle: { color: colors.text, fontSize: 14, lineHeight: 21, fontWeight: '600', flexShrink: 1 }, route: { borderTopWidth: 1, borderColor: colors.border, paddingTop: 12, marginTop: 12 },
+}); }

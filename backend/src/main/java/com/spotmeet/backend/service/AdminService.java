@@ -5,6 +5,7 @@ import com.spotmeet.backend.dto.AdminReportDTO;
 import com.spotmeet.backend.dto.AdminReportDTO.AuditActivityDTO;
 import com.spotmeet.backend.dto.CriticalActionRequestDTO;
 import com.spotmeet.backend.dto.SystemStatusDTO;
+import com.spotmeet.backend.dto.SystemDetailsDTO;
 import com.spotmeet.backend.dto.SystemStatusDTO.MemoryInfo;
 import com.spotmeet.backend.dto.SystemStatusDTO.SubsystemInfo;
 import com.spotmeet.backend.model.AuditLog;
@@ -15,19 +16,35 @@ import com.spotmeet.backend.repository.AuditLogRepository;
 import com.spotmeet.backend.repository.CommitteeMemberRepository;
 import com.spotmeet.backend.repository.CommitteeRepository;
 import com.spotmeet.backend.repository.OrganizationMemberRepository;
+import com.spotmeet.backend.repository.OrganizationInvitationRepository;
 import com.spotmeet.backend.repository.OrganizationRepository;
 import com.spotmeet.backend.repository.UserRepository;
 import com.spotmeet.backend.security.LgpdMaskUtil;
 import com.zaxxer.hikari.HikariDataSource;
+import org.apache.catalina.LifecycleException;
+import org.apache.catalina.connector.Connector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.context.WebServerApplicationContext;
+import org.springframework.boot.web.embedded.tomcat.TomcatWebServer;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
+import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
+import java.net.Socket;
+import java.net.SocketException;
 import java.sql.Connection;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -37,6 +54,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class AdminService {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminService.class);
 
     @Autowired
     private OrganizationRepository organizationRepo;
@@ -60,9 +79,18 @@ public class AdminService {
     private AccessRequestRepository accessRequestRepo;
 
     @Autowired
+    private OrganizationInvitationRepository invitationRepo;
+
+    @Autowired
     private DataSource dataSource;
 
-    private final long instanceStartMs = System.currentTimeMillis();
+    @Autowired
+    private SystemMonitoringService monitoringService;
+
+    @Autowired
+    private ApplicationContext context;
+
+    private volatile LocalDateTime lastNetworkRestart;
 
     @Value("${server.port:8080}")
     private String serverPort;
@@ -71,7 +99,11 @@ public class AdminService {
      * Validates the executor permission (must be ADMIN or SYSADMIN).
      */
     private User validateSysAdmin(String executorEmail) {
-        User user = userRepo.findByEmail(executorEmail)
+        return validateSysAdmin(executorEmail, false);
+    }
+
+    private User validateSysAdmin(String executorEmail, boolean lockUser) {
+        User user = (lockUser ? userRepo.findByEmailForUpdate(executorEmail) : userRepo.findByEmail(executorEmail))
                 .orElseThrow(() -> new SecurityException("Usuário executor não encontrado."));
 
         String role = user.getRole();
@@ -90,7 +122,7 @@ public class AdminService {
         Long ownerId = org.getOwner() != null ? org.getOwner().getId() : null;
         String status = org.getStatus() != null ? org.getStatus() : (org.isApproved() ? "APPROVED" : "PENDING");
 
-        return new AdminOrganizationDTO(
+        AdminOrganizationDTO dto = new AdminOrganizationDTO(
                 org.getId(),
                 org.getName(),
                 org.getAccessKey(),
@@ -104,6 +136,10 @@ public class AdminService {
                 totalMembers,
                 totalCommittees
         );
+        dto.setModerationReason(org.getModerationReason());
+        dto.setResubmissionNote(org.getResubmissionNote());
+        dto.setResubmittedAt(org.getResubmittedAt());
+        return dto;
     }
 
     /**
@@ -142,11 +178,12 @@ public class AdminService {
     public AdminOrganizationDTO approveOrganization(Long orgId, String executorEmail) {
         User executor = validateSysAdmin(executorEmail);
 
-        Organization org = organizationRepo.findById(orgId)
+        Organization org = organizationRepo.findByIdForUpdate(orgId)
                 .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada para o ID: " + orgId));
 
         org.setApproved(true);
         org.setStatus("APPROVED");
+        org.setModerationReason(null);
         Organization saved = organizationRepo.save(org);
 
         try {
@@ -169,14 +206,16 @@ public class AdminService {
     public AdminOrganizationDTO rejectOrganization(Long orgId, String reason, String executorEmail) {
         User executor = validateSysAdmin(executorEmail);
 
-        Organization org = organizationRepo.findById(orgId)
+        Organization org = organizationRepo.findByIdForUpdate(orgId)
                 .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada para o ID: " + orgId));
 
+        String cleanReason = validateModerationReason(reason);
         org.setApproved(false);
         org.setStatus("REJECTED");
+        org.setModerationReason(cleanReason);
         Organization saved = organizationRepo.save(org);
 
-        String detail = reason != null && !reason.isBlank() ? " | Motivo: " + reason.trim() : "";
+        String detail = " | Motivo informado (" + cleanReason.length() + " caracteres)";
         try {
             auditLogRepo.save(new AuditLog(
                     executor,
@@ -197,15 +236,18 @@ public class AdminService {
     public AdminOrganizationDTO updateOrganizationStatus(Long orgId, boolean approved, String justification, String executorEmail) {
         User executor = validateSysAdmin(executorEmail);
 
-        Organization org = organizationRepo.findById(orgId)
+        Organization org = organizationRepo.findByIdForUpdate(orgId)
                 .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada para o ID: " + orgId));
 
+        String cleanReason = approved ? null : validateModerationReason(justification);
+        String newStatus = approved ? "APPROVED" : "BLOCKED";
         org.setApproved(approved);
-        org.setStatus(approved ? "APPROVED" : "BLOCKED");
+        org.setStatus(newStatus);
+        org.setModerationReason(cleanReason);
         Organization saved = organizationRepo.save(org);
 
         String statusStr = approved ? "APPROVED" : "BLOCKED";
-        String justificationDetail = justification != null && !justification.isBlank() ? " | Motivo: " + justification.trim() : "";
+        String justificationDetail = cleanReason == null ? "" : " | Motivo informado (" + cleanReason.length() + " caracteres)";
 
         try {
             auditLogRepo.save(new AuditLog(
@@ -220,56 +262,104 @@ public class AdminService {
         return toDTO(saved);
     }
 
+    private String validateModerationReason(String reason) {
+        String clean = reason == null ? "" : reason.replaceAll(com.spotmeet.backend.dto.ValidationPatterns.NAME_WHITESPACE, "");
+        if (clean.length() < 3 || clean.length() > 500
+                || clean.codePoints().anyMatch(value -> Character.isISOControl(value) && value != 10 && value != 9)) {
+            throw new com.spotmeet.backend.exception.InvalidModerationReasonException();
+        }
+        return clean;
+    }
+
     /**
      * Returns the health status of the system and its subsystems.
      */
     @Transactional(readOnly = true)
     public SystemStatusDTO getSystemStatus(String executorEmail) {
-        User executor = validateSysAdmin(executorEmail);
+        validateSysAdmin(executorEmail);
 
         SystemStatusDTO status = new SystemStatusDTO();
-        status.setOverallStatus("OPERATIONAL");
-        status.setVersion("1.0.0-PROD");
+        status.setVersion(monitoringService.getVersion());
         status.setTimestamp(LocalDateTime.now());
-        status.setUptimeSeconds((System.currentTimeMillis() - instanceStartMs) / 1000);
+        status.setUptimeSeconds(monitoringService.getUptimeSeconds());
 
-        // 1. Database subsystem
         SubsystemInfo dbInfo = new SubsystemInfo();
         dbInfo.setName("Banco de Dados PostgreSQL");
         try (Connection conn = dataSource.getConnection()) {
             boolean valid = conn.isValid(2);
             dbInfo.setStatus(valid ? "ONLINE" : "WARNING");
-            dbInfo.setDetails("Conexão ativa com pool HikariCP. Dialeto PostgreSQL ativo.");
+            dbInfo.setDetails(valid ? "Conexão com o banco validada."
+                    : "A conexão com o banco não passou na validação.");
         } catch (Exception e) {
             dbInfo.setStatus("FAILURE");
-            dbInfo.setDetails("Falha de comunicação: " + e.getMessage());
-            status.setOverallStatus("DEGRADED");
+            dbInfo.setDetails("Não foi possível consultar o banco de dados.");
         }
         status.setDatabase(dbInfo);
 
-        // 2. Network subsystem: the address and port this instance is actually serving on
-        SubsystemInfo netInfo = new SubsystemInfo();
-        netInfo.setName("Rede");
-        try {
-            InetAddress local = InetAddress.getLocalHost();
-            netInfo.setStatus("ONLINE");
-            netInfo.setDetails("Servidor em " + local.getHostAddress() + ":" + serverPort
-                    + " | Host: " + local.getHostName() + " | Requisições REST respondendo.");
-        } catch (Exception e) {
-            netInfo.setStatus("WARNING");
-            netInfo.setDetails("Servidor na porta " + serverPort + ". Endereço local indisponível: " + e.getMessage());
-        }
+        SubsystemInfo netInfo = buildNetworkInfo();
         status.setNetwork(netInfo);
 
-        // 3. JVM and memory resources
-        Runtime runtime = Runtime.getRuntime();
-        long totalMb = runtime.totalMemory() / (1024 * 1024);
-        long freeMb = runtime.freeMemory() / (1024 * 1024);
-        long usedMb = totalMb - freeMb;
-        int procs = runtime.availableProcessors();
-        status.setMemory(new MemoryInfo(totalMb, usedMb, freeMb, procs));
+        MemoryInfo resources = monitoringService.collectResources();
+        status.setMemory(resources);
+        status.setOverallStatus(monitoringService.getOverallStatus(dbInfo.getStatus(), netInfo.getStatus(), resources.getStatus()));
 
         return status;
+    }
+
+    public SystemDetailsDTO getSystemDetails(String executorEmail) {
+        validateSysAdmin(executorEmail);
+        return monitoringService.collect();
+    }
+
+    /**
+     * Network status: tries to connect to the server port and lists the IPv4 addresses of the active interfaces.
+     */
+    private SubsystemInfo buildNetworkInfo() {
+        SubsystemInfo info = new SubsystemInfo();
+        info.setName("Rede");
+
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", Integer.parseInt(serverPort)), 1000);
+        } catch (Exception e) {
+            info.setStatus("FAILURE");
+            info.setDetails("A porta " + serverPort + " não aceita conexões: " + e.getMessage());
+            return info;
+        }
+
+        String lastRestart = lastNetworkRestart == null
+                ? "sem reinício desde que o servidor iniciou"
+                : "último reinício em " + lastNetworkRestart.format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"));
+
+        List<String> addresses = listNetworkAddresses();
+        if (addresses.isEmpty()) {
+            info.setStatus("WARNING");
+            info.setDetails("Porta " + serverPort + " ativa, mas sem placa de rede conectada: só este computador acessa. "
+                    + lastRestart + ".");
+        } else {
+            info.setStatus("ONLINE");
+            info.setDetails("Porta " + serverPort + " aceitando conexões em " + String.join(", ", addresses)
+                    + " | " + lastRestart + ".");
+        }
+        return info;
+    }
+
+    private List<String> listNetworkAddresses() {
+        List<String> addresses = new ArrayList<>();
+        try {
+            for (NetworkInterface nic : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!nic.isUp() || nic.isLoopback()) {
+                    continue;
+                }
+                for (InetAddress address : Collections.list(nic.getInetAddresses())) {
+                    if (address instanceof Inet4Address && !address.isLinkLocalAddress()) {
+                        addresses.add(address.getHostAddress() + " (" + nic.getName() + ")");
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            log.warn("Não foi possível listar as interfaces de rede: {}", e.getMessage());
+        }
+        return addresses;
     }
 
     /**
@@ -376,14 +466,45 @@ public class AdminService {
     }
 
     /**
-     * Network: reads again the address and port the server is using.
+     * Network: closes the HTTP connector (the Tomcat component that listens on the server port) and opens it again.
+     * It runs in another thread after a short delay, so this response is sent before the connection is cut.
      */
     private String restartNetwork() {
+        if (!(context instanceof WebServerApplicationContext webContext)
+                || !(webContext.getWebServer() instanceof TomcatWebServer tomcat)) {
+            throw new IllegalStateException("O servidor web não é o Tomcat embutido, a rede não pode ser reiniciada.");
+        }
+        Connector[] connectors = tomcat.getTomcat().getService().findConnectors();
+        new Thread(() -> reopenConnectors(connectors), "network-restart").start();
+        return "Rede em reinicialização: a porta " + serverPort + " será fechada e reaberta em cerca de 1 segundo. "
+                + "Requisições em andamento nesse instante podem falhar.";
+    }
+
+    private synchronized void reopenConnectors(Connector[] connectors) {
         try {
-            InetAddress local = InetAddress.getLocalHost();
-            return "Rede reiniciada: servidor respondendo em " + local.getHostAddress() + ":" + serverPort + ".";
+            Thread.sleep(1000);
+            for (Connector connector : connectors) {
+                connector.stop();
+                startConnector(connector);
+            }
+            lastNetworkRestart = LocalDateTime.now();
+            log.info("Rede reiniciada: conector HTTP reaberto na porta {}.", serverPort);
         } catch (Exception e) {
-            return "Rede reiniciada: servidor respondendo na porta " + serverPort + ".";
+            log.error("Falha ao reiniciar a rede, o servidor pode ficar sem responder: {}", e.getMessage());
+        }
+    }
+
+    private void startConnector(Connector connector) throws LifecycleException, InterruptedException {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                connector.start();
+                return;
+            } catch (LifecycleException e) {
+                if (attempt == 3) {
+                    throw e;
+                }
+                Thread.sleep(1000);
+            }
         }
     }
 
@@ -405,7 +526,7 @@ public class AdminService {
      */
     @Transactional
     public Map<String, Object> resetSystem(CriticalActionRequestDTO dto, String executorEmail) {
-        User executor = validateSysAdmin(executorEmail);
+        User executor = validateSysAdmin(executorEmail, true);
 
         if (dto == null || !"CONFIRM_FULL_RESET".equals(dto.getConfirmation())) {
             throw new IllegalArgumentException("Código de confirmação inválido. Digite exatamente 'CONFIRM_FULL_RESET' para executar o Reset Total do Sistema.");
@@ -416,6 +537,8 @@ public class AdminService {
 
         // 1. Delete audit logs of other users (preserves the executing SysAdmin logs)
         auditLogRepo.deleteAllExceptAdminLogs(adminId);
+
+        invitationRepo.deleteAllInBatch();
 
         // 2. Delete all organization access requests
         accessRequestRepo.deleteAllInBatch();
@@ -434,6 +557,9 @@ public class AdminService {
 
         // 7. Delete all regular users (preserving only the administrator)
         userRepo.deleteAllExceptAdmin(adminId);
+
+        executor.setTokensValidAfter(Instant.now().truncatedTo(ChronoUnit.MILLIS));
+        userRepo.save(executor);
 
         // 8. Immutable audit record of the full reset
         try {

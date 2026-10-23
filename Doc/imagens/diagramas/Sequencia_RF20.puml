@@ -1,0 +1,99 @@
+@startuml Sequencia_RF20
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF20 (Consultar Status do Sistema)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Administrador\ndo sistema" as A
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AdminMonitoring\nReportsScreen" as Tela
+participant ":useLiveSync" as Live
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":AdminController" as Ctrl
+participant ":AdminService" as Svc
+participant ":UserRepository" as Repo
+participant ":SystemMonitoring\nService" as Mon
+participant ":DataSource" as DS
+participant ":Connection" as Conn
+participant ":MeterRegistry" as Reg
+end box
+
+group Consultar o status
+  A -> Tela : tocar na aba "Monitoramento"
+  Live -> Tela : loadData(silent = true) a cada 4 s, em foco
+  Tela -> Filtro : GET /api/admin/system/status
+  note right of Tela : o mesmo ciclo envia GET /api/admin/reports (RF21)
+  Filtro -> Ctrl : getSystemStatus(authentication)
+  activate Ctrl
+  Ctrl -> Svc : getSystemStatus(email)
+  activate Svc
+  Svc -> Repo : findByEmail(email)
+  Repo --> Svc : Optional<User>
+  alt executor com perfil ADMIN ou SYSADMIN
+    Svc -> Mon : getVersion()
+    Mon --> Svc : String
+    Svc -> Mon : getUptimeSeconds()
+    Mon --> Svc : long
+    Svc -> DS : getConnection()
+    DS --> Svc : Connection
+    Svc -> Conn : isValid(2)
+    Conn --> Svc : boolean
+    Svc -> Svc : buildNetworkInfo()
+    note right of Svc : testa 127.0.0.1:SERVER_PORT (1 s)\ne lista os IPv4 das placas ativas
+    Svc -> Mon : collectResources()
+    Mon --> Svc : MemoryInfo
+    Svc -> Mon : getOverallStatus(banco, rede, recursos)
+    Mon --> Svc : "OPERATIONAL" ou "DEGRADED"
+    Svc --> Ctrl : SystemStatusDTO
+    Ctrl --> Tela : 200 SystemStatusDTO
+    Tela --> A : exibe o estado geral e os cartões "Banco de dados", "Rede" e "Recursos"
+  else conta não encontrada ou perfil sem permissão
+    Svc --> Ctrl : SecurityException
+    Ctrl --> Tela : 403 texto da mensagem
+    Tela --> A : exibe "Acesso negado pelo servidor. Esta área exige permissão administrativa."
+  else falha inesperada
+    Svc --> Ctrl : Exception
+    Ctrl --> Tela : 500 "Não foi possível consultar o status do sistema."
+    Tela --> A : mantém os últimos dados e exibe "Não foi possível atualizar o monitoramento."
+  end
+  deactivate Svc
+  deactivate Ctrl
+end
+
+group Consultar os detalhes de Banco de dados, Recursos ou API
+  A -> Tela : tocar no cartão "Banco de dados" (ou "Recursos", "Detalhes da API")
+  Tela -> Filtro : GET /api/admin/system/details
+  Filtro -> Ctrl : getSystemDetails(authentication)
+  activate Ctrl
+  Ctrl -> Svc : getSystemDetails(email)
+  activate Svc
+  Svc -> Repo : findByEmail(email)
+  Repo --> Svc : Optional<User>
+  Svc -> Mon : collect()
+  activate Mon
+  Mon -> DS : getConnection()
+  DS --> Mon : Connection
+  Mon -> Conn : createStatement()
+  Conn --> Mon : Statement
+  note right of Mon : duas consultas fixas de leitura (latência e resumo do banco),\ncada uma com limite de 3 s
+  Mon -> Reg : find("http.server.requests").timers()
+  Reg --> Mon : Collection<Timer>
+  Mon -> Mon : collectResources()
+  Mon --> Svc : SystemDetailsDTO
+  deactivate Mon
+  Svc --> Ctrl : SystemDetailsDTO
+  Ctrl --> Tela : 200 SystemDetailsDTO
+  Tela --> A : exibe a janela "Detalhes: Banco de dados"
+  deactivate Svc
+  deactivate Ctrl
+  opt cartão "Rede"
+    Tela --> A : exibe a janela "Detalhes: Rede" com o status já recebido, sem nova requisição
+  end
+end
+@enduml

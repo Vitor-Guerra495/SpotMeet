@@ -1,0 +1,100 @@
+@startuml Sequencia_RF31
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF31 (Registrar Entrada na Reunião)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(convidado ou presidente)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingAttendancePanel" as Painel
+participant ":MeetingsScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingAttendanceController" as Ctrl
+participant ":MeetingAttendanceService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":MeetingRepository" as MeetRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Entrada individual (a própria, ou a de outra pessoa pelo presidente)
+  U -> Painel : tocar em "Registrar minha entrada" ou, em outra pessoa, "Registrar entrada"
+  Painel -> Tela : onEntry(userId)
+  Tela -> Filtro : POST /api/meetings/{meetingId}/participants/{userId}/entry
+  Filtro -> Ctrl : registerEntry(meetingId, userId, auth)
+  Ctrl -> Svc : registerEntry(meetingId, userId, email)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
+  Svc -> Svc : lockParticipantForRecord(meeting, actor, userId, now)
+  alt o usuário registra a própria entrada
+    Svc -> Acc : requireActiveMember(actor, committee)
+  else o usuário registra a de outra pessoa
+    Svc -> Acc : requirePresident(actor, committee)
+  end
+  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Acc : CommitteeMember
+  Svc -> Svc : requireInProgress(meeting, now)
+  Svc -> PartRepo : findForUpdate(meetingId, userId)
+  PartRepo --> Svc : MeetingParticipant (linha bloqueada)
+  alt permitido, reunião em andamento e sem entrada registrada
+    Svc -> PartRepo : save(participant com enteredAt = agora e enteredBy = quem registrou)
+    Svc -> Acc : invalidateList(meeting)
+    Acc -> MeetRepo : save(Meeting sem o carimbo da lista de presença)
+    Svc -> Acc : audit(actor, "MEETING_ENTRY_REGISTERED", meeting, " | Usuário ID: ...")
+    Acc -> AuditRepo : save(AuditLog)
+    Svc -> Acc : detail(meeting, actor, now)
+    Acc --> Svc : MeetingResponseDTO
+    Svc --> Ctrl : MeetingResponseDTO
+    Ctrl --> Tela : 200 MeetingResponseDTO
+    Tela --> U : aviso "Entrada registrada." e painel "Presença" atualizado
+  else sem permissão, fora do horário, não convidado ou entrada já registrada
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 ou 409 {message}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+end
+
+group Entrada de todos que aceitaram (presidente)
+  U -> Painel : tocar em "Entrada de todos que aceitaram"
+  Painel -> Tela : onEntryAll()
+  Tela --> U : confirmação "Registrar entrada de todos"
+  U -> Tela : confirmar com "Registrar"
+  Tela -> Filtro : POST /api/meetings/{meetingId}/attendance/entries
+  Filtro -> Ctrl : registerAllEntries(meetingId, auth)
+  Ctrl -> Svc : registerAllEntries(meetingId, email)
+  activate Svc
+  Svc -> Acc : requirePresident(president, committee)
+  Svc -> Svc : requireInProgress(meeting, now)
+  Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
+  PartRepo --> Svc : participantes
+  note right of Svc : separa quem aceitou o convite e ainda não tem entrada
+  alt presidente e reunião em andamento
+    Svc -> PartRepo : saveAll(pendentes com enteredAt = agora e enteredBy = presidente)
+    opt ao menos uma pessoa registrada
+      Svc -> Acc : invalidateList(meeting)
+    end
+    Svc -> Acc : audit(president, "MEETING_ENTRIES_REGISTERED_BULK", meeting, " | Pessoas: n")
+    Svc --> Ctrl : MeetingResponseDTO
+    Ctrl --> Tela : 200 MeetingResponseDTO
+    Tela --> U : aviso "Entradas registradas."
+  else não é presidente ou a reunião não está em andamento
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 ou 409 {message}
+  end
+  deactivate Svc
+end
+@enduml

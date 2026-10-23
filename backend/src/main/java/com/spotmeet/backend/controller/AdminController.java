@@ -13,11 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Administrative controller (SysAdmin panel).
- * Protected by JWT and strict role verification (ADMIN / SYSADMIN).
- * Every operation follows LGPD rules and writes immutable audit logs.
- */
+/** Administrative routes protected by JWT and ADMIN / SYSADMIN roles. */
 @RestController
 @RequestMapping("/api/admin")
 @CrossOrigin(origins = "*")
@@ -69,6 +65,11 @@ public class AdminController {
      * POST /api/admin/organizations/{id}/approve
      * Approves a pending organization.
      */
+    @org.springframework.web.bind.annotation.ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ResponseEntity<?> invalidModerationBody() {
+        return ResponseEntity.badRequest().body(Map.of("message", "Dados da moderação inválidos."));
+    }
+
     @PostMapping("/organizations/{id}/approve")
     public ResponseEntity<?> approveOrganization(
             @PathVariable Long id,
@@ -90,22 +91,24 @@ public class AdminController {
 
     /**
      * POST /api/admin/organizations/{id}/reject
-     * Rejects a pending organization. Optional body: { "reason": "..." }.
+     * Rejects an organization with a mandatory moderation reason.
      */
     @PostMapping("/organizations/{id}/reject")
     public ResponseEntity<?> rejectOrganization(
             @PathVariable Long id,
-            @RequestBody(required = false) Map<String, String> body,
+            @Valid @RequestBody com.spotmeet.backend.dto.OrganizationRejectionDTO body,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
-            String reason = body != null ? body.get("reason") : null;
+            String reason = body.getReason();
             AdminOrganizationDTO response = adminService.rejectOrganization(id, reason, authentication.getName());
             return ResponseEntity.ok(response);
         } catch (SecurityException e) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
+        } catch (com.spotmeet.backend.exception.InvalidModerationReasonException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (Exception e) {
@@ -132,6 +135,8 @@ public class AdminController {
             return ResponseEntity.ok(response);
         } catch (SecurityException e) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
+        } catch (com.spotmeet.backend.exception.InvalidModerationReasonException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (Exception e) {
@@ -139,10 +144,7 @@ public class AdminController {
         }
     }
 
-    /**
-     * GET /api/admin/system/status
-     * Returns the health of the system, database, cryptography and audit subsystems.
-     */
+    /** Returns the current database, network and JVM status. */
     @GetMapping("/system/status")
     public ResponseEntity<?> getSystemStatus(Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
@@ -154,7 +156,21 @@ public class AdminController {
         } catch (SecurityException e) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Erro ao verificar status: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Não foi possível consultar o status do sistema.");
+        }
+    }
+
+    @GetMapping("/system/details")
+    public ResponseEntity<?> getSystemDetails(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
+        }
+        try {
+            return ResponseEntity.ok(adminService.getSystemDetails(authentication.getName()));
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Não foi possível consultar os detalhes do sistema.");
         }
     }
 
