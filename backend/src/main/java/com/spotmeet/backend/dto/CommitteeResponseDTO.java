@@ -16,8 +16,15 @@ public class CommitteeResponseDTO {
     private long totalActiveMembers;
     private long totalPending;
     private LocalDateTime createdAt;
+    private String presidentName;
 
     public CommitteeResponseDTO() {}
+
+    /** Same data with the name of the active committee president, or null when none was designated. */
+    public CommitteeResponseDTO withPresident(String name) {
+        this.presidentName = name;
+        return this;
+    }
 
     public static CommitteeResponseDTO fromEntity(Committee c, long totalActive, long totalPending) {
         CommitteeResponseDTO dto = new CommitteeResponseDTO();
@@ -40,4 +47,5 @@ public class CommitteeResponseDTO {
     public long getTotalActiveMembers() { return totalActiveMembers; }
     public long getTotalPending() { return totalPending; }
     public LocalDateTime getCreatedAt() { return createdAt; }
+    public String getPresidentName() { return presidentName; }
 }

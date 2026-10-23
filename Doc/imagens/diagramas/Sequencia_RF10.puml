@@ -1,0 +1,143 @@
+@startuml Sequencia_RF10
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF10 (Manter Comissão)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+participant ":ConfirmationHost" as Conf
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":CommitteeController" as Ctrl
+participant ":CommitteeService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":OrganizationMemberRepository" as OrgMemRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Pesquisar comissões (integrante da organização)
+  U -> Tela : tocar na organização em "Minhas" (membro comum abre a lista; líder toca em "Comissões")
+  Tela -> Tela : loadDetails(organização)
+  Tela -> Filtro : GET /api/organizations/{organizationId}/committees
+  Filtro -> Ctrl : listCommittees(organizationId, auth)
+  Ctrl -> Svc : listCommittees(organizationId, email)
+  activate Svc
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+  OrgMemRepo --> Svc : boolean
+  alt é integrante da organização
+    Svc -> ComRepo : findByOrganizationIdOrderByNameAsc(organizationId)
+    ComRepo --> Svc : List<Committee>
+    loop cada comissão, para ACTIVE, PENDING_USER_ACCEPTANCE e PENDING_LEADER_APPROVAL
+      Svc -> CmRepo : countByCommitteeIdAndStatus(committeeId, status)
+      CmRepo --> Svc : long
+    end
+    Svc --> Ctrl : List<CommitteeResponseDTO>
+    Ctrl --> Tela : 200 List<CommitteeResponseDTO>
+    Tela --> U : exibe nome, descrição e as etiquetas "N ativos" e "N pendentes" (ou "Nenhuma comissão cadastrada nesta organização.")
+  else não é integrante
+    Svc --> Ctrl : SecurityException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 {message}
+    Tela -> Tela : clearSelection() e volta para a aba "Minhas"
+  end
+  deactivate Svc
+end
+
+group Editar comissão (dono, vice ou subdono)
+  U -> Tela : tocar em "Editar <comissão>"
+  Tela --> U : abre a folha "Editar comissão" com os dados atuais
+  U -> Tela : alterar os campos e tocar em "Salvar alterações"
+  Tela -> Tela : handleSheetSave(): validateCommitteeName(nome)
+  Tela -> Tela : mutate("/committees/{committeeId}", "PUT", {name, description})
+  Tela -> Filtro : PUT /api/committees/{committeeId} (CommitteeRequestDTO)
+  alt CommitteeRequestDTO inválido (@Valid)
+    Filtro -> Handler : MethodArgumentNotValidException
+    Handler --> Tela : 400 {message, errors}
+    Tela --> U : exibe a mensagem do campo na folha
+  else CommitteeRequestDTO válido
+    Filtro -> Ctrl : updateCommittee(committeeId, dto, auth)
+    Ctrl -> Svc : updateCommittee(committeeId, email, dto)
+    activate Svc
+    note over Svc : transação READ_COMMITTED
+    Svc -> ComRepo : findById(committeeId)
+    ComRepo --> Svc : Committee
+    Svc -> UserRepo : findByEmail(email)
+    UserRepo --> Svc : User
+    Svc -> OrgRepo : findByIdForUpdate(organizationId)
+    OrgRepo --> Svc : Organization (linha bloqueada)
+    Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+    Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+    OrgMemRepo --> Svc : Optional<OrganizationMember>
+    Svc -> Svc : validateName(name)
+    Svc -> ComRepo : existsByNormalizedName(organizationId, name, espaços, committeeId)
+    ComRepo --> Svc : boolean
+    alt é dono, vice ou subdono, a comissão existe e o nome não é de outra comissão
+      Svc -> ComRepo : save(Committee com novo nome e descrição)
+      ComRepo --> Svc : Committee
+      Svc -> AuditRepo : save(AuditLog COMMITTEE_UPDATED)
+      Svc -> CmRepo : countByCommitteeIdAndStatus(committeeId, status)
+      CmRepo --> Svc : long (ativos e pendentes)
+      Svc --> Ctrl : CommitteeResponseDTO
+      Ctrl --> Tela : 200 CommitteeResponseDTO
+      Tela --> U : fecha a folha e exibe o aviso "Sucesso": "Comissão atualizada."
+    else alguma regra violada
+      Svc --> Ctrl : SecurityException ou IllegalArgumentException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Tela : 403 (não é líder) ou 409 (nome repetido ou comissão não encontrada) {message}
+      Tela --> U : exibe a mensagem acima dos botões da folha
+    end
+    deactivate Svc
+  end
+end
+
+group Excluir comissão (dono ou vice, pelo aplicativo)
+  U -> Tela : tocar em "Excluir <comissão>"
+  Tela -> Conf : confirmAction("Excluir comissão", "Excluir <comissão> e todos os seus vínculos?", "Excluir")
+  Conf --> U : exibe o diálogo com "Cancelar" e "Excluir"
+  U -> Conf : tocar em "Excluir"
+  Conf -> Tela : executa a ação confirmada
+  Tela -> Tela : mutate("/committees/{committeeId}", "DELETE")
+  Tela -> Filtro : DELETE /api/committees/{committeeId}
+  Filtro -> Ctrl : deleteCommittee(committeeId, auth)
+  Ctrl -> Svc : deleteCommittee(committeeId, email)
+  activate Svc
+  Svc -> ComRepo : findById(committeeId)
+  ComRepo --> Svc : Committee
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+  Svc -> OrgRepo : findById(organizationId)
+  OrgRepo --> Svc : Organization
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  OrgMemRepo --> Svc : Optional<OrganizationMember>
+  alt é dono, vice ou subdono e a comissão existe
+    Svc -> CmRepo : findByCommitteeId(committeeId)
+    CmRepo --> Svc : List<CommitteeMember>
+    Svc -> CmRepo : deleteAll(vínculos da comissão)
+    Svc -> ComRepo : delete(Committee)
+    Svc -> AuditRepo : save(AuditLog COMMITTEE_DELETED)
+    Svc --> Ctrl : void
+    Ctrl --> Tela : 200 "Comissao excluida com sucesso."
+    Tela --> U : exibe o aviso "Sucesso": "Comissão excluída." e a lista sem a comissão
+  else alguma regra violada
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 (não é líder) ou 409 (comissão não encontrada) {message}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+end
+@enduml

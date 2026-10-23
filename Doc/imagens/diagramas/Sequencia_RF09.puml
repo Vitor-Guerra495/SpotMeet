@@ -1,0 +1,86 @@
+@startuml Sequencia_RF09
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF09 (Cadastrar Comissão)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(líder da organização)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":CommitteeController" as Ctrl
+participant ":CommitteeService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":Organization" as Org
+participant ":OrganizationMemberRepository" as OrgMemRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Tela : tocar no atalho "Comissões" (aba "Gerenciar")
+Tela -> Tela : warnIfNotApproved(): confere selectedOrg.approved
+opt organização não aprovada (pendente, recusada ou bloqueada)
+  Tela --> U : aviso "Organização não aprovada", sem abrir a página
+end
+U -> Tela : tocar em "Nova comissão"
+note right of Tela : newCommittee() repete a conferência antes de abrir a folha
+Tela --> U : abre a folha "Nova comissão" com "Nome da comissão" e "Descrição (opcional)"
+U -> Tela : preencher os campos e tocar em "Criar comissão"
+Tela -> Tela : handleSheetSave(): validateCommitteeName(nome)
+
+alt nome fora de 2 a 50 caracteres ou com símbolo não permitido
+  Tela --> U : exibe o erro abaixo do campo "Nome da comissão"
+else campos válidos no aplicativo
+  Tela -> Tela : mutate("/organizations/{organizationId}/committees", "POST", {name, description})
+  Tela -> Filtro : POST /api/organizations/{organizationId}/committees (CommitteeRequestDTO)
+
+  alt CommitteeRequestDTO inválido (@Valid)
+    Filtro -> Handler : MethodArgumentNotValidException
+    Handler --> Tela : 400 {message, errors}
+    Tela --> U : exibe a mensagem do campo na folha
+  else CommitteeRequestDTO válido
+    Filtro -> Ctrl : createCommittee(organizationId, dto, auth)
+    activate Ctrl
+    Ctrl -> Svc : createCommittee(organizationId, email, dto)
+    activate Svc
+    note over Svc : transação READ_COMMITTED
+    Svc -> UserRepo : findByEmail(email)
+    UserRepo --> Svc : User
+    Svc -> OrgRepo : findByIdForUpdate(organizationId)
+    OrgRepo --> Svc : Organization (linha bloqueada)
+    Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+    Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+    OrgMemRepo --> Svc : Optional<OrganizationMember>
+    Svc -> Svc : validateName(name)
+    Svc -> ComRepo : existsByNormalizedName(organizationId, name, espaços, null)
+    ComRepo --> Svc : boolean
+    Svc -> Org : isApproved()
+    Org --> Svc : boolean
+
+    alt é dono, vice ou subdono, o nome está livre e a organização está aprovada
+      Svc -> ComRepo : save(Committee com nome, descrição e organização)
+      ComRepo --> Svc : Committee
+      Svc -> AuditRepo : save(AuditLog COMMITTEE_CREATED)
+      Svc --> Ctrl : CommitteeResponseDTO (totalActiveMembers 0, totalPending 0)
+      Ctrl --> Tela : 201 CommitteeResponseDTO
+      Tela --> U : fecha a folha e exibe o aviso "Sucesso": "Comissão criada."
+      Tela -> Tela : notifySync(COMMITTEES_MUTATED) e loadDetails(): recarrega a lista de comissões
+    else alguma regra violada (a primeira que falha interrompe o fluxo)
+      Svc --> Ctrl : SecurityException, IllegalArgumentException ou IllegalStateException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Tela : 403 (não é líder) ou 409 (nome repetido, organização não aprovada ou não encontrada) {message}
+      Tela --> U : exibe a mensagem acima dos botões da folha
+    end
+    deactivate Svc
+    deactivate Ctrl
+  end
+end
+@enduml

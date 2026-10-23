@@ -1,0 +1,130 @@
+@startuml Sequencia_RF12
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF12 (Solicitar Entrada em Comissão)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":CommitteeController" as Ctrl
+participant ":CommitteeService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":OrganizationMemberRepository" as OrgMemRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Solicitar entrada (integrante da organização)
+  U -> Tela : tocar em "Solicitar ingresso" no cartão da comissão
+  Tela -> Tela : mutate("/committees/{committeeId}/join-requests", "POST")
+  Tela -> Filtro : POST /api/committees/{committeeId}/join-requests
+  Filtro -> Ctrl : requestToJoin(committeeId, auth)
+  Ctrl -> Svc : requestToJoin(committeeId, email)
+  activate Svc
+  Svc -> ComRepo : findById(committeeId)
+  ComRepo --> Svc : Committee
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+  OrgMemRepo --> Svc : boolean
+  Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Svc : Optional<CommitteeMember>
+  alt é integrante da organização e não está ativo nem com solicitação pendente
+    note over Svc
+      sem vínculo: cria PENDING_LEADER_APPROVAL, papel MEMBER
+      DECLINED: reabre como PENDING_LEADER_APPROVAL
+      PENDING_USER_ACCEPTANCE: passa direto para ACTIVE
+    end note
+    Svc -> CmRepo : save(CommitteeMember)
+    CmRepo --> Svc : CommitteeMember
+    opt o vínculo é novo
+      Svc -> AuditRepo : save(AuditLog COMMITTEE_JOIN_REQUESTED)
+    end
+    Svc --> Ctrl : CommitteeMemberResponseDTO
+    Ctrl --> Tela : 201 CommitteeMemberResponseDTO
+    Tela --> U : aviso "Sucesso": "Pedido de ingresso enviado. Aguarde a aprovação dos líderes."
+  else alguma regra violada
+    Svc --> Ctrl : IllegalArgumentException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 409 (comissão não encontrada, não é integrante da organização, já ativo ou já solicitou) {message}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+end
+
+group Consultar solicitações pendentes (dono, vice ou subdono)
+  U -> Tela : tocar em "Solicitações" (aba "Gerenciar")
+  Tela -> Tela : loadDetails(organização)
+  Tela -> Filtro : GET /api/organizations/{organizationId}/committees/join-requests
+  Filtro -> Ctrl : listPendingJoinRequestsForOrganization(organizationId, auth)
+  Ctrl -> Svc : listPendingJoinRequestsForOrganization(organizationId, email)
+  activate Svc
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> Svc : requireOrganizationLeader(executor, organizationId)
+  Svc -> OrgRepo : findById(organizationId)
+  OrgRepo --> Svc : Organization
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(executorId, organizationId)
+  OrgMemRepo --> Svc : Optional<OrganizationMember>
+  alt é dono, vice ou subdono
+    Svc -> CmRepo : findByCommitteeOrganizationIdAndStatus(organizationId, PENDING_LEADER_APPROVAL)
+    CmRepo --> Svc : List<CommitteeMember>
+    Svc --> Ctrl : List<CommitteeMemberResponseDTO>
+    Ctrl --> Tela : 200 List<CommitteeMemberResponseDTO>
+    Tela --> U : seção "INGRESSO EM COMISSÃO" com solicitante e comissão (ou "Nenhuma solicitação pendente para seu papel.")
+  else alguma regra violada
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 (não é líder) ou 409 (organização não encontrada) {message}
+    Tela --> U : exibe "Não foi possível atualizar os dados da organização. Tente novamente."
+  end
+  deactivate Svc
+end
+
+group Aprovar ou rejeitar solicitação (dono, vice ou subdono)
+  U -> Tela : tocar em "Aprovar" ou "Rejeitar" na solicitação
+  Tela -> Tela : mutate("/committees/join-requests/{membershipId}/respond?approve={true ou false}", "POST")
+  Tela -> Filtro : POST /api/committees/join-requests/{membershipId}/respond?approve={true ou false}
+  Filtro -> Ctrl : respondJoinRequest(membershipId, approve, auth)
+  Ctrl -> Svc : respondJoinRequest(membershipId, email, approve)
+  activate Svc
+  Svc -> CmRepo : findById(membershipId)
+  CmRepo --> Svc : CommitteeMember
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User (líder)
+  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+  Svc -> OrgRepo : findById(organizationId)
+  OrgRepo --> Svc : Organization
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  OrgMemRepo --> Svc : Optional<OrganizationMember>
+  alt é líder e o vínculo está em PENDING_LEADER_APPROVAL
+    alt approve = true
+      Svc -> AuditRepo : save(AuditLog COMMITTEE_JOIN_APPROVED)
+    else approve = false
+      Svc -> AuditRepo : save(AuditLog COMMITTEE_JOIN_REJECTED)
+    end
+    Svc -> CmRepo : save(CommitteeMember com status ACTIVE ou DECLINED e responded_at)
+    CmRepo --> Svc : CommitteeMember
+    Svc --> Ctrl : CommitteeMemberResponseDTO
+    Ctrl --> Tela : 200 CommitteeMemberResponseDTO
+    Tela --> U : aviso "Sucesso": "Integrante aprovado na comissão." ou "Solicitação rejeitada."
+  else alguma regra violada
+    Svc --> Ctrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 (não é líder) ou 409 (solicitação não encontrada ou já respondida) {message}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+end
+@enduml

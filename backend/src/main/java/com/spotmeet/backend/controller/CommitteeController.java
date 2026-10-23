@@ -30,7 +30,7 @@ public class CommitteeController {
 
     private String getEmail(Authentication auth) {
         if (auth == null || auth.getName() == null) {
-            throw new SecurityException("Usuario nao autenticado.");
+            throw new SecurityException("Usuário não autenticado.");
         }
         return auth.getName();
     }
@@ -86,7 +86,7 @@ public class CommitteeController {
             Authentication auth) {
         String email = getEmail(auth);
         committeeService.deleteCommittee(committeeId, email);
-        return ResponseEntity.ok("Comissao excluida com sucesso.");
+        return ResponseEntity.ok("Comissão excluída com sucesso.");
     }
 
     // Leader routes: per-member committee links (modal)
@@ -129,7 +129,39 @@ public class CommitteeController {
             Authentication auth) {
         String email = getEmail(auth);
         committeeService.removeUserFromCommittee(committeeId, userId, email);
-        return ResponseEntity.ok("Acesso a comissao revogado com sucesso.");
+        return ResponseEntity.ok("Acesso à comissão revogado com sucesso.");
+    }
+
+    /**
+     * GET /api/committees/{committeeId}/members
+     * Lists the active members (the president has the COMMITTEE_ADMIN role).
+     */
+    @GetMapping("/api/committees/{committeeId}/members")
+    public ResponseEntity<List<CommitteeMemberResponseDTO>> listActiveMembers(
+            @PathVariable Long committeeId,
+            Authentication auth) {
+        return ResponseEntity.ok(committeeService.listActiveMembers(committeeId, getEmail(auth)));
+    }
+
+    /**
+     * GET /api/committees/presided
+     * Lists the committees where the authenticated user is the president.
+     */
+    @GetMapping("/api/committees/presided")
+    public ResponseEntity<List<CommitteeMemberResponseDTO>> listPresidedCommittees(Authentication auth) {
+        return ResponseEntity.ok(committeeService.listPresidedCommittees(getEmail(auth)));
+    }
+
+    /**
+     * PUT /api/committees/{committeeId}/president/{userId}
+     * Leader designates or replaces the committee president.
+     */
+    @PutMapping("/api/committees/{committeeId}/president/{userId}")
+    public ResponseEntity<CommitteeMemberResponseDTO> assignPresident(
+            @PathVariable Long committeeId,
+            @PathVariable Long userId,
+            Authentication auth) {
+        return ResponseEntity.ok(committeeService.assignPresident(committeeId, userId, getEmail(auth)));
     }
 
     // Member routes: pending invitations

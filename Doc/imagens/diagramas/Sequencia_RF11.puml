@@ -1,0 +1,118 @@
+@startuml Sequencia_RF11
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF11 (Convidar Membro para Comissão)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":CommitteeController" as Ctrl
+participant ":CommitteeService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":OrganizationMemberRepository" as OrgMemRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Convidar integrante (dono, vice ou subdono)
+  U -> Tela : tocar em "Membros", no integrante, em "Comissões do integrante" e em "Convidar para <comissão>"
+  Tela -> Tela : mutate("/committees/{committeeId}/members/{userId}", "POST")
+  Tela -> Filtro : POST /api/committees/{committeeId}/members/{userId}
+  Filtro -> Ctrl : addUserToCommittee(committeeId, userId, auth)
+  Ctrl -> Svc : addUserToCommittee(committeeId, userId, email)
+  activate Svc
+  Svc -> ComRepo : findById(committeeId)
+  ComRepo --> Svc : Committee
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User (líder)
+  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+  Svc -> OrgRepo : findById(organizationId)
+  OrgRepo --> Svc : Organization
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  OrgMemRepo --> Svc : Optional<OrganizationMember>
+  Svc -> UserRepo : findById(userId)
+  UserRepo --> Svc : User (convidado)
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+  OrgMemRepo --> Svc : boolean
+  Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Svc : Optional<CommitteeMember>
+  alt é líder, o convidado é integrante da organização e não está ativo nem com convite pendente
+    note over Svc
+      sem vínculo: cria PENDING_USER_ACCEPTANCE, papel MEMBER, invitedBy = líder
+      DECLINED: reabre como PENDING_USER_ACCEPTANCE
+      PENDING_LEADER_APPROVAL: passa direto para ACTIVE
+    end note
+    Svc -> CmRepo : save(CommitteeMember)
+    CmRepo --> Svc : CommitteeMember
+    Svc -> AuditRepo : save(AuditLog COMMITTEE_INVITATION_SENT)
+    Svc --> Ctrl : CommitteeMemberResponseDTO
+    Ctrl --> Tela : 201 CommitteeMemberResponseDTO
+    Tela --> U : aviso "Sucesso": "Convite enviado. Aguarde o aceite do integrante." (ou "Integrante aprovado após seu pedido de ingresso." se status ACTIVE)
+  else alguma regra violada
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 (não é líder) ou 409 (comissão ou usuário não encontrado, não é integrante, já ativo ou convite pendente) {message}
+    Tela --> U : exibe a mensagem na janela "Comissões do integrante"
+  end
+  deactivate Svc
+end
+
+group Consultar convites pendentes (convidado)
+  U -> Tela : abrir a aba "Organização" (a tela consulta os convites ao receber o foco e a cada atualização)
+  Tela -> Tela : loadInvitations()
+  Tela -> Filtro : GET /api/committees/invitations
+  Filtro -> Ctrl : listMyInvitations(auth)
+  Ctrl -> Svc : listMyInvitations(email)
+  activate Svc
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> CmRepo : findByUserIdAndStatus(userId, PENDING_USER_ACCEPTANCE)
+  CmRepo --> Svc : List<CommitteeMember>
+  Svc --> Ctrl : List<CommitteeMemberResponseDTO>
+  deactivate Svc
+  Ctrl --> Tela : 200 List<CommitteeMemberResponseDTO>
+  Tela --> U : "Você recebeu convites" com "Ver convites (N)"; na página "Convites", seção "CONVITES DE COMISSÃO"
+end
+
+group Aceitar ou recusar convite (convidado)
+  U -> Tela : tocar em "Aceitar" ou "Recusar" no convite da comissão
+  Tela -> Tela : mutate("/committees/{committeeId}/invitations/respond?accept={true ou false}", "POST")
+  Tela -> Filtro : POST /api/committees/{committeeId}/invitations/respond?accept={true ou false}
+  Filtro -> Ctrl : respondInvitation(committeeId, accept, auth)
+  Ctrl -> Svc : respondInvitation(committeeId, email, accept)
+  activate Svc
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Svc : Optional<CommitteeMember>
+  alt o convite existe e está em PENDING_USER_ACCEPTANCE
+    alt accept = true
+      Svc -> AuditRepo : save(AuditLog COMMITTEE_INVITATION_ACCEPTED)
+    else accept = false
+      Svc -> AuditRepo : save(AuditLog COMMITTEE_INVITATION_DECLINED)
+    end
+    Svc -> CmRepo : save(CommitteeMember com status ACTIVE ou DECLINED e responded_at)
+    CmRepo --> Svc : CommitteeMember
+    Svc --> Ctrl : CommitteeMemberResponseDTO
+    Ctrl --> Tela : 200 CommitteeMemberResponseDTO
+    Tela --> U : aviso "Sucesso": "Você entrou na comissão." ou "Convite recusado."
+  else convite inexistente ou já respondido
+    Svc --> Ctrl : IllegalArgumentException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 409 {message}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+end
+@enduml

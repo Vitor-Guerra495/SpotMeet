@@ -1,0 +1,99 @@
+@startuml Sequencia_RF13
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF13 (Manter Integrantes da Comissão)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(líder da organização)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+participant ":ConfirmationHost" as Conf
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":CommitteeController" as Ctrl
+participant ":CommitteeService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":OrganizationMemberRepository" as OrgMemRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Consultar as comissões de um integrante
+  U -> Tela : tocar em "Membros", no integrante e em "Comissões do integrante"
+  Tela -> Tela : loadMemberLinks(userId)
+  Tela -> Filtro : GET /api/organizations/{organizationId}/members/{userId}/committees
+  Filtro -> Ctrl : listUserCommitteeLinks(organizationId, userId, auth)
+  Ctrl -> Svc : listUserCommitteeLinks(organizationId, userId, email)
+  activate Svc
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User (quem consulta)
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(executorId, organizationId)
+  OrgMemRepo --> Svc : boolean
+  Svc -> UserRepo : findById(userId)
+  UserRepo --> Svc : User (integrante consultado)
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+  OrgMemRepo --> Svc : boolean
+  alt quem consulta e o consultado pertencem à organização
+    Svc -> ComRepo : findByOrganizationIdOrderByNameAsc(organizationId)
+    ComRepo --> Svc : List<Committee>
+    loop cada comissão da organização
+      Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+      CmRepo --> Svc : Optional<CommitteeMember>
+    end
+    Svc --> Ctrl : List<UserCommitteeLinkDTO>
+    Ctrl --> Tela : 200 List<UserCommitteeLinkDTO>
+    Tela --> U : janela "Comissões do integrante" com "Membro ativo", "Aguardando aceite", "Pedido pendente" ou "Sem vínculo"
+  else alguma regra violada
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 (quem consulta não pertence à organização) ou 409 (integrante não encontrado ou de outra organização) {message}
+    Tela --> U : exibe "Não foi possível consultar as comissões. Tente novamente." e o botão "Tentar novamente"
+  end
+  deactivate Svc
+end
+
+group Remover o vínculo do integrante com a comissão
+  U -> Tela : tocar em "Remover vínculo" (vínculo ativo ou convite aguardando aceite)
+  Tela -> Conf : confirmAction("Remover vínculo", "Remover o vínculo de <integrante> com <comissão>?", "Remover")
+  Conf --> U : exibe o diálogo com "Cancelar" e "Remover"
+  U -> Conf : tocar em "Remover"
+  Conf -> Tela : executa a ação confirmada
+  Tela -> Tela : mutate("/committees/{committeeId}/members/{userId}", "DELETE")
+  Tela -> Filtro : DELETE /api/committees/{committeeId}/members/{userId}
+  Filtro -> Ctrl : removeUserFromCommittee(committeeId, userId, auth)
+  Ctrl -> Svc : removeUserFromCommittee(committeeId, userId, email)
+  activate Svc
+  Svc -> ComRepo : findById(committeeId)
+  ComRepo --> Svc : Committee
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User (líder)
+  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+  Svc -> OrgRepo : findById(organizationId)
+  OrgRepo --> Svc : Organization
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  OrgMemRepo --> Svc : Optional<OrganizationMember>
+  Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Svc : Optional<CommitteeMember>
+  alt é dono, vice ou subdono e o vínculo existe
+    Svc -> CmRepo : delete(CommitteeMember)
+    Svc -> AuditRepo : save(AuditLog COMMITTEE_MEMBER_REMOVED)
+    Svc --> Ctrl : void
+    Ctrl --> Tela : 200 "Acesso a comissao revogado com sucesso."
+    Tela --> U : aviso "Sucesso": "Vínculo removido." e a janela atualizada ("Convidar para <comissão>")
+  else alguma regra violada
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 (não é líder) ou 409 (comissão ou vínculo não encontrado) {message}
+    Tela --> U : exibe a mensagem de erro na janela
+  end
+  deactivate Svc
+end
+@enduml

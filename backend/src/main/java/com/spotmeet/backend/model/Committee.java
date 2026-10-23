@@ -1,8 +1,10 @@
 package com.spotmeet.backend.model;
 
+import com.spotmeet.backend.dto.ValidationPatterns;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
 
@@ -10,7 +12,7 @@ import java.time.LocalDateTime;
  * Group/committee inside an Organization.
  *
  * Rules:
- *   - The committee name cannot contain spaces (e.g. 'Financeiro', 'TI_Dev', 'RH-Geral').
+ *   - Names preserve case and normalize extra spaces.
  *   - Strictly bound to one Organization.
  *   - Names are unique within the same organization.
  */
@@ -25,10 +27,11 @@ public class Committee {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @NotBlank(message = "O nome da comissao e obrigatorio.")
+    @NotBlank(message = "O nome da comissão é obrigatório.")
+    @Size(min = 2, max = 50, message = "O nome da comissão deve ter entre 2 e 50 caracteres.")
     @Pattern(
-        regexp = "^[A-Za-z0-9_-]{2,50}$",
-        message = "O nome da comissao nao pode conter espacos e deve ter entre 2 e 50 caracteres (letras, numeros, '_' ou '-')."
+        regexp = ValidationPatterns.COMMITTEE_NAME,
+        message = "Use de 2 a 50 caracteres: letras, números, espaços, '_' ou '-'."
     )
     @Column(nullable = false, length = 100)
     private String name;
@@ -46,7 +49,7 @@ public class Committee {
     public Committee() {}
 
     public Committee(String name, String description, Organization organization) {
-        this.name = name;
+        setName(name);
         this.description = description;
         this.organization = organization;
     }
@@ -64,7 +67,7 @@ public class Committee {
     public void setId(Long id) { this.id = id; }
 
     public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
+    public void setName(String name) { this.name = ValidationPatterns.normalizeOrganizationName(name); }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }

@@ -1,0 +1,90 @@
+@startuml Sequencia_RF24
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF24 (Designar Presidente da Comissão)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(líder da organização)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Org
+participant ":PresidentSheet" as Sheet
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":CommitteeController" as Ctrl
+participant ":CommitteeService" as Svc
+participant ":CommitteeRepository" as ComRepo
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":OrganizationMemberRepository" as OrgMemRepo
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Org : tocar em "Presidente" (ação "Presidente de <comissão>")
+Org -> Sheet : abrir a folha "Presidente da comissão"
+
+group Consultar integrantes ativos
+  Sheet -> Filtro : GET /api/committees/{committeeId}/members
+  Filtro -> Ctrl : listActiveMembers(committeeId, auth)
+  Ctrl -> Svc : listActiveMembers(committeeId, email)
+  Svc -> ComRepo : findById(committeeId)
+  ComRepo --> Svc : Committee
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> CmRepo : existsByUserIdAndCommitteeIdAndStatus(userId, committeeId, ACTIVE)
+  CmRepo --> Svc : boolean
+  opt o usuário não é integrante ativo
+    Svc -> Svc : requireOrganizationLeader(user, organizationId)
+  end
+  Svc -> CmRepo : findByCommitteeIdAndStatus(committeeId, ACTIVE)
+  CmRepo --> Svc : List<CommitteeMember>
+  Svc --> Ctrl : List<CommitteeMemberResponseDTO>
+  Ctrl --> Sheet : 200 List<CommitteeMemberResponseDTO>
+  Sheet --> U : exibe os integrantes, com a etiqueta "Presidente" no atual
+end
+
+group Designar o presidente
+  U -> Sheet : tocar em "Definir presidente" e confirmar com "Definir"
+  Sheet -> Filtro : PUT /api/committees/{committeeId}/president/{userId}
+  Filtro -> Ctrl : assignPresident(committeeId, userId, auth)
+  Ctrl -> Svc : assignPresident(committeeId, userId, email)
+  activate Svc
+  Svc -> ComRepo : findById(committeeId)
+  ComRepo --> Svc : Committee
+  Svc -> UserRepo : findByEmail(email)
+  UserRepo --> Svc : User
+  Svc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> Svc : Organization (linha bloqueada)
+  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  OrgMemRepo --> Svc : OrganizationMember
+  alt é dono, vice ou subdono, e o escolhido é integrante ativo
+    Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+    CmRepo --> Svc : CommitteeMember (ACTIVE)
+    Svc -> CmRepo : findByCommitteeIdAndRole(committeeId, COMMITTEE_ADMIN)
+    CmRepo --> Svc : presidentes atuais
+    loop cada presidente atual
+      Svc -> CmRepo : save(vínculo com role MEMBER)
+    end
+    Svc -> CmRepo : save(vínculo do escolhido com role COMMITTEE_ADMIN)
+    CmRepo --> Svc : CommitteeMember
+    Svc -> AuditRepo : save(AuditLog COMMITTEE_PRESIDENT_ASSIGNED)
+    Svc --> Ctrl : CommitteeMemberResponseDTO
+    Ctrl --> Sheet : 200 CommitteeMemberResponseDTO
+    Sheet --> U : aviso "Presidente definido." e lista atualizada
+    Sheet -> Org : onChanged(): recarrega as comissões ("Presidente: <nome>")
+  else não é líder, ou o escolhido não é integrante ativo
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Sheet : 403 ou 409 {message}
+    Sheet --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+end
+@enduml

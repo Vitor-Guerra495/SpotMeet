@@ -1,0 +1,61 @@
+@startuml Diagrama_Classes_API_Comissao
+!pragma layout smetana
+title
+SpotMeet - Diagrama de classes da API: Comissão (RF09 a RF13 e RF24)
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+package "API (backend)" {
+class CommitteeController <<controller>> {
+  +createCommittee()
+  +listCommittees()
+  +updateCommittee()
+  +deleteCommittee()
+  +listUserCommitteeLinks()
+  +addUserToCommittee()
+  +removeUserFromCommittee()
+  +listActiveMembers()
+  +listPresidedCommittees()
+  +assignPresident()
+  +listMyInvitations()
+  +respondInvitation()
+  +requestToJoin()
+  +listPendingJoinRequests()
+  +respondJoinRequest()
+  +listPendingJoinRequestsForOrganization()
+}
+class CommitteeService <<service>> {
+  +requireOrganizationLeader()
+  +createCommittee()
+  +listCommittees()
+  +updateCommittee()
+  +deleteCommittee()
+  +listUserCommitteeLinks()
+  +addUserToCommittee()
+  +removeUserFromCommittee()
+  +listActiveMembers()
+  +listPresidedCommittees()
+  +assignPresident()
+  +listMyInvitations()
+  +respondInvitation()
+  +requestToJoin()
+  +listPendingJoinRequests()
+  +respondJoinRequest()
+  +listPendingJoinRequestsForOrganization()
+}
+interface AuditLogRepository <<repository>>
+interface CommitteeMemberRepository <<repository>>
+interface CommitteeRepository <<repository>>
+interface OrganizationMemberRepository <<repository>>
+interface OrganizationRepository <<repository>>
+interface UserRepository <<repository>>
+}
+CommitteeController --> CommitteeService
+CommitteeService ..> AuditLogRepository
+CommitteeService ..> CommitteeMemberRepository
+CommitteeService ..> CommitteeRepository
+CommitteeService ..> OrganizationMemberRepository
+CommitteeService ..> OrganizationRepository
+CommitteeService ..> UserRepository
+@enduml
