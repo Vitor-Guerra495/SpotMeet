@@ -1,0 +1,165 @@
+@startuml Sequencia_RF16
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF16 (Alterar Dados Pessoais)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":SettingsScreen" as Tela
+participant ":AuthContext" as Auth
+participant ":ProfilePhotoEditor" as Editor
+participant ":ProfilePhotoContext" as FotoCtx
+participant ":profilePhotoPicker" as Picker
+participant ":BiometricContext" as Bio
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":UserController" as Ctrl
+participant ":UserService" as Svc
+participant ":UserRepository" as Repo
+participant ":ProfilePhotoController" as FotoCtrl
+participant ":ProfilePhotoService" as FotoSvc
+participant ":UserProfilePhotoRepository" as FotoRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+note over Tela, Editor : A disponibilidade (Presente, Ausente, Ocupado) é gravada por "Salvar preferências",\ncom o mesmo PUT /api/users/me do RF17 (ver a sequência do RF17).
+
+group Consultar o perfil
+  U -> Tela : abrir a aba "Ajustes" (exibe "Carregando perfil...")
+  Tela -> Filtro : GET /api/users/me
+  Filtro -> Ctrl : getMyProfile(authentication)
+  Ctrl -> Svc : getMyProfile(email)
+  Svc -> Repo : findByEmail(email)
+  Repo --> Svc : Optional<User>
+  Svc --> Ctrl : UserProfileResponseDTO (fromEntity)
+  Ctrl --> Tela : 200 UserProfileResponseDTO
+  Tela --> U : preenche "Nome completo", "Biografia (opcional)" e "E-mail" (somente leitura)
+  note over Editor, FotoCtx : Ao receber o foco, ProfilePhotoEditor chama ProfilePhotoContext.refresh():\nGET /api/users/me/photo, ProfilePhotoController.get, ProfilePhotoService.get\ne UserProfilePhotoRepository.findByUserId. Sem foto, exibe o avatar com a inicial do nome.
+end
+
+group Alterar nome e biografia
+  U -> Tela : editar "Nome completo" e "Biografia (opcional)"\ne tocar em "Salvar Alterações"
+  note right of Tela : o botão só fica habilitado com alteração ou prévia de foto
+  alt nome fora de 2 a 100 caracteres ou biografia acima de 500 (validação do aplicativo)
+    Tela --> U : exibe o erro sob o campo, sem enviar a requisição
+  else dados válidos no aplicativo
+    Tela -> Filtro : PUT /api/users/me (UpdateUserProfileDTO com name e bio)
+    Filtro -> Ctrl : updateMyProfile(dto, authentication)
+    activate Ctrl
+    Ctrl -> Svc : updateMyProfile(email, dto)
+    activate Svc
+    Svc -> Repo : findByEmail(email)
+    Repo --> Svc : Optional<User>
+    Svc -> Repo : save(User com name e bio)
+    Repo --> Svc : User
+    Svc -> AuditRepo : save(AuditLog PROFILE_UPDATED)
+    AuditRepo --> Svc : AuditLog
+    Svc --> Ctrl : UserProfileResponseDTO
+    deactivate Svc
+    alt gravado
+      Ctrl --> Tela : 200 UserProfileResponseDTO
+      Tela -> Auth : updateSession({name})
+      opt há prévia de foto pendente
+        Tela -> FotoCtx : save({ quiet: true })
+        note right of FotoCtx : mesmo envio do grupo "Adicionar ou trocar a foto"
+        FotoCtx --> Tela : true ou false
+      end
+      Tela --> U : exibe "Perfil salvo com sucesso.", "Perfil e foto salvos com sucesso."\nou, se a foto falhar, "Os dados do perfil foram salvos, mas a foto não."
+    else nome ou biografia recusados pelo @Valid de UpdateUserProfileDTO
+      Handler --> Tela : 400 {message, errors}
+      Tela --> U : exibe o erro sob "Nome completo" ou "Biografia (opcional)"
+    end
+    deactivate Ctrl
+  end
+end
+
+group Adicionar ou trocar a foto
+  U -> Editor : tocar em "Galeria" (ou "Câmera") e recortar a imagem
+  Editor -> FotoCtx : select(source)
+  FotoCtx -> Bio : allowExternalScreen()
+  note right of Bio : galeria, câmera e recorte saem do aplicativo;\nessa saída só bloqueia depois de 5 minutos (RF02)
+  FotoCtx -> Picker : pickProfilePhoto(source, isCurrent)
+  Picker --> FotoCtx : DraftPhoto (JPEG quadrado, até 512 px e 1 MB)
+  FotoCtx -> Bio : fim da tela externa
+  Editor --> U : exibe a prévia, com "Salvar foto" e "Cancelar foto"
+  U -> Editor : tocar em "Salvar foto"
+  Editor -> FotoCtx : save()
+  FotoCtx -> Filtro : PUT /api/users/me/photo (multipart, parte "photo" com File do expo-file-system)
+  note right of Filtro : Parte acima de 1 MB: MaxUploadSizeExceededException,\ne GlobalExceptionHandler responde 413 {message}
+  Filtro -> FotoCtrl : save(photo, authentication)
+  FotoCtrl -> FotoSvc : save(email, photo)
+  activate FotoSvc
+  note over FotoSvc : transação
+  FotoSvc -> Repo : findByEmailForUpdate(email)
+  Repo --> FotoSvc : Optional<User>
+  FotoSvc -> FotoSvc : normalizeImage(photo)
+  alt JPEG ou PNG quadrado, até 512 px e 1 MB
+    FotoSvc -> FotoRepo : findByUserId(userId)
+    FotoRepo --> FotoSvc : Optional<UserProfilePhoto>
+    FotoSvc -> FotoRepo : save(UserProfilePhoto com image_data e version)
+    FotoRepo --> FotoSvc : UserProfilePhoto
+    FotoSvc -> AuditRepo : save(AuditLog PROFILE_PHOTO_UPDATED)
+    AuditRepo --> FotoSvc : AuditLog
+    FotoSvc --> FotoCtrl : ProfilePhotoResponseDTO
+    FotoCtrl --> FotoCtx : 200 ProfilePhotoResponseDTO
+    FotoCtx --> Editor : foto confirmada
+    Editor --> U : exibe a foto salva e o aviso "Foto de perfil salva com sucesso."
+  else imagem fora das regras
+    FotoSvc --> FotoCtrl : InvalidProfilePhotoException
+    FotoCtrl --> FotoCtx : 400 {message}
+    FotoCtx --> Editor : erro
+    Editor --> U : exibe "O servidor não aceitou esta imagem. Escolha outra foto."\n(413: "A foto passou do limite de 1 MB."; rede: "Verifique a conexão e tente novamente.")
+  end
+  deactivate FotoSvc
+  opt "Ajustes" perde o foco com a prévia sem salvar
+    Tela -> FotoCtx : discard()
+    FotoCtx --> Tela : prévia descartada
+  end
+end
+
+group Remover a foto
+  U -> Editor : tocar em "Remover foto" e confirmar com "Remover"
+  Editor -> FotoCtx : remove()
+  FotoCtx -> Filtro : DELETE /api/users/me/photo
+  Filtro -> FotoCtrl : remove(authentication)
+  FotoCtrl -> FotoSvc : remove(email)
+  activate FotoSvc
+  FotoSvc -> Repo : findByEmailForUpdate(email)
+  Repo --> FotoSvc : Optional<User>
+  FotoSvc -> FotoRepo : findByUserId(userId)
+  FotoRepo --> FotoSvc : Optional<UserProfilePhoto>
+  opt o usuário tem foto
+    FotoSvc -> FotoRepo : delete(UserProfilePhoto)
+    FotoSvc -> AuditRepo : save(AuditLog PROFILE_PHOTO_REMOVED)
+    AuditRepo --> FotoSvc : AuditLog
+  end
+  FotoSvc --> FotoCtrl : void
+  deactivate FotoSvc
+  FotoCtrl --> FotoCtx : 204 sem corpo
+  FotoCtx --> Editor : foto removida
+  Editor --> U : volta ao avatar com a inicial e exibe o aviso "Foto de perfil removida."
+end
+group Sair com alterações não salvas
+  U -> Tela : tocar em outra seção, em outra aba ou no voltar do Android
+  Tela -> Tela : askUnsaved(proceed)
+  Tela --> U : diálogo "Alterações não salvas" com "Continuar editando", "Descartar" e "Salvar"
+  alt "Salvar"
+    Tela -> Tela : handleSaveProfile() (ou handleSavePreferences(), RF17)
+    note right of Tela : mesmo envio do grupo "Alterar nome e biografia"
+    Tela --> U : segue para a seção ou aba escolhida se a gravação deu certo;\nsenão, continua na seção com a mensagem
+  else "Descartar"
+    Tela -> FotoCtx : discard()
+    Tela --> U : volta aos valores gravados e segue
+  else "Continuar editando"
+    Tela --> U : fecha o diálogo e continua na seção
+  end
+  note over Tela : ao perder o foco, "Ajustes" volta para a seção "Perfil"
+end
+@enduml

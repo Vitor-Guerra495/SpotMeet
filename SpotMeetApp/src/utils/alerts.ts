@@ -1,16 +1,8 @@
 import { Platform, Alert } from 'react-native';
 import { showToast } from './toast';
+import { requestConfirmation } from './confirmation';
 
-/**
- * Shows an informational message.
- *
- * It is delivered as an in-app notification at the bottom of the screen (ToastHost),
- * which dismisses on its own instead of blocking the user with a system dialog.
- * Falls back to the native dialog if the host is not mounted yet (e.g. before the
- * providers render, or on web without the host).
- *
- * Decisions that need an answer must keep using confirmAction(): a toast has no buttons.
- */
+/** Shows a top notification, with a system-message fallback before the UI mounts. */
 export function showAlert(title: string, message: string): void {
   if (showToast(title, message)) return;
 
@@ -22,28 +14,15 @@ export function showAlert(title: string, message: string): void {
 }
 
 /**
- * Shows a confirmation dialog compatible with Web (window.confirm) and native mobile.
+ * Requests an in-app confirmation; an unavailable host cancels the action.
  */
 export function confirmAction(
   title: string,
   message: string,
-  onConfirm: () => void,
+  onConfirm: () => void | Promise<void>,
   confirmText: string = 'Confirmar',
-  destructive: boolean = false
+  destructive: boolean = false,
+  onClosed?: () => void
 ): void {
-  if (Platform.OS === 'web') {
-    const accepted = window.confirm(`${title}\n\n${message}`);
-    if (accepted) {
-      onConfirm();
-    }
-  } else {
-    Alert.alert(title, message, [
-      { text: 'Cancelar', style: 'cancel' },
-      {
-        text: confirmText,
-        style: destructive ? 'destructive' : 'default',
-        onPress: onConfirm,
-      },
-    ]);
-  }
+  requestConfirmation({ title, message, onConfirm, confirmText, destructive, onClosed });
 }

@@ -2,7 +2,6 @@ package com.spotmeet.backend;
 
 import com.spotmeet.backend.dto.CompleteEmailChangeDTO;
 import com.spotmeet.backend.dto.ConfirmEmailChangeDTO;
-import com.spotmeet.backend.dto.CodeDeliveryResultDTO;
 import com.spotmeet.backend.dto.OrganizationRequestDTO;
 import com.spotmeet.backend.dto.OrganizationResponseDTO;
 import com.spotmeet.backend.dto.RegisterRequestDTO;
@@ -17,13 +16,23 @@ import com.spotmeet.backend.service.OrganizationService;
 import com.spotmeet.backend.service.UserService;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 
 @SpringBootTest
+@EnabledIfEnvironmentVariable(named = "SPOTMEET_INTEGRATION_TESTS", matches = "true")
+@EnabledIfEnvironmentVariable(named = "DB_URL", matches = "jdbc:postgresql://[^/]+/spotmeet_teste_[0-9]+")
 class BackendApplicationTests {
 
-	@Autowired
+	@MockBean
 	private EmailService emailService;
 
 	@Autowired
@@ -46,13 +55,6 @@ class BackendApplicationTests {
 	}
 
 	@Test
-	void testRealGmailSmtpDelivery() {
-		boolean delivered = emailService.sendVerificationEmail("spotmeeteste@gmail.com", "SpotMeet Teste", "987654");
-		System.out.println(">>> RESULTADO DO TESTE DE ENVIO GMAIL SMTP: " + (delivered ? "SUCESSO (E-mail Entregue!)" : "FALHA") + " <<<");
-		Assertions.assertTrue(delivered, "O envio do e-mail via Gmail SMTP deve ser bem-sucedido com as credenciais configuradas.");
-	}
-
-	@Test
 	void testTwoStepSecureEmailChangeFlow() {
 		// Create a user for the test
 		String sourceEmail = "teste.troca." + System.currentTimeMillis() + "@spotmeet.com";
@@ -70,16 +72,18 @@ class BackendApplicationTests {
 		userRepo.save(user);
 
 		// Step 1: request the change
-		CodeDeliveryResultDTO res1 = userService.requestEmailChange(sourceEmail);
-		Assertions.assertNotNull(res1.getOtpCode(), "Deve gerar código para e-mail atual");
+		userService.requestEmailChange(sourceEmail);
+		ArgumentCaptor<String> currentCode = ArgumentCaptor.forClass(String.class);
+		verify(emailService).sendCurrentEmailChangeCode(eq(sourceEmail), anyString(), currentCode.capture(), any());
 
 		// Step 1 -> Step 2: confirm the current code and request activation on the new e-mail
-		ConfirmEmailChangeDTO confirmDto = new ConfirmEmailChangeDTO(res1.getOtpCode(), targetEmail);
-		CodeDeliveryResultDTO res2 = userService.confirmEmailChange(sourceEmail, confirmDto);
-		Assertions.assertNotNull(res2.getOtpCode(), "Deve gerar código para novo e-mail");
+		ConfirmEmailChangeDTO confirmDto = new ConfirmEmailChangeDTO(currentCode.getValue(), targetEmail);
+		userService.confirmEmailChange(sourceEmail, confirmDto);
+		ArgumentCaptor<String> newCode = ArgumentCaptor.forClass(String.class);
+		verify(emailService).sendNewEmailConfirmationCode(eq(targetEmail), anyString(), newCode.capture(), any());
 
 		// Step 2: complete the change with the new e-mail code
-		CompleteEmailChangeDTO completeDto = new CompleteEmailChangeDTO(res2.getOtpCode());
+		CompleteEmailChangeDTO completeDto = new CompleteEmailChangeDTO(newCode.getValue());
 		User updated = userService.completeEmailChange(sourceEmail, completeDto);
 
 		Assertions.assertEquals(targetEmail, updated.getEmail(), "O e-mail do usuário deve ter sido atualizado para o novo endereço");

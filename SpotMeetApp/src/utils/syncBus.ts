@@ -5,6 +5,7 @@ export type SyncEventType =
   | 'MEMBERS_MUTATED'
   | 'REQUESTS_MUTATED'
   | 'COMMITTEES_MUTATED'
+  | 'MEETINGS_MUTATED'
   | 'ADMIN_ORGS_MUTATED'
   | 'MONITORING_REFRESH'
   | 'PROFILE_MUTATED'
@@ -24,6 +25,16 @@ const CURRENT_TAB_ID = `tab_${Date.now()}_${Math.random().toString(36).substring
 
 // Local subscribers
 const listeners: Map<SyncEventType | '*', Set<SyncListener>> = new Map();
+const visibilityListeners = new Set<(visible: boolean) => void>();
+
+function dispatchVisibility(visible: boolean) {
+  visibilityListeners.forEach(listener => listener(visible));
+}
+
+export function subscribeVisibility(listener: (visible: boolean) => void): () => void {
+  visibilityListeners.add(listener);
+  return () => { visibilityListeners.delete(listener); };
+}
 
 // Multi-tab broadcast channel for Web
 let webBroadcastChannel: any = null;
@@ -60,6 +71,7 @@ if (Platform.OS === 'web' && win) {
     const doc: any = win.document;
     if (doc && typeof doc.addEventListener === 'function') {
       doc.addEventListener('visibilitychange', () => {
+        dispatchVisibility(isAppVisible());
         if (doc.visibilityState === 'visible') {
           notifySync('VISIBILITY_RESTORED');
         }
@@ -76,6 +88,7 @@ if (Platform.OS === 'web' && win) {
 } else {
   // Mobile: listener for return to foreground
   AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+    dispatchVisibility(nextAppState === 'active');
     if (nextAppState === 'active') {
       notifySync('VISIBILITY_RESTORED');
     }

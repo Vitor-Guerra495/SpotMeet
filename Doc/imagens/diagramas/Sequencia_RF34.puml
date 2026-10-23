@@ -1,0 +1,64 @@
+@startuml Sequencia_RF34
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF34 (Gerar Lista de Presença)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":AttendanceListView" as Lista
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":AttendanceListController" as Ctrl
+participant ":AttendanceListService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingRepository" as MeetRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Tela : abrir a reunião em andamento ou encerrada e tocar em "Gerar lista" (ou "Gerar de novo")
+Tela --> U : confirmação "Gerar lista de presença" (a lista usa os registros de agora ...)
+U -> Tela : confirmar com "Gerar"
+Tela -> Filtro : POST /api/meetings/{meetingId}/attendance-list
+Filtro -> Ctrl : generate(meetingId, auth)
+Ctrl -> Svc : generate(meetingId, email)
+activate Svc
+Svc -> Acc : findMeeting(meetingId)
+Acc --> Svc : Meeting
+Svc -> Acc : findUser(email)
+Acc --> Svc : User
+Svc -> Acc : requirePresident(president, committee)
+Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+CmRepo --> Acc : CommitteeMember
+Acc --> Svc : void
+Svc -> Svc : statusAt(now) não pode ser CANCELED nem SCHEDULED
+alt presidente e reunião em andamento ou encerrada
+  Svc -> MeetRepo : save(Meeting com attendanceListGeneratedAt e attendanceListGeneratedBy)
+  Svc -> Acc : audit(president, "MEETING_ATTENDANCE_LIST_GENERATED", meeting, "")
+  Acc -> AuditRepo : save(AuditLog)
+  Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
+  PartRepo --> Svc : List<MeetingParticipant>
+  Svc -> Svc : AttendanceListDTO.from(meeting, participants, now)
+  Svc --> Ctrl : AttendanceListDTO
+  Ctrl --> Tela : 200 AttendanceListDTO
+  Tela --> U : aviso "Lista de presença gerada."
+  Tela -> Lista : exibir a lista (list)
+  Lista --> U : presentes, ausentes e uma linha por convidado
+  Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+else não é presidente, reunião cancelada ou ainda não iniciada
+  Svc --> Ctrl : SecurityException ou IllegalStateException
+  Ctrl --> Handler : exceção propagada
+  Handler --> Tela : 403 ou 409 {message}
+  Tela --> U : exibe a mensagem de erro
+end
+deactivate Svc
+@enduml

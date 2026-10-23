@@ -5,6 +5,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -45,6 +46,9 @@ public class User implements UserDetails {
     @Column(name = "email_verified", nullable = false)
     private boolean emailVerified = false;
 
+    @Column(name = "tokens_valid_after")
+    private Instant tokensValidAfter;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "availability_status", nullable = false)
     private AvailabilityStatus availabilityStatus = AvailabilityStatus.PRESENT;
@@ -56,7 +60,7 @@ public class User implements UserDetails {
     @Column(name = "bio", length = 500)
     private String bio;
 
-    /** E-mail verification token. */
+    /** BCrypt hash of the e-mail verification code. */
     @Column(name = "verification_token")
     private String verificationToken;
 
@@ -64,7 +68,7 @@ public class User implements UserDetails {
     @Column(name = "verification_token_expires_at")
     private LocalDateTime verificationTokenExpiresAt;
 
-    /** Password recovery token. */
+    /** BCrypt hash of the password recovery code. */
     @Column(name = "recovery_token")
     private String recoveryToken;
 
@@ -72,7 +76,7 @@ public class User implements UserDetails {
     @Column(name = "recovery_token_expires_at")
     private LocalDateTime recoveryTokenExpiresAt;
 
-    /** Security code sent to the current e-mail in step 1 of the e-mail change flow (LGPD). */
+    /** BCrypt hash of the current e-mail authorization code. */
     @Column(name = "current_email_change_token")
     private String currentEmailChangeToken;
 
@@ -83,7 +87,7 @@ public class User implements UserDetails {
     @Column(name = "pending_new_email")
     private String pendingNewEmail;
 
-    /** Activation code sent to the new e-mail in step 2 of the e-mail change flow (LGPD). */
+    /** BCrypt hash of the new e-mail confirmation code. */
     @Column(name = "new_email_token")
     private String newEmailToken;
 
@@ -156,6 +160,9 @@ public class User implements UserDetails {
 
     public boolean isEmailVerified() { return emailVerified; }
     public void setEmailVerified(boolean emailVerified) { this.emailVerified = emailVerified; }
+
+    public Instant getTokensValidAfter() { return tokensValidAfter; }
+    public void setTokensValidAfter(Instant tokensValidAfter) { this.tokensValidAfter = tokensValidAfter; }
 
     public AvailabilityStatus getAvailabilityStatus() { return availabilityStatus; }
     public void setAvailabilityStatus(AvailabilityStatus availabilityStatus) {

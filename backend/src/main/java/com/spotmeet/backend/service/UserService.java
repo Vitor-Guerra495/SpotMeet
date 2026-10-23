@@ -5,12 +5,18 @@ import com.spotmeet.backend.model.AuditLog;
 import com.spotmeet.backend.model.User;
 import com.spotmeet.backend.repository.AuditLogRepository;
 import com.spotmeet.backend.repository.UserRepository;
+import com.spotmeet.backend.security.AuthenticationAttempts;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -22,6 +28,7 @@ public class UserService {
 
     /** Lifetime of every one-time code: e-mail verification, password recovery and e-mail change. */
     private static final long CODE_EXPIRATION_MINUTES = 5;
+    private static final String DUMMY_CODE_HASH = new BCryptPasswordEncoder(12).encode("timing-placeholder");
 
 
     @Autowired
@@ -36,15 +43,19 @@ public class UserService {
     @Autowired
     private EmailService emailService;
 
+    @Autowired
+    private AuthenticationAttempts attempts;
+
     private final SecureRandom secureRandom = new SecureRandom();
 
     /**
      * Registers a new user with e-mail verification.
      * If the account exists but is not verified yet, updates credentials and sends a new code.
      */
+    @Transactional
     public CodeDeliveryResultDTO registerUser(RegisterRequestDTO dto) {
         String normalizedEmail = dto.getEmail().trim().toLowerCase();
-        Optional<User> existingUserOpt = userRepo.findByEmail(normalizedEmail);
+        Optional<User> existingUserOpt = userRepo.findByEmailForUpdate(normalizedEmail);
 
         User user;
         if (existingUserOpt.isPresent()) {
@@ -63,36 +74,23 @@ public class UserService {
             user.setPassword(passwordEncoder.encode(dto.getPassword())); // BCrypt hash
             user.setRole("USER"); // Least privilege
             user.setEmailVerified(false); // Requires account confirmation
+            // Tokens issued to a previous owner of this address must not open the new account.
+            user.setTokensValidAfter(Instant.now().truncatedTo(ChronoUnit.MILLIS));
         }
 
-        // 6-digit OTP confirmation code, expires in 30 minutes
-        String verificationCode = String.format("%06d", secureRandom.nextInt(1_000_000));
-        user.setVerificationToken(verificationCode);
+        String verificationCode = generateCode(user.getVerificationToken());
+        user.setVerificationToken(passwordEncoder.encode(verificationCode));
         user.setVerificationTokenExpiresAt(LocalDateTime.now().plusMinutes(CODE_EXPIRATION_MINUTES));
 
         User saved = userRepo.save(user);
 
         // Send the code by e-mail
-        boolean delivered = emailService.sendVerificationEmail(saved.getEmail(), saved.getName(), verificationCode);
+        emailService.sendVerificationEmail(saved.getEmail(), saved.getName(), verificationCode, saved.getVerificationTokenExpiresAt());
 
         // Audit
-        auditLogRepo.save(new AuditLog(saved, "USER_REGISTERED", "Email: " + saved.getEmail() + " | Canal: EMAIL | EntregueExterno=" + delivered));
+        auditLogRepo.save(new AuditLog(saved, "USER_REGISTERED", "Cadastro e envio de verificação solicitados: " + saved.getEmail()));
 
-        CodeDeliveryResultDTO result = new CodeDeliveryResultDTO();
-        result.setUser(saved);
-        result.setDelivered(delivered);
-        result.setChannel("EMAIL");
-        result.setDestination(saved.getEmail());
-        result.setOtpCode(verificationCode);
-
-        if (delivered) {
-            result.setMessage("Código de verificação enviado para o seu e-mail!");
-        } else {
-            result.setMessage("Conta criada com sucesso!");
-            result.setWarning("Ambiente de Desenvolvimento: O código OTP gerado é " + verificationCode);
-        }
-
-        return result;
+        return deliveryResult(saved, saved.getEmail());
     }
 
     /**
@@ -175,34 +173,25 @@ public class UserService {
     /**
      * Validates the verification code sent by e-mail and activates the account (emailVerified = true).
      */
-    public String verifyEmail(VerifyEmailDTO dto) {
+    @Transactional
+    public User verifyEmail(VerifyEmailDTO dto) {
         if (dto == null || dto.getCode() == null || dto.getCode().trim().isBlank()) {
             throw new IllegalArgumentException("Código de verificação não informado.");
         }
 
         String cleanCode = dto.getCode().trim();
-        User user = null;
+        User user = attempts.verify(AuthenticationAttempts.Purpose.EMAIL_VERIFICATION, dto.getEmail(), () -> {
+            User account = findCodeUser(dto.getEmail(), "Código de verificação inválido ou inexistente.");
 
-        if (dto.getEmail() != null && !dto.getEmail().trim().isBlank()) {
-            user = userRepo.findByEmail(dto.getEmail().trim().toLowerCase()).orElse(null);
-        }
+            if (account.isEmailVerified() || !matchesCode(cleanCode, account.getVerificationToken())) {
+                throw new IllegalArgumentException("Código de verificação incorreto.");
+            }
 
-        if (user == null) {
-            user = userRepo.findByVerificationToken(cleanCode)
-                    .orElseThrow(() -> new IllegalArgumentException("Código de verificação inválido ou inexistente."));
-        }
-
-        if (user.isEmailVerified()) {
-            return "Conta já verificada com sucesso. Você já pode fazer login no SpotMeet.";
-        }
-
-        if (user.getVerificationToken() == null || !user.getVerificationToken().equalsIgnoreCase(cleanCode)) {
-            throw new IllegalArgumentException("Código de verificação incorreto.");
-        }
-
-        if (user.getVerificationTokenExpiresAt() != null && user.getVerificationTokenExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException("O código de verificação expirou. Solicite um novo código no aplicativo.");
-        }
+            if (isExpired(account.getVerificationTokenExpiresAt())) {
+                throw new IllegalArgumentException("O código de verificação expirou. Solicite um novo código no aplicativo.");
+            }
+            return account;
+        });
 
         user.setEmailVerified(true);
         user.setVerificationToken(null);
@@ -215,45 +204,34 @@ public class UserService {
             // Audit failure does not block success
         }
 
-        return "Conta verificada com sucesso! Você já pode acessar o sistema.";
+        return user;
     }
 
     /**
      * Sends a new verification code to the given e-mail.
      */
+    @Transactional
     public CodeDeliveryResultDTO resendVerification(ResendVerificationDTO dto) {
-        CodeDeliveryResultDTO result = new CodeDeliveryResultDTO();
-        result.setChannel("EMAIL");
+        CodeDeliveryResultDTO result = deliveryResult(null, null);
 
         if (dto != null && dto.getEmail() != null && !dto.getEmail().trim().isBlank()) {
-            User user = userRepo.findByEmail(dto.getEmail().trim().toLowerCase()).orElse(null);
+            User user = userRepo.findByEmailForUpdate(dto.getEmail().trim().toLowerCase()).orElse(null);
+            String newCode = generateCode(user != null && !user.isEmailVerified() ? user.getVerificationToken() : null);
+            String codeHash = passwordEncoder.encode(newCode);
 
             if (user != null && !user.isEmailVerified()) {
-                String newCode = String.format("%06d", secureRandom.nextInt(1_000_000));
-                user.setVerificationToken(newCode);
+                user.setVerificationToken(codeHash);
                 user.setVerificationTokenExpiresAt(LocalDateTime.now().plusMinutes(CODE_EXPIRATION_MINUTES));
                 userRepo.save(user);
 
-                boolean delivered = emailService.sendVerificationEmail(user.getEmail(), user.getName(), newCode);
-                result.setDelivered(delivered);
-                result.setDestination(user.getEmail());
-                result.setOtpCode(newCode);
+                emailService.sendVerificationEmail(user.getEmail(), user.getName(), newCode, user.getVerificationTokenExpiresAt());
 
                 try {
-                    auditLogRepo.save(new AuditLog(user, "VERIFICATION_RESENT", "Código reenviado via e-mail para: " + user.getEmail() + " | EntregueExterno=" + delivered));
+                    auditLogRepo.save(new AuditLog(user, "VERIFICATION_RESENT", "Reenvio de verificação solicitado: " + user.getEmail()));
                 } catch (Exception e) {
                     // Ignored
                 }
             }
-        }
-
-        if (result.isDelivered()) {
-            result.setMessage("Novo código de verificação enviado com sucesso para seu e-mail!");
-        } else if (result.getOtpCode() != null) {
-            result.setMessage("Novo código gerado! Modo Desenvolvimento: código OTP para teste: " + result.getOtpCode());
-            result.setWarning("Ambiente de Desenvolvimento: Provedor de envio externo não configurado.");
-        } else {
-            result.setMessage("Se o e-mail informado estiver cadastrado e pendente de validação, um novo código foi enviado.");
         }
 
         return result;
@@ -262,39 +240,28 @@ public class UserService {
     /**
      * Generates a temporary password recovery token and sends it by e-mail.
      */
+    @Transactional
     public CodeDeliveryResultDTO forgotPassword(ForgotPasswordDTO dto) {
-        CodeDeliveryResultDTO result = new CodeDeliveryResultDTO();
-        result.setChannel("EMAIL");
+        CodeDeliveryResultDTO result = deliveryResult(null, null);
 
         if (dto != null && dto.getEmail() != null && !dto.getEmail().trim().isBlank()) {
-            User user = userRepo.findByEmail(dto.getEmail().trim().toLowerCase()).orElse(null);
+            User user = userRepo.findByEmailForUpdate(dto.getEmail().trim().toLowerCase()).orElse(null);
+            String recoveryToken = generateCode(user != null ? user.getRecoveryToken() : null);
+            String codeHash = passwordEncoder.encode(recoveryToken);
 
             if (user != null) {
-                String recoveryToken = String.format("%06d", secureRandom.nextInt(1_000_000));
-                user.setRecoveryToken(recoveryToken);
+                user.setRecoveryToken(codeHash);
                 user.setRecoveryTokenExpiresAt(LocalDateTime.now().plusMinutes(CODE_EXPIRATION_MINUTES));
                 userRepo.save(user);
 
-                boolean delivered = emailService.sendPasswordRecoveryEmail(user.getEmail(), user.getName(), recoveryToken);
-                result.setDelivered(delivered);
-                result.setDestination(user.getEmail());
-                result.setOtpCode(recoveryToken);
+                emailService.sendPasswordRecoveryEmail(user.getEmail(), user.getName(), recoveryToken, user.getRecoveryTokenExpiresAt());
 
                 try {
-                    auditLogRepo.save(new AuditLog(user, "PASSWORD_RECOVERY_REQUESTED", "Token de recuperação gerado para: " + user.getEmail() + " | EntregueExterno=" + delivered));
+                    auditLogRepo.save(new AuditLog(user, "PASSWORD_RECOVERY_REQUESTED", "Envio de recuperação solicitado: " + user.getEmail()));
                 } catch (Exception e) {
                     // Ignored
                 }
             }
-        }
-
-        if (result.isDelivered()) {
-            result.setMessage("Código de recuperação enviado com sucesso para o seu e-mail!");
-        } else if (result.getOtpCode() != null) {
-            result.setMessage("Modo Desenvolvimento: seu código OTP de recuperação para teste é: " + result.getOtpCode());
-            result.setWarning("Ambiente de Desenvolvimento: Provedor de envio externo não configurado.");
-        } else {
-            result.setMessage("Se o e-mail informado estiver cadastrado em nossa base, o código de recuperação foi enviado.");
         }
 
         return result;
@@ -307,23 +274,18 @@ public class UserService {
      * @throws IllegalArgumentException if the code is unknown, does not match or is expired.
      */
     private User resolveRecoveryToken(String email, String token) {
+        return attempts.verify(AuthenticationAttempts.Purpose.RECOVERY, email, () -> validateRecoveryToken(email, token));
+    }
+
+    private User validateRecoveryToken(String email, String token) {
         String cleanToken = token != null ? token.trim() : "";
-        User user = null;
+        User user = findCodeUser(email, "Código de recuperação inválido ou inexistente.");
 
-        if (email != null && !email.trim().isBlank()) {
-            user = userRepo.findByEmail(email.trim().toLowerCase()).orElse(null);
-        }
-
-        if (user == null) {
-            user = userRepo.findByRecoveryToken(cleanToken)
-                    .orElseThrow(() -> new IllegalArgumentException("Código de recuperação inválido ou inexistente."));
-        }
-
-        if (user.getRecoveryToken() == null || !user.getRecoveryToken().equalsIgnoreCase(cleanToken)) {
+        if (!matchesCode(cleanToken, user.getRecoveryToken())) {
             throw new IllegalArgumentException("Código de recuperação incorreto.");
         }
 
-        if (user.getRecoveryTokenExpiresAt() != null && user.getRecoveryTokenExpiresAt().isBefore(LocalDateTime.now())) {
+        if (isExpired(user.getRecoveryTokenExpiresAt())) {
             throw new IllegalArgumentException("O código de recuperação expirou. Solicite um novo código no aplicativo.");
         }
 
@@ -334,6 +296,7 @@ public class UserService {
      * Checks a recovery code without consuming it, so the app can validate step 2
      * of the recovery flow before asking for the new password.
      */
+    @Transactional
     public String verifyRecoveryCode(VerifyRecoveryCodeDTO dto) {
         if (dto == null || dto.getToken() == null || dto.getToken().trim().isBlank()) {
             throw new IllegalArgumentException("Token ou código de recuperação não informado.");
@@ -345,6 +308,7 @@ public class UserService {
     /**
      * Validates the recovery token, hashes the new password with BCrypt and saves it.
      */
+    @Transactional
     public String resetPassword(ResetPasswordDTO dto) {
         if (dto == null || dto.getToken() == null || dto.getToken().trim().isBlank()) {
             throw new IllegalArgumentException("Token ou código de recuperação não informado.");
@@ -354,10 +318,12 @@ public class UserService {
 
         // BCrypt hash of the new password
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+        user.setTokensValidAfter(Instant.now().truncatedTo(ChronoUnit.MILLIS));
         user.setRecoveryToken(null);
         user.setRecoveryTokenExpiresAt(null);
         user.setEmailVerified(true);
         userRepo.save(user);
+        emailService.sendPasswordChangedEmail(user.getEmail());
 
         try {
             auditLogRepo.save(new AuditLog(user, "PASSWORD_RESET", "Senha redefinida com sucesso para: " + user.getEmail()));
@@ -371,20 +337,26 @@ public class UserService {
     /**
      * Changes the password of the authenticated user after validating the current one.
      */
+    @Transactional
     public String changePassword(String authenticatedEmail, ChangePasswordDTO dto) {
-        User user = userRepo.findByEmail(authenticatedEmail)
+        User user = userRepo.findByEmailForUpdate(authenticatedEmail)
                 .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado."));
 
-        if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
-            throw new IllegalArgumentException("A senha atual está incorreta.");
-        }
+        attempts.verify(AuthenticationAttempts.Purpose.CURRENT_PASSWORD, "user:" + user.getId(), () -> {
+            if (!passwordEncoder.matches(dto.getCurrentPassword(), user.getPassword())) {
+                throw new IllegalArgumentException("A senha atual está incorreta.");
+            }
+            return null;
+        });
 
         if (passwordEncoder.matches(dto.getNewPassword(), user.getPassword())) {
             throw new IllegalArgumentException("A nova senha deve ser diferente da senha atual.");
         }
 
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
+        user.setTokensValidAfter(Instant.now().truncatedTo(ChronoUnit.MILLIS));
         userRepo.save(user);
+        emailService.sendPasswordChangedEmail(user.getEmail());
 
         try {
             auditLogRepo.save(new AuditLog(user, "PASSWORD_CHANGED", "Senha alterada pelo próprio usuário: " + user.getEmail()));
@@ -400,44 +372,35 @@ public class UserService {
     /**
      * Step 1 (start): sends a 6-digit authorization code to the current e-mail of the authenticated user.
      */
+    @Transactional
     public CodeDeliveryResultDTO requestEmailChange(String authenticatedEmail) {
-        User user = userRepo.findByEmail(authenticatedEmail)
+        User user = userRepo.findByEmailForUpdate(authenticatedEmail)
                 .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado: " + authenticatedEmail));
 
-        String authorizationCode = String.format("%06d", secureRandom.nextInt(1_000_000));
-        user.setCurrentEmailChangeToken(authorizationCode);
+        String authorizationCode = generateCode(user.getCurrentEmailChangeToken());
+        user.setCurrentEmailChangeToken(passwordEncoder.encode(authorizationCode));
         user.setCurrentEmailChangeTokenExpiresAt(LocalDateTime.now().plusMinutes(CODE_EXPIRATION_MINUTES));
+        user.setPendingNewEmail(null);
+        user.setNewEmailToken(null);
+        user.setNewEmailTokenExpiresAt(null);
         userRepo.save(user);
 
-        boolean delivered = emailService.sendCurrentEmailChangeCode(user.getEmail(), user.getName(), authorizationCode);
+        emailService.sendCurrentEmailChangeCode(user.getEmail(), user.getName(), authorizationCode, user.getCurrentEmailChangeTokenExpiresAt());
 
         try {
-            auditLogRepo.save(new AuditLog(user, "LGPD_EMAIL_CHANGE_REQUESTED", "Código de autorização gerado para o e-mail atual: " + user.getEmail() + " | Entregue=" + delivered));
+            auditLogRepo.save(new AuditLog(user, "LGPD_EMAIL_CHANGE_REQUESTED", "Envio de autorização solicitado para o e-mail atual: " + user.getEmail()));
         } catch (Exception e) {
             // Audit error ignored
         }
 
-        CodeDeliveryResultDTO result = new CodeDeliveryResultDTO();
-        result.setUser(user);
-        result.setDelivered(delivered);
-        result.setChannel("EMAIL");
-        result.setDestination(user.getEmail());
-        result.setOtpCode(authorizationCode);
-
-        if (delivered) {
-            result.setMessage("Código de autorização enviado para o seu e-mail atual (" + user.getEmail() + ").");
-        } else {
-            result.setMessage("Código de autorização gerado com sucesso.");
-            result.setWarning("Ambiente de Desenvolvimento: Seu código OTP é " + authorizationCode);
-        }
-
-        return result;
+        return deliveryResult(user, user.getEmail());
     }
 
     /**
      * Step 1 (end) / Step 2 (start): validates the current e-mail code, checks the
      * availability of the new e-mail and sends the activation code to the new address.
      */
+    @Transactional
     public CodeDeliveryResultDTO confirmEmailChange(String authenticatedEmail, ConfirmEmailChangeDTO dto) {
         if (dto == null || dto.getCurrentCode() == null || dto.getCurrentCode().trim().isBlank()) {
             throw new IllegalArgumentException("O código de autorização do e-mail atual é obrigatório.");
@@ -447,67 +410,81 @@ public class UserService {
         }
 
         String newEmail = dto.getNewEmail().trim().toLowerCase();
-        User user = userRepo.findByEmail(authenticatedEmail)
+        User user = userRepo.findByEmailForUpdate(authenticatedEmail)
                 .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado: " + authenticatedEmail));
 
         if (user.getEmail().equalsIgnoreCase(newEmail)) {
             throw new IllegalArgumentException("O novo e-mail não pode ser idêntico ao e-mail atual.");
         }
 
-        if (user.getCurrentEmailChangeToken() == null || !user.getCurrentEmailChangeToken().equals(dto.getCurrentCode().trim())) {
-            throw new IllegalArgumentException("Código de autorização do e-mail atual incorreto.");
-        }
+        attempts.verify(AuthenticationAttempts.Purpose.CURRENT_EMAIL, "user:" + user.getId(), () -> {
+            if (!matchesCode(dto.getCurrentCode().trim(), user.getCurrentEmailChangeToken())) {
+                throw new IllegalArgumentException("Código de autorização do e-mail atual incorreto.");
+            }
 
-        if (user.getCurrentEmailChangeTokenExpiresAt() != null && user.getCurrentEmailChangeTokenExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException("O código de autorização expirou. Solicite um novo envio no aplicativo.");
-        }
+            if (isExpired(user.getCurrentEmailChangeTokenExpiresAt())) {
+                throw new IllegalArgumentException("O código de autorização expirou. Solicite um novo envio no aplicativo.");
+            }
+            return null;
+        });
 
         if (userRepo.existsByEmail(newEmail)) {
             throw new IllegalArgumentException("O novo e-mail informado já está vinculado a outra conta no SpotMeet.");
         }
 
         // Activation code for the new e-mail
-        String newEmailCode = String.format("%06d", secureRandom.nextInt(1_000_000));
+        String newEmailCode = generateCode(user.getNewEmailToken());
+        user.setCurrentEmailChangeToken(null);
+        user.setCurrentEmailChangeTokenExpiresAt(null);
         user.setPendingNewEmail(newEmail);
-        user.setNewEmailToken(newEmailCode);
+        user.setNewEmailToken(passwordEncoder.encode(newEmailCode));
         user.setNewEmailTokenExpiresAt(LocalDateTime.now().plusMinutes(CODE_EXPIRATION_MINUTES));
         userRepo.save(user);
 
-        boolean delivered = emailService.sendNewEmailConfirmationCode(newEmail, user.getName(), newEmailCode);
+        emailService.sendNewEmailConfirmationCode(newEmail, user.getName(), newEmailCode, user.getNewEmailTokenExpiresAt());
 
         try {
-            auditLogRepo.save(new AuditLog(user, "LGPD_EMAIL_CHANGE_STEP1_CONFIRMED", "Código enviado para novo endereço pendente: " + newEmail + " | Entregue=" + delivered));
+            auditLogRepo.save(new AuditLog(user, "LGPD_EMAIL_CHANGE_STEP1_CONFIRMED", "Envio de confirmação solicitado para o endereço pendente: " + newEmail));
         } catch (Exception e) {
             // Ignored
         }
 
-        CodeDeliveryResultDTO result = new CodeDeliveryResultDTO();
-        result.setUser(user);
-        result.setDelivered(delivered);
-        result.setChannel("EMAIL");
-        result.setDestination(newEmail);
-        result.setOtpCode(newEmailCode);
+        return deliveryResult(user, newEmail);
+    }
 
-        if (delivered) {
-            result.setMessage("Código de ativação enviado com sucesso para o novo e-mail (" + newEmail + ").");
-        } else {
-            result.setMessage("Código enviado para o novo e-mail.");
-            result.setWarning("Ambiente de Desenvolvimento: Seu código OTP para o novo e-mail é " + newEmailCode);
+    /** Resends only to the new address authorized in step 1. */
+    @Transactional
+    public CodeDeliveryResultDTO resendNewEmailCode(String authenticatedEmail) {
+        User user = userRepo.findByEmailForUpdate(authenticatedEmail)
+                .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado."));
+        String newEmail = user.getPendingNewEmail();
+        if (newEmail == null || newEmail.isBlank() || user.getNewEmailToken() == null) {
+            throw new IllegalArgumentException("Nenhuma troca de e-mail autorizada. Inicie o processo novamente.");
+        }
+        if (userRepo.existsByEmail(newEmail)) {
+            throw new IllegalArgumentException("O novo e-mail informado já foi cadastrado por outro usuário.");
         }
 
-        return result;
+        String newCode = generateCode(user.getNewEmailToken());
+        user.setNewEmailToken(passwordEncoder.encode(newCode));
+        user.setNewEmailTokenExpiresAt(LocalDateTime.now().plusMinutes(CODE_EXPIRATION_MINUTES));
+        userRepo.save(user);
+        emailService.sendNewEmailConfirmationCode(newEmail, user.getName(), newCode, user.getNewEmailTokenExpiresAt());
+        auditLogRepo.save(new AuditLog(user, "LGPD_EMAIL_CHANGE_CODE_RESENT", "Reenvio solicitado ao endereço pendente"));
+        return deliveryResult(user, newEmail);
     }
 
     /**
      * Step 2 (end): validates the code received on the new e-mail, updates the e-mail,
      * clears temporary tokens and records the LGPD audit entry.
      */
+    @Transactional
     public User completeEmailChange(String authenticatedEmail, CompleteEmailChangeDTO dto) {
         if (dto == null || dto.getNewEmailCode() == null || dto.getNewEmailCode().trim().isBlank()) {
             throw new IllegalArgumentException("O código enviado ao novo e-mail é obrigatório.");
         }
 
-        User user = userRepo.findByEmail(authenticatedEmail)
+        User user = userRepo.findByEmailForUpdate(authenticatedEmail)
                 .orElseThrow(() -> new IllegalArgumentException("Usuário não encontrado: " + authenticatedEmail));
 
         String newEmail = user.getPendingNewEmail();
@@ -515,13 +492,16 @@ public class UserService {
             throw new IllegalArgumentException("Nenhuma solicitação de troca de e-mail pendente encontrada. Inicie o processo novamente.");
         }
 
-        if (user.getNewEmailToken() == null || !user.getNewEmailToken().equals(dto.getNewEmailCode().trim())) {
-            throw new IllegalArgumentException("Código de ativação do novo e-mail incorreto.");
-        }
+        attempts.verify(AuthenticationAttempts.Purpose.NEW_EMAIL, "user:" + user.getId(), () -> {
+            if (!matchesCode(dto.getNewEmailCode().trim(), user.getNewEmailToken())) {
+                throw new IllegalArgumentException("Código de ativação do novo e-mail incorreto.");
+            }
 
-        if (user.getNewEmailTokenExpiresAt() != null && user.getNewEmailTokenExpiresAt().isBefore(LocalDateTime.now())) {
-            throw new IllegalArgumentException("O código de ativação do novo e-mail expirou. Por favor, reinicie a solicitação.");
-        }
+            if (isExpired(user.getNewEmailTokenExpiresAt())) {
+                throw new IllegalArgumentException("O código de ativação do novo e-mail expirou. Por favor, reinicie a solicitação.");
+            }
+            return null;
+        });
 
         if (userRepo.existsByEmail(newEmail)) {
             throw new IllegalArgumentException("O novo e-mail informado já foi cadastrado por outro usuário.");
@@ -552,5 +532,41 @@ public class UserService {
         }
 
         return updated;
+    }
+
+    private User findCodeUser(String email, String invalidMessage) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException(invalidMessage);
+        }
+        return userRepo.findByEmailForUpdate(email.trim().toLowerCase(Locale.ROOT))
+                .orElseThrow(() -> new IllegalArgumentException(invalidMessage));
+    }
+
+    private boolean matchesCode(String code, String hash) {
+        return code != null && code.matches(ValidationPatterns.OTP)
+                && hash != null && hash.length() == 60 && hash.startsWith("$2")
+                && passwordEncoder.matches(code, hash);
+    }
+
+    private boolean isExpired(LocalDateTime expiresAt) {
+        return expiresAt == null || !expiresAt.isAfter(LocalDateTime.now());
+    }
+
+    private String generateCode(String previousHash) {
+        // Keeps the BCrypt comparison work when there is no previous code or account.
+        String comparisonHash = previousHash != null && previousHash.length() == 60 && previousHash.startsWith("$2")
+                ? previousHash : DUMMY_CODE_HASH;
+        String code;
+        do {
+            code = String.format(Locale.ROOT, "%06d", secureRandom.nextInt(1_000_000));
+        } while (code.equals(previousHash) || matchesCode(code, comparisonHash));
+        return code;
+    }
+
+    private CodeDeliveryResultDTO deliveryResult(User user, String destination) {
+        CodeDeliveryResultDTO result = new CodeDeliveryResultDTO("Verifique o seu e-mail.");
+        result.setUser(user);
+        result.setDestination(destination);
+        return result;
     }
 }

@@ -1,266 +1,501 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  View, Text, StyleSheet, TouchableOpacity, TextInput,
-  ScrollView, ActivityIndicator, Alert, Platform, Image, Modal,
-  KeyboardAvoidingView,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Modal, BackHandler } from 'react-native';
+import { Ionicons } from '@react-native-vector-icons/ionicons';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, ThemeType } from '../context/ThemeContext';
+import { useProfilePhoto } from '../context/ProfilePhotoContext';
+import { useBiometric } from '../context/BiometricContext';
 import { API_BASE_URL } from '../config/api';
-import { showAlert } from '../utils/alerts';
+import { showAlert, confirmAction } from '../utils/alerts';
+import ToastHost from '../components/ui/ToastHost';
+import ConfirmationHost from '../components/ui/ConfirmationHost';
 import { notifySync } from '../utils/syncBus';
-import { checkPasswordRules } from '../utils/validators';
+import { requestConfirmation } from '../utils/confirmation';
+import { setLeaveGuard } from '../utils/leaveGuard';
+import { PASSWORD_REGEX, isValidEmail, normalizeEmail, isValidOtp, normalizeOtp, isValidName, normalizeName } from '../utils/validators';
+import FormField from '../components/forms/FormField';
+import PasswordInput from '../components/forms/PasswordInput';
+import PasswordRules from '../components/forms/PasswordRules';
+import FormButton from '../components/forms/FormButton';
+import OtpInput from '../components/forms/OtpInput';
+import FormScrollView from '../components/forms/FormScrollView';
+import BiometricSettings from '../components/auth/BiometricSettings';
+import ProfilePhotoEditor from '../components/profile/ProfilePhotoEditor';
 
 type PresenceStatus = 'PRESENT' | 'AWAY' | 'BUSY';
+type SettingsSection = 'profile' | 'security' | 'preferences';
+interface ProfileValues { name: string; bio: string; }
+interface PreferenceValues { status: PresenceStatus; theme: ThemeType; }
+interface PasswordValues { currentPassword: string; newPassword: string; confirmPassword: string; }
+interface EmailValues { currentCode: string; newEmail: string; newEmailCode: string; }
 
-// Portuguese labels for user roles returned by the API
-const ROLE_LABELS: Record<string, string> = {
-  SYSADMIN: 'SysAdmin',
-  ADMIN: 'Admin',
-  USER: 'Membro',
-};
+const EMPTY_PASSWORDS: PasswordValues = { currentPassword: '', newPassword: '', confirmPassword: '' };
+const EMPTY_EMAIL: EmailValues = { currentCode: '', newEmail: '', newEmailCode: '' };
+const SECTIONS: [SettingsSection, string][] = [['profile', 'Perfil'], ['security', 'Segurança'], ['preferences', 'Preferências']];
+const STATUS_OPTIONS: [PresenceStatus, string][] = [['PRESENT', 'Presente'], ['AWAY', 'Ausente'], ['BUSY', 'Ocupado']];
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && !(error instanceof TypeError) ? error.message : fallback;
+}
+
+async function readResponse(response: Response, fallback: string): Promise<Record<string, unknown>> {
+  const data: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = response.status < 500 && data && typeof data === 'object' && 'message' in data
+      && typeof data.message === 'string' ? data.message : fallback;
+    throw new Error(message);
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(fallback);
+  return data as Record<string, unknown>;
+}
 
 export default function SettingsScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
-  const { token, signOut, updateSession, role, userId } = useAuth();
+  const { token, signOut, updateSession, userId, getSession } = useAuth();
+  const profilePhoto = useProfilePhoto();
+  const biometric = useBiometric();
+  const renderedSessionVersion = getSession().version;
   const { theme, setTheme, colors } = useTheme();
+  const [section, setSection] = useState<SettingsSection>('profile');
+  const sectionRef = useRef<SettingsSection>('profile');
 
-  // Profile form state
-  const [name, setName] = useState('');
+  const profileForm = useForm<ProfileValues>({ defaultValues: { name: '', bio: '' }, mode: 'onBlur' });
+  const profile = useWatch({ control: profileForm.control });
+  const name = profile.name ?? '';
+  const bio = profile.bio ?? '';
   const [email, setEmail] = useState('');
-  const [bio, setBio] = useState('');
-  const [status, setStatus] = useState<PresenceStatus>('PRESENT');
+  const preferencesForm = useForm<PreferenceValues>({ defaultValues: { status: 'PRESENT', theme } });
+  const preferences = useWatch({ control: preferencesForm.control });
+  const status = preferences.status ?? 'PRESENT';
+  const selectedTheme = preferences.theme ?? theme;
+  const savedThemeRef = useRef<ThemeType>(theme);
+  const loadedSession = useRef<{ token: string; userId: number | null | undefined } | null>(null);
 
-  // Reference to the theme saved in the database (avoids unwanted autosave and allows revert when leaving the tab)
-  const savedThemeRef = useRef<ThemeType | null>('DARK');
-
-  // Control state
-  const [loadingProfile, setLoadingProfile] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  // Password change form state
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const passwordForm = useForm<PasswordValues>({ defaultValues: { ...EMPTY_PASSWORDS }, mode: 'onBlur' });
+  const passwords = useWatch({ control: passwordForm.control });
+  const currentPassword = passwords.currentPassword ?? '';
+  const newPassword = passwords.newPassword ?? '';
+  const confirmPassword = passwords.confirmPassword ?? '';
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [changingPassword, setChangingPassword] = useState(false);
 
-  // Secure e-mail change modal state (two-step LGPD flow)
+  const emailForm = useForm<EmailValues>({ defaultValues: { ...EMPTY_EMAIL }, mode: 'onBlur' });
+  const emailValues = useWatch({ control: emailForm.control });
+  const currentCode = emailValues.currentCode ?? '';
+  const newEmail = emailValues.newEmail ?? '';
+  const newEmailCode = emailValues.newEmailCode ?? '';
+  const setCurrentCode = (value: string) => emailForm.setValue('currentCode', value);
+  const setNewEmail = (value: string) => emailForm.setValue('newEmail', value);
+  const setNewEmailCode = (value: string) => emailForm.setValue('newEmailCode', value);
+
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [preferencesError, setPreferencesError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [emailRequestError, setEmailRequestError] = useState('');
+  const [savingSection, setSavingSection] = useState<SettingsSection | null>(null);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const profileRequestPending = useRef(false);
+  const passwordRequestPending = useRef(false);
+  const profileReadVersion = useRef(0);
+  const themePreviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTheme = useRef<ThemeType | null>(null);
+
   const [emailModalVisible, setEmailModalVisible] = useState(false);
   const [emailStep, setEmailStep] = useState<1 | 2>(1);
-  const [currentCode, setCurrentCode] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newEmailCode, setNewEmailCode] = useState('');
+  const [currentCodeError, setCurrentCodeError] = useState('');
+  const [newEmailCodeError, setNewEmailCodeError] = useState('');
   const [loadingModal, setLoadingModal] = useState(false);
-  const [modalDevCode, setModalDevCode] = useState('');
   const [changeCooldown, setChangeCooldown] = useState(0);
+  const emailFlowStep = useRef<0 | 1 | 2>(0);
+  const emailRequestPending = useRef(false);
+  const currentCodeAttempt = useRef<string | null>(null);
+  const newEmailCodeAttempt = useRef<string | null>(null);
+  const screenActive = useRef(true);
+  const isCurrentScreen = () => screenActive.current && getSession().version === renderedSessionVersion;
 
-  // Loads the real profile data of the authenticated user
+  // Read on every render so react-hook-form keeps the dirty state up to date.
+  const profileUnsaved = Object.keys(profileForm.formState.dirtyFields).length > 0 || !!profilePhoto.draft;
+  const preferencesUnsaved = Object.keys(preferencesForm.formState.dirtyFields).length > 0;
+  const unsavedRef = useRef({ profile: false, preferences: false });
+  unsavedRef.current = { profile: profileUnsaved, preferences: preferencesUnsaved };
+
+  const cancelThemePreview = () => {
+    if (themePreviewTimer.current !== null) clearTimeout(themePreviewTimer.current);
+    themePreviewTimer.current = null;
+    pendingTheme.current = null;
+  };
+
+  const previewTheme = (value: ThemeType) => {
+    if (!isCurrentScreen() || sectionRef.current !== 'preferences' || profileRequestPending.current) return;
+    if (preferencesForm.getValues('theme') === value) return;
+    preferencesForm.setValue('theme', value, { shouldDirty: true });
+    setPreferencesError('');
+    pendingTheme.current = value;
+    if (themePreviewTimer.current !== null) return;
+    void setTheme(value, false);
+    // Coalesce rapid taps while keeping the last selection.
+    themePreviewTimer.current = setTimeout(() => {
+      themePreviewTimer.current = null;
+      const next = pendingTheme.current;
+      pendingTheme.current = null;
+      if (next && next !== value && isCurrentScreen() && sectionRef.current === 'preferences') {
+        void setTheme(next, false);
+      }
+    }, 150);
+  };
+
+  useEffect(() => {
+    screenActive.current = true;
+    return () => { screenActive.current = false; profileReadVersion.current += 1; cancelThemePreview(); };
+  }, []);
+
+  const clearPasswords = () => {
+    passwordForm.reset(EMPTY_PASSWORDS);
+    setShowCurrentPassword(false);
+    setShowNewPassword(false);
+    setShowConfirmPassword(false);
+    setPasswordError('');
+  };
+
+  // Profile reads happen on focus or retry, never on a polling timer.
   const loadProfile = useCallback(async () => {
-    if (!token) {
-      setLoadingProfile(false);
-      return;
-    }
-
+    const readVersion = ++profileReadVersion.current;
+    if (!token) return;
+    setLoadingProfile(true);
+    setLoadError('');
     try {
-      const res = await fetch(`${API_BASE_URL}/users/me`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      const response = await fetch(`${API_BASE_URL}/users/me`, {
+        method: 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setName(data.name || '');
-        setEmail(data.email || '');
-        setBio(data.bio || '');
-
-        if (data.availabilityStatus === 'AWAY' || data.availabilityStatus === 'BUSY') {
-          setStatus(data.availabilityStatus);
-        } else {
-          setStatus('PRESENT');
-        }
-
-        if (data.preferredTheme === 'LIGHT' || data.preferredTheme === 'DARK') {
-          savedThemeRef.current = data.preferredTheme;
-          await setTheme(data.preferredTheme, false);
-        }
+      const data = await readResponse(response, 'Não foi possível carregar o perfil. Tente novamente.');
+      if (!isCurrentScreen() || readVersion !== profileReadVersion.current) return;
+      if (typeof data.name !== 'string' || typeof data.email !== 'string'
+          || (typeof data.id === 'number' && userId != null && data.id !== userId)) {
+        throw new Error('Não foi possível confirmar os dados do perfil.');
       }
-    } catch (err) {
-      console.warn('Erro ao carregar dados do perfil:', err);
+      const preserveDrafts = !!loadedSession.current && loadedSession.current.userId === userId && loadedSession.current.token !== token;
+      profileForm.reset({ name: data.name, bio: typeof data.bio === 'string' ? data.bio : '' }, { keepDirtyValues: preserveDrafts });
+      setEmail(data.email);
+      const loadedTheme = data.preferredTheme === 'LIGHT' || data.preferredTheme === 'DARK'
+        ? data.preferredTheme : savedThemeRef.current;
+      preferencesForm.reset({
+        status: data.availabilityStatus === 'AWAY' || data.availabilityStatus === 'BUSY' ? data.availabilityStatus : 'PRESENT',
+        theme: loadedTheme,
+      }, { keepDirtyValues: preserveDrafts });
+      savedThemeRef.current = loadedTheme;
+      loadedSession.current = { token, userId };
+      await setTheme(preferencesForm.getValues('theme'), false);
+    } catch (error) {
+      if (isCurrentScreen() && readVersion === profileReadVersion.current) {
+        setLoadError(errorMessage(error, 'Não foi possível carregar o perfil. Tente novamente.'));
+      }
     } finally {
-      setLoadingProfile(false);
+      if (isCurrentScreen() && readVersion === profileReadVersion.current) setLoadingProfile(false);
     }
-  }, [token, setTheme]);
+  }, [token, userId, setTheme, getSession, renderedSessionVersion, profileForm.reset, preferencesForm.reset]);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadProfile();
-
-      return () => {
-        // If the user switched the theme but did not press "Salvar Alterações",
-        // leaving this tab reverts the theme to the preference saved in the database
-        if (savedThemeRef.current) {
-          setTheme(savedThemeRef.current, false);
-        }
-      };
-    }, [loadProfile, setTheme])
-  );
-
-  // Saves name, bio, status and theme changes
-  const handleSaveProfile = async () => {
-    if (!name.trim()) {
-      showAlert('Atenção', 'O nome completo não pode ficar em branco.');
-      return;
-    }
-
-    if (name.trim().length < 2) {
-      showAlert('Atenção', 'O nome deve ter pelo menos 2 caracteres.');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/users/me`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: name.trim(),
-          bio: bio.trim(),
-          availabilityStatus: status,
-          preferredTheme: theme,
-        }),
-      });
-
-      if (!res.ok) {
-        const errorMsg = await res.text();
-        throw new Error(errorMsg || 'Falha ao atualizar perfil.');
+  useFocusEffect(useCallback(() => {
+    loadProfile();
+    return () => {
+      profileReadVersion.current += 1;
+      cancelThemePreview();
+      if (isCurrentScreen()) {
+        clearPasswords();
+        setTheme(savedThemeRef.current, false);
       }
+    };
+  }, [loadProfile, setTheme]));
 
-      const updated = await res.json();
-      setName(updated.name);
-      setBio(updated.bio || '');
-      setStatus(updated.availabilityStatus as PresenceStatus);
-      if (updated.preferredTheme) {
-        savedThemeRef.current = updated.preferredTheme;
-        await setTheme(updated.preferredTheme, false);
-      }
-
-      // Updates the name in the global auth context
-      if (token) {
-        updateSession({ name: updated.name, email, userId: updated.id });
-      }
-
-      notifySync('PROFILE_MUTATED', { userId });
-      showAlert('Sucesso', 'Perfil e preferências salvos com sucesso!');
-    } catch (err: any) {
-      showAlert('Erro', err.message || 'Não foi possível salvar as alterações.');
-    } finally {
-      setSaving(false);
+  const discardSection = (target: SettingsSection) => {
+    if (target === 'profile') {
+      profileForm.reset();
+      setProfileError('');
+      profilePhoto.discard();
+    } else if (target === 'preferences') {
+      cancelThemePreview();
+      preferencesForm.reset();
+      setPreferencesError('');
+      void setTheme(savedThemeRef.current, false);
     }
   };
 
+  // Returns true when the user must decide first; `proceed` runs after saving or discarding.
+  const askUnsaved = (proceed: () => void) => {
+    const current = sectionRef.current;
+    if (!isCurrentScreen() || current === 'security' || !unsavedRef.current[current]) return false;
+    if (profileRequestPending.current || passwordRequestPending.current) return true;
+    requestConfirmation({
+      title: 'Alterações não salvas',
+      message: current === 'profile'
+        ? 'Você alterou o perfil e ainda não salvou. Deseja salvar antes de sair?'
+        : 'Você alterou as preferências e ainda não salvou. Deseja salvar antes de sair?',
+      confirmText: 'Salvar', cancelText: 'Continuar editando', extraText: 'Descartar', destructive: false,
+      onConfirm: async () => {
+        const saved = current === 'profile' ? await handleSaveProfile() : await handleSavePreferences();
+        if (saved && isCurrentScreen()) proceed();
+      },
+      onExtra: () => {
+        if (!isCurrentScreen()) return;
+        discardSection(current);
+        proceed();
+      },
+    });
+    return true;
+  };
+  const askUnsavedRef = useRef(askUnsaved);
+  askUnsavedRef.current = askUnsaved;
+
+  // Leaving Ajustes asks about unsaved changes, drops an unsaved photo preview and reopens on Perfil.
+  const discardPhoto = profilePhoto.discard;
+  useFocusEffect(useCallback(() => {
+    const removeGuard = setLeaveGuard(proceed => askUnsavedRef.current(proceed));
+    const back = BackHandler.addEventListener('hardwareBackPress', () => askUnsavedRef.current(() => navigation.goBack()));
+    return () => {
+      removeGuard();
+      back.remove();
+      discardPhoto();
+      sectionRef.current = 'profile';
+      setSection('profile');
+    };
+  }, [navigation, discardPhoto]));
+
+  const changeSection = (next: SettingsSection) => {
+    if (!isCurrentScreen() || passwordRequestPending.current) return;
+    if (next !== sectionRef.current && askUnsaved(() => switchSection(next))) return;
+    switchSection(next);
+  };
+
+  const switchSection = (next: SettingsSection) => {
+    if (!isCurrentScreen()) return;
+    if (next !== 'preferences' && pendingTheme.current) {
+      const nextTheme = pendingTheme.current;
+      cancelThemePreview();
+      void setTheme(nextTheme, false);
+    }
+    if (next !== 'security') clearPasswords();
+    sectionRef.current = next;
+    setSection(next);
+  };
+
+  const mapFieldErrors = (data: Record<string, unknown>, target: 'profile' | 'password') => {
+    if (!data.errors || typeof data.errors !== 'object') return;
+    const errors = data.errors as Record<string, unknown>;
+    if (target === 'profile') {
+      for (const field of ['name', 'bio'] as const) {
+        if (typeof errors[field] === 'string') profileForm.setError(field, { type: 'server', message: errors[field] });
+      }
+    } else {
+      for (const field of ['currentPassword', 'newPassword'] as const) {
+        if (typeof errors[field] === 'string') passwordForm.setError(field, { type: 'server', message: errors[field] });
+      }
+    }
+  };
+
+  const handleSaveProfile = async (): Promise<boolean> => {
+    if (!isCurrentScreen() || sectionRef.current !== 'profile' || profileRequestPending.current || passwordRequestPending.current) return false;
+    setProfileError('');
+    const cleanName = normalizeName(name);
+    if (!isValidName(cleanName)) {
+      profileForm.setError('name', { type: 'validate', message: 'O nome deve ter entre 2 e 100 caracteres.' });
+      return false;
+    }
+    if (bio.length > 500) {
+      profileForm.setError('bio', { type: 'validate', message: 'A biografia pode ter no máximo 500 caracteres.' });
+      return false;
+    }
+    profileRequestPending.current = true;
+    setSavingSection('profile');
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/me`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: cleanName, bio: bio.trim() }),
+      });
+      const data: unknown = await response.json().catch(() => null);
+      if (!isCurrentScreen()) return false;
+      if (!response.ok) {
+        if (response.status < 500 && data && typeof data === 'object') mapFieldErrors(data as Record<string, unknown>, 'profile');
+        throw new Error('Não foi possível salvar o perfil. Confira os campos e tente novamente.');
+      }
+      if (!data || typeof data !== 'object' || !('name' in data) || typeof data.name !== 'string' || !isValidName(data.name)
+          || ('id' in data && typeof data.id === 'number' && userId != null && data.id !== userId)) {
+        throw new Error('Não foi possível confirmar a atualização do perfil.');
+      }
+      profileForm.reset({ name: data.name, bio: 'bio' in data && typeof data.bio === 'string' ? data.bio : '' });
+      updateSession({ name: data.name });
+      notifySync('PROFILE_MUTATED', { userId });
+      // A photo still in preview is saved with the profile; its error, if any, stays below the photo.
+      const photoSaved = profilePhoto.draft ? await profilePhoto.save({ quiet: true }) : null;
+      if (!isCurrentScreen()) return false;
+      if (photoSaved === false) showAlert('Perfil salvo', 'Os dados do perfil foram salvos, mas a foto não. Veja o aviso abaixo da foto.');
+      else showAlert('Sucesso', photoSaved ? 'Perfil e foto salvos com sucesso.' : 'Perfil salvo com sucesso.');
+      return photoSaved !== false;
+    } catch (error) {
+      if (isCurrentScreen()) setProfileError(errorMessage(error, 'Não foi possível salvar o perfil. Tente novamente.'));
+      return false;
+    } finally {
+      profileRequestPending.current = false;
+      if (isCurrentScreen()) setSavingSection(null);
+    }
+  };
+
+  const handleSavePreferences = async (): Promise<boolean> => {
+    if (!isCurrentScreen() || sectionRef.current !== 'preferences' || profileRequestPending.current || passwordRequestPending.current) return false;
+    const preferenceValues = preferencesForm.getValues();
+    cancelThemePreview();
+    void setTheme(preferenceValues.theme, false);
+    profileRequestPending.current = true;
+    setSavingSection('preferences');
+    setPreferencesError('');
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/me`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ availabilityStatus: preferenceValues.status, preferredTheme: preferenceValues.theme }),
+      });
+      const data = await readResponse(response, 'Não foi possível salvar as preferências. Tente novamente.');
+      if (!isCurrentScreen()) return false;
+      if ((typeof data.id === 'number' && userId != null && data.id !== userId)
+          || (data.preferredTheme !== 'LIGHT' && data.preferredTheme !== 'DARK')
+          || !['PRESENT', 'AWAY', 'BUSY', 'ONLINE'].includes(data.availabilityStatus as string)) {
+        throw new Error('Não foi possível confirmar a atualização das preferências.');
+      }
+      const savedStatus = data.availabilityStatus === 'AWAY' || data.availabilityStatus === 'BUSY' ? data.availabilityStatus : 'PRESENT';
+      preferencesForm.reset({ status: savedStatus, theme: data.preferredTheme });
+      savedThemeRef.current = data.preferredTheme;
+      await setTheme(data.preferredTheme, false);
+      if (!isCurrentScreen()) return false;
+      notifySync('PROFILE_MUTATED', { userId });
+      showAlert('Sucesso', 'Preferências salvas com sucesso.');
+      return true;
+    } catch (error) {
+      if (isCurrentScreen()) setPreferencesError(errorMessage(error, 'Não foi possível salvar as preferências. Tente novamente.'));
+      return false;
+    } finally {
+      profileRequestPending.current = false;
+      if (isCurrentScreen()) setSavingSection(null);
+    }
+  };
+
+  const endSession = async () => {
+    if (!isCurrentScreen()) return;
+    clearPasswords();
+    emailForm.reset(EMPTY_EMAIL);
+    emailFlowStep.current = 0;
+    screenActive.current = false;
+    const removal = signOut();
+    const endedVersion = getSession().version;
+    navigation.reset({ index: 0, routes: [{ name: 'Auth', params: { mode: 'login' } }] });
+    await removal;
+    return endedVersion;
+  };
+
   const handleChangePassword = async () => {
+    if (!isCurrentScreen() || sectionRef.current !== 'security' || passwordRequestPending.current) return;
+    setPasswordError('');
     if (!currentPassword) {
-      showAlert('Atenção', 'Informe a sua senha atual.');
+      passwordForm.setError('currentPassword', { type: 'validate', message: 'Informe a sua senha atual.' });
       return;
     }
-
-    const rules = checkPasswordRules(newPassword);
-    if (!rules.valid) {
-      showAlert('Atenção', 'A nova senha deve ter no mínimo 6 caracteres, com pelo menos uma letra maiúscula, uma minúscula e um número.');
+    if (!PASSWORD_REGEX.test(newPassword)) {
+      passwordForm.setError('newPassword', { type: 'validate', message: 'Use pelo menos 6 caracteres, com maiúscula, minúscula e número.' });
       return;
     }
-
     if (newPassword !== confirmPassword) {
-      showAlert('Atenção', 'A confirmação não confere com a nova senha.');
+      passwordForm.setError('confirmPassword', { type: 'validate', message: 'A confirmação não coincide com a nova senha.' });
       return;
     }
-
     if (newPassword === currentPassword) {
-      showAlert('Atenção', 'A nova senha deve ser diferente da senha atual.');
+      passwordForm.setError('newPassword', { type: 'validate', message: 'A nova senha deve ser diferente da senha atual.' });
       return;
     }
-
+    passwordRequestPending.current = true;
     setChangingPassword(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/users/me/password`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      if (!await biometric.confirmIdentity()) {
+        if (isCurrentScreen()) setPasswordError('Confirme com a biometria para alterar a senha.');
+        return;
+      }
+      if (!isCurrentScreen()) return;
+      const response = await fetch(`${API_BASE_URL}/users/me/password`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.message || 'Não foi possível alterar a senha.');
+      const data: unknown = await response.json().catch(() => null);
+      if (!isCurrentScreen()) return;
+      if (!response.ok) {
+        if (response.status < 500 && data && typeof data === 'object') {
+          mapFieldErrors(data as Record<string, unknown>, 'password');
+        }
+        const message = response.status < 500 && data && typeof data === 'object'
+          && 'message' in data && typeof data.message === 'string' ? data.message : 'Não foi possível alterar a senha. Tente novamente.';
+        if (response.status === 400 && message === 'A senha atual está incorreta.') {
+          passwordForm.setError('currentPassword', { type: 'server', message });
+          return;
+        }
+        if (response.status === 400 && message === 'A nova senha deve ser diferente da senha atual.') {
+          passwordForm.setError('newPassword', { type: 'server', message });
+          return;
+        }
+        throw new Error(message);
       }
-
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      showAlert('Sucesso', data.message || 'Senha alterada com sucesso!');
-    } catch (err: any) {
-      showAlert('Erro', err.message || 'Não foi possível alterar a senha.');
+      if (!data || typeof data !== 'object' || !('success' in data) || data.success !== true) {
+        throw new Error('Não foi possível confirmar a alteração da senha.');
+      }
+      await biometric.keepForPasswordChange();
+      const endedVersion = await endSession();
+      if (getSession().version === endedVersion && getSession().token === null) {
+        showAlert('Sucesso', 'Senha alterada com sucesso. Entre novamente com a nova senha.');
+      }
+    } catch (error) {
+      if (isCurrentScreen()) setPasswordError(errorMessage(error, 'Não foi possível alterar a senha. Tente novamente.'));
     } finally {
-      setChangingPassword(false);
+      passwordRequestPending.current = false;
+      if (isCurrentScreen()) setChangingPassword(false);
     }
   };
 
   const handleLogout = () => {
-    const execute = () => {
-      signOut();
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Auth' }],
-      });
-    };
-
-    if (Platform.OS === 'web') {
-      if (window.confirm('Deseja realmente sair da sua conta?')) {
-        execute();
-      }
-    } else {
-      Alert.alert('Sair da Conta', 'Deseja realmente desconectar do SpotMeet?', [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Sair', onPress: execute, style: 'destructive' },
-      ]);
-    }
+    // The dialog closes right away; clearing the saved session on the device continues in the background.
+    if (isCurrentScreen()) confirmAction('Sair da Conta', 'Deseja realmente desconectar do SpotMeet?',
+      () => { if (isCurrentScreen()) void endSession(); }, 'Sair', true);
   };
 
-  // Resend timer inside the modal
   useEffect(() => {
-    let timer: any;
-    if (changeCooldown > 0) {
-      timer = setInterval(() => {
-        setChangeCooldown((prev) => prev - 1);
-      }, 1000);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
+    if (changeCooldown <= 0) return;
+    const timer = setInterval(() => setChangeCooldown(previous => Math.max(0, previous - 1)), 1000);
+    return () => clearInterval(timer);
   }, [changeCooldown]);
+
 
   // Opens the modal and sends the code to the current e-mail
   const openEmailChangeModal = async () => {
+    if (!isCurrentScreen() || sectionRef.current !== 'profile' || profileRequestPending.current || passwordRequestPending.current || emailRequestPending.current) return;
+    emailRequestPending.current = true;
+    const confirmed = await biometric.confirmIdentity();
+    emailRequestPending.current = false;
+    if (!isCurrentScreen()) return;
+    if (!confirmed) {
+      showAlert('Confirmação necessária', 'Confirme com a biometria para alterar o e-mail.');
+      return;
+    }
+    emailForm.reset(EMPTY_EMAIL);
+    setEmailRequestError('');
+    emailFlowStep.current = 1;
+    emailRequestPending.current = true;
+    currentCodeAttempt.current = null;
+    newEmailCodeAttempt.current = null;
     setEmailModalVisible(true);
     setEmailStep(1);
     setCurrentCode('');
     setNewEmail('');
     setNewEmailCode('');
-    setModalDevCode('');
+    setCurrentCodeError('');
+    setNewEmailCodeError('');
     setLoadingModal(true);
 
     try {
@@ -272,25 +507,28 @@ export default function SettingsScreen({ navigation }: any) {
         },
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Falha ao solicitar código para o e-mail atual.');
-      }
+      const data = await readResponse(res, 'Falha ao solicitar código para o e-mail atual.');
+      if (!isCurrentScreen()) return;
+      if (data.success !== true) throw new Error('Não foi possível confirmar a operação. Tente novamente.');
 
+      setEmailRequestError('');
       setChangeCooldown(60);
-      if (data.devCode) {
-        setModalDevCode(data.devCode);
-        setCurrentCode(data.devCode);
-      }
-    } catch (err: any) {
-      showAlert('Erro', err.message || 'Não foi possível solicitar código de segurança.');
+      showAlert('Código enviado', 'Verifique o seu e-mail.');
+    } catch (error) {
+      if (!isCurrentScreen()) return;
+      setEmailRequestError(errorMessage(error, 'Não foi possível solicitar código de segurança.'));
     } finally {
-      setLoadingModal(false);
+      if (isCurrentScreen()) {
+        emailRequestPending.current = false;
+        setLoadingModal(false);
+      }
     }
   };
 
   // Resends the step 1 code (current e-mail)
   const handleResendCurrentCode = async () => {
+    if (!isCurrentScreen() || emailFlowStep.current !== 1 || emailRequestPending.current || changeCooldown > 0) return;
+    emailRequestPending.current = true;
     setLoadingModal(true);
     try {
       const res = await fetch(`${API_BASE_URL}/users/me/email-change/request`, {
@@ -300,41 +538,48 @@ export default function SettingsScreen({ navigation }: any) {
           'Content-Type': 'application/json',
         },
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Não foi possível reenviar o código.');
-      }
+      const data = await readResponse(res, 'Não foi possível reenviar o código.');
+      if (!isCurrentScreen()) return;
+      if (data.success !== true) throw new Error('Não foi possível confirmar a operação. Tente novamente.');
+      setEmailRequestError('');
       setChangeCooldown(60);
-      if (data.devCode) {
-        setModalDevCode(data.devCode);
-        setCurrentCode(data.devCode);
-      }
-      showAlert('Código Reenviado', data.message || 'Código de segurança reenviado com sucesso para o seu e-mail atual.');
-    } catch (err: any) {
-      showAlert('Erro', err.message || 'Falha ao reenviar código.');
+      setCurrentCode('');
+      setCurrentCodeError('');
+      currentCodeAttempt.current = null;
+      showAlert('Código enviado', 'Verifique o seu e-mail.');
+    } catch (error) {
+      if (!isCurrentScreen()) return;
+      setEmailRequestError(errorMessage(error, 'Falha ao reenviar código.'));
     } finally {
-      setLoadingModal(false);
+      if (isCurrentScreen()) {
+        emailRequestPending.current = false;
+        setLoadingModal(false);
+      }
     }
   };
 
   // Validates step 1 and sends the code to the new e-mail (start of step 2)
-  const handleAdvanceToStep2 = async () => {
-    if (!currentCode.trim() || currentCode.trim().length !== 6) {
-      showAlert('Código Inválido', 'Digite o código de 6 dígitos recebido no seu e-mail atual.');
+  const handleAdvanceToStep2 = async (enteredCode = currentCode) => {
+    if (!isCurrentScreen() || emailFlowStep.current !== 1 || emailRequestPending.current) return;
+    if (!isValidOtp(enteredCode)) {
+      setCurrentCodeError('Digite o código de 6 dígitos recebido no seu e-mail atual.');
       return;
     }
 
-    const cleanEmail = newEmail.trim().toLowerCase();
-    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      showAlert('Novo E-mail Inválido', 'Por favor, informe um endereço de novo e-mail válido.');
+    const cleanEmail = normalizeEmail(emailForm.getValues('newEmail'));
+    if (!isValidEmail(cleanEmail)) {
+      emailForm.setError('newEmail', { type: 'validate', message: 'Informe um endereço de e-mail válido.' });
       return;
     }
 
-    if (cleanEmail === email.trim().toLowerCase()) {
-      showAlert('Atenção', 'O novo e-mail informado deve ser diferente do e-mail atual.');
+    if (cleanEmail === normalizeEmail(email)) {
+      emailForm.setError('newEmail', { type: 'validate', message: 'O novo e-mail deve ser diferente do atual.' });
       return;
     }
 
+    emailRequestPending.current = true;
+    currentCodeAttempt.current = enteredCode;
+    setCurrentCodeError('');
     setLoadingModal(true);
     try {
       const res = await fetch(`${API_BASE_URL}/users/me/email-change/confirm`, {
@@ -344,70 +589,96 @@ export default function SettingsScreen({ navigation }: any) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          currentCode: currentCode.trim(),
+          currentCode: enteredCode,
           newEmail: cleanEmail,
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Código do e-mail atual inválido ou expirado.');
-      }
+      const data = await readResponse(res, 'Código do e-mail atual inválido ou expirado.');
+      if (!isCurrentScreen()) return;
+      if (data.success !== true) throw new Error('Não foi possível confirmar a operação. Tente novamente.');
 
+      emailFlowStep.current = 2;
       setEmailStep(2);
+      setEmailRequestError('');
       setChangeCooldown(60);
-      setModalDevCode(data.devCode || '');
-      if (data.devCode) {
-        setNewEmailCode(data.devCode);
-      }
-
-      showAlert('Etapa 1 Concluída', data.message || 'Código de validação enviado para o novo e-mail!');
-    } catch (err: any) {
-      showAlert('Erro na Validação', err.message || 'Não foi possível confirmar o código do e-mail atual.');
+      setCurrentCode('');
+      setNewEmailCode('');
+      setNewEmailCodeError('');
+      newEmailCodeAttempt.current = null;
+      showAlert('Código enviado', 'Verifique o seu e-mail.');
+    } catch (error) {
+      if (!isCurrentScreen()) return;
+      setCurrentCodeError(errorMessage(error, 'Não foi possível confirmar o código do e-mail atual.'));
     } finally {
-      setLoadingModal(false);
+      if (isCurrentScreen()) {
+        emailRequestPending.current = false;
+        setLoadingModal(false);
+      }
     }
+  };
+
+  const tryVerifyCurrentCode = (enteredCode: string) => {
+    const cleanEmail = normalizeEmail(emailForm.getValues('newEmail'));
+    if (emailFlowStep.current === 1 && isValidOtp(enteredCode) && isValidEmail(cleanEmail)
+      && cleanEmail !== normalizeEmail(email) && currentCodeAttempt.current !== enteredCode) {
+      return handleAdvanceToStep2(enteredCode);
+    }
+  };
+
+  const handleCurrentCodeChange = (text: string) => {
+    if (!isCurrentScreen() || emailFlowStep.current !== 1 || emailRequestPending.current) return;
+    const nextCode = normalizeOtp(text);
+    setCurrentCode(nextCode);
+    if (nextCode !== currentCode) setCurrentCodeError('');
+    if (!isValidOtp(nextCode)) currentCodeAttempt.current = null;
+    return tryVerifyCurrentCode(nextCode);
   };
 
   // Resends the step 2 code (new e-mail)
   const handleResendNewEmailCode = async () => {
+    if (!isCurrentScreen() || emailFlowStep.current !== 2 || emailRequestPending.current || changeCooldown > 0) return;
+    emailRequestPending.current = true;
     setLoadingModal(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/users/me/email-change/confirm`, {
+      const res = await fetch(`${API_BASE_URL}/users/me/email-change/resend-new`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          currentCode: currentCode.trim(),
-          newEmail: newEmail.trim().toLowerCase(),
-        }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Falha ao reenviar código para o novo e-mail.');
-      }
+      const data = await readResponse(res, 'Falha ao reenviar código para o novo e-mail.');
+      if (!isCurrentScreen()) return;
+      if (data.success !== true) throw new Error('Não foi possível confirmar a operação. Tente novamente.');
+      setEmailRequestError('');
       setChangeCooldown(60);
-      if (data.devCode) {
-        setModalDevCode(data.devCode);
-        setNewEmailCode(data.devCode);
-      }
-      showAlert('Código Reenviado', data.message || 'Novo código de validação enviado para o novo e-mail.');
-    } catch (err: any) {
-      showAlert('Erro', err.message || 'Não foi possível reenviar o código.');
+      setNewEmailCode('');
+      setNewEmailCodeError('');
+      newEmailCodeAttempt.current = null;
+      showAlert('Código enviado', 'Verifique o seu e-mail.');
+    } catch (error) {
+      if (!isCurrentScreen()) return;
+      setEmailRequestError(errorMessage(error, 'Não foi possível reenviar o código.'));
     } finally {
-      setLoadingModal(false);
+      if (isCurrentScreen()) {
+        emailRequestPending.current = false;
+        setLoadingModal(false);
+      }
     }
   };
 
   // Completes step 2, updates the database, refreshes the JWT and closes the modal
-  const handleCompleteEmailChange = async () => {
-    if (!newEmailCode.trim() || newEmailCode.trim().length !== 6) {
-      showAlert('Código Inválido', 'Digite o código de 6 dígitos recebido no seu novo e-mail.');
+  const handleCompleteEmailChange = async (enteredCode = newEmailCode) => {
+    if (!isCurrentScreen() || emailFlowStep.current !== 2 || emailRequestPending.current) return;
+    if (!isValidOtp(enteredCode)) {
+      setNewEmailCodeError('Digite o código de 6 dígitos recebido no seu novo e-mail.');
       return;
     }
 
+    emailRequestPending.current = true;
+    newEmailCodeAttempt.current = enteredCode;
+    setNewEmailCodeError('');
     setLoadingModal(true);
     try {
       const res = await fetch(`${API_BASE_URL}/users/me/email-change/complete`, {
@@ -417,1046 +688,356 @@ export default function SettingsScreen({ navigation }: any) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          newEmailCode: newEmailCode.trim(),
+          newEmailCode: enteredCode,
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Código de validação incorreto ou expirado.');
+      const data = await readResponse(res, 'Código de validação incorreto ou expirado.');
+      if (!isCurrentScreen()) return;
+      if (data.success !== true) throw new Error('Não foi possível confirmar a operação. Tente novamente.');
+
+      if (typeof data.token !== 'string' || !data.token.trim()
+          || typeof data.newEmail !== 'string' || !isValidEmail(data.newEmail)) {
+        throw new Error('Não foi possível confirmar a alteração de e-mail. Entre novamente se necessário.');
       }
-
-      const updatedEmail = data.newEmail || newEmail.trim().toLowerCase();
-      setEmail(updatedEmail);
-
-      if (data.token) {
-        updateSession({ token: data.token, name, email: updatedEmail, userId });
-      }
-
+      setEmail(data.newEmail);
+      emailFlowStep.current = 0;
       setEmailModalVisible(false);
-      showAlert('Sucesso!', 'E-mail atualizado com sucesso em conformidade com as regras de segurança e LGPD.');
-    } catch (err: any) {
-      showAlert('Erro na Conclusão', err.message || 'Não foi possível concluir a alteração de e-mail.');
-    } finally {
+      emailForm.reset(EMPTY_EMAIL);
+      currentCodeAttempt.current = null;
+      newEmailCodeAttempt.current = null;
+      setChangeCooldown(0);
+      emailRequestPending.current = false;
       setLoadingModal(false);
+      updateSession({ token: data.token, email: data.newEmail });
+      showAlert('Sucesso', 'E-mail atualizado com sucesso.');
+    } catch (error) {
+      if (!isCurrentScreen()) return;
+      setNewEmailCodeError(errorMessage(error, 'Não foi possível concluir a alteração de e-mail.'));
+    } finally {
+      if (isCurrentScreen()) {
+        emailRequestPending.current = false;
+        setLoadingModal(false);
+      }
     }
   };
 
-  const themeColors = colors;
-
-  // Color of the status dot
-  const getStatusColor = (st: PresenceStatus) => {
-    switch (st) {
-      case 'PRESENT':
-        return '#4CAF50'; // Green
-      case 'AWAY':
-        return '#FFB300'; // Yellow
-      case 'BUSY':
-        return '#F44336'; // Red
+  const handleNewEmailCodeChange = (text: string) => {
+    if (!isCurrentScreen() || emailFlowStep.current !== 2 || emailRequestPending.current) return;
+    const nextCode = normalizeOtp(text);
+    setNewEmailCode(nextCode);
+    if (nextCode !== newEmailCode) setNewEmailCodeError('');
+    if (!isValidOtp(nextCode)) {
+      newEmailCodeAttempt.current = null;
+    } else if (newEmailCodeAttempt.current !== nextCode) {
+      return handleCompleteEmailChange(nextCode);
     }
   };
 
-  const nameInitial = name ? name.charAt(0).toUpperCase() : 'U';
-  const isAdminRole = role === 'SYSADMIN' || role === 'ADMIN';
+  const closeEmailChangeModal = () => {
+    if (emailRequestPending.current) return;
+    emailFlowStep.current = 0;
+    setEmailModalVisible(false);
+    emailForm.reset(EMPTY_EMAIL);
+    setEmailRequestError('');
+    setChangeCooldown(0);
+    setCurrentCode('');
+    setNewEmail('');
+    setNewEmailCode('');
+    setCurrentCodeError('');
+    setNewEmailCodeError('');
+    currentCodeAttempt.current = null;
+    newEmailCodeAttempt.current = null;
+  };
 
-  return (
-    <KeyboardAvoidingView behavior="padding" style={[styles.container, { backgroundColor: themeColors.background }]}>
-      {/* Header with brand icon and avatar with presence */}
-      <View style={[styles.header, { borderBottomColor: themeColors.border, marginTop: insets.top }]}>
-        <View style={styles.headerLeft}>
-          <Image
-            source={require('../../assets/icone.jpeg')}
-            style={styles.brandIcon}
-            resizeMode="cover"
-          />
-          <View>
-            <Text style={[styles.headerTitle, { color: themeColors.text }]}>Perfil & Ajustes</Text>
-            <Text style={[styles.headerSubtitle, { color: themeColors.subtext }]}>
-              {isAdminRole ? 'Painel Administrativo' : 'Membro da Equipe'}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.avatarHeader}>
-          <Text style={styles.avatarHeaderText}>{nameInitial}</Text>
-          <View style={[styles.statusIndicatorSmall, { backgroundColor: getStatusColor(status) }]} />
+
+  const accent = colors.isDark ? '#9FA8DA' : colors.primary;
+  const busyProfile = savingSection === 'profile';
+  const feedback = (message: string) => message ? (
+    <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.error, { color: colors.danger }]}>{message}</Text>
+  ) : null;
+
+  const renderPassword = (field: keyof PasswordValues, label: string, placeholder: string) => {
+    const visible = field === 'currentPassword' ? showCurrentPassword : field === 'newPassword' ? showNewPassword : showConfirmPassword;
+    const toggle = () => {
+      if (!isCurrentScreen() || sectionRef.current !== 'security' || passwordRequestPending.current) return;
+      if (field === 'currentPassword') setShowCurrentPassword(!visible);
+      else if (field === 'newPassword') setShowNewPassword(!visible);
+      else setShowConfirmPassword(!visible);
+    };
+    return (
+      <Controller key={field} control={passwordForm.control} name={field}
+        rules={{ required: 'Campo obrigatório.', validate: value => {
+          if (field === 'currentPassword') return true;
+          if (field === 'confirmPassword') return value === passwordForm.getValues('newPassword') || 'As senhas não coincidem.';
+          return PASSWORD_REGEX.test(value) || 'Use pelo menos 6 caracteres, com maiúscula, minúscula e número.';
+        } }}
+        render={({ field: controlled }) => (
+          <PasswordInput label={label} placeholder={placeholder} required ref={controlled.ref}
+            value={controlled.value} editable={!changingPassword} visible={visible} onToggleVisibility={toggle}
+            onBlur={controlled.onBlur} error={passwordForm.formState.errors[field]?.message}
+            onChangeText={value => {
+              if (!isCurrentScreen() || sectionRef.current !== 'security' || passwordRequestPending.current) return;
+              controlled.onChange(value);
+              passwordForm.clearErrors(field);
+              setPasswordError('');
+            }} />
+        )} />
+    );
+  };
+
+  const renderProfile = () => (
+    <>
+      <ProfilePhotoEditor name={name} disabled={savingSection !== null || changingPassword} />
+      <Controller control={profileForm.control} name="name"
+        rules={{ required: 'Campo obrigatório.', validate: value => isValidName(value) || 'O nome deve ter entre 2 e 100 caracteres.' }}
+        render={({ field }) => (
+          <FormField ref={field.ref} label="Nome completo" placeholder="Digite seu nome completo" required icon="person-outline"
+            value={field.value} editable={!busyProfile} autoCapitalize="words" autoCorrect={false}
+            error={profileForm.formState.errors.name?.message} onBlur={field.onBlur}
+            onChangeText={value => {
+              if (!isCurrentScreen() || sectionRef.current !== 'profile' || profileRequestPending.current) return;
+              field.onChange(value); profileForm.clearErrors('name'); setProfileError('');
+            }} />
+        )} />
+      <Controller control={profileForm.control} name="bio"
+        rules={{ maxLength: { value: 500, message: 'A biografia pode ter no máximo 500 caracteres.' } }}
+        render={({ field }) => (
+          <FormField ref={field.ref} label="Biografia (opcional)" placeholder="Conte um pouco sobre você"
+            value={field.value} editable={!busyProfile} multiline maxLength={500} textAlignVertical="top"
+            style={{ minHeight: 100 }} onBlur={field.onBlur} error={profileForm.formState.errors.bio?.message}
+            onChangeText={value => {
+              if (!isCurrentScreen() || sectionRef.current !== 'profile' || profileRequestPending.current) return;
+              field.onChange(value); profileForm.clearErrors('bio'); setProfileError('');
+            }} />
+        )} />
+      <Text style={[styles.counter, { color: colors.subtext }]}>{bio.length} / 500</Text>
+      <FormField label="E-mail" value={email} editable={false} icon="mail-outline"
+        trailing={<TouchableOpacity accessibilityRole="button" accessibilityLabel="Alterar e-mail"
+          disabled={savingSection !== null || changingPassword} onPress={openEmailChangeModal} style={styles.emailAction}>
+          <Text style={[styles.emailActionText, { color: accent }]}>Alterar</Text>
+        </TouchableOpacity>} />
+      {feedback(profileError)}
+    </>
+  );
+
+  const renderSecurity = () => (
+    <>
+      <View style={styles.sectionIntro}>
+        <Ionicons name="shield-checkmark-outline" size={25} color={accent} />
+        <View style={styles.introText}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Altere sua senha</Text>
+          <Text style={[styles.description, { color: colors.subtext }]}>Após salvar, entre novamente com a nova senha.</Text>
         </View>
       </View>
+      {renderPassword('currentPassword', 'Senha atual', 'Digite sua senha atual')}
+      {renderPassword('newPassword', 'Nova senha', 'Digite a nova senha')}
+      {renderPassword('confirmPassword', 'Confirmar nova senha', 'Repita a nova senha')}
+      <View style={[styles.rules, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <PasswordRules password={newPassword} confirmation={confirmPassword} />
+      </View>
+      {feedback(passwordError)}
+      <BiometricSettings disabled={changingPassword || savingSection !== null} />
+    </>
+  );
 
-      {loadingProfile ? (
-        <View style={styles.centerLoading}>
-          <ActivityIndicator size="large" color="#5C6BC0" />
-          <Text style={[styles.loadingText, { color: themeColors.subtext }]}>Carregando perfil...</Text>
+  const renderPreferences = () => (
+    <>
+      <Text style={[styles.label, { color: colors.subtext }]}>DISPONIBILIDADE</Text>
+      <View accessibilityRole="radiogroup" style={styles.optionsRow}>
+        {STATUS_OPTIONS.map(([value, label]) => (
+          <TouchableOpacity key={value} accessibilityRole="radio" accessibilityLabel={label}
+            accessibilityState={{ checked: status === value, disabled: savingSection !== null }}
+            disabled={savingSection !== null}
+            style={[styles.statusOption, { backgroundColor: colors.card, borderColor: status === value ? colors.primary : colors.border }]}
+            onPress={() => {
+              if (!isCurrentScreen() || sectionRef.current !== 'preferences' || profileRequestPending.current) return;
+              preferencesForm.setValue('status', value, { shouldDirty: true }); setPreferencesError('');
+            }}>
+            <View style={[styles.statusDot, { backgroundColor: value === 'PRESENT' ? colors.success : value === 'AWAY' ? colors.warning : colors.danger }]} />
+            <Text style={[styles.optionLabel, { color: colors.text }]}>{label}</Text>
+            {status === value ? <Ionicons name="checkmark-circle" size={16} color={accent} /> : null}
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={[styles.label, { color: colors.subtext }]}>TEMA</Text>
+      <View accessibilityRole="radiogroup" style={styles.optionsRow}>
+        {(['LIGHT', 'DARK'] as const).map(value => (
+          <TouchableOpacity key={value} accessibilityRole="radio"
+            accessibilityLabel={value === 'LIGHT' ? 'Tema claro' : 'Tema escuro'}
+            accessibilityState={{ checked: selectedTheme === value, disabled: savingSection !== null }}
+            disabled={savingSection !== null}
+            onPress={() => previewTheme(value)}
+            style={[styles.themeOption, { backgroundColor: colors.card, borderColor: selectedTheme === value ? colors.primary : colors.border }]}>
+            <View style={[styles.themePreview, { backgroundColor: value === 'LIGHT' ? '#F4F6F9' : '#121212' }]}>
+              <View style={[styles.previewLine, { backgroundColor: value === 'LIGHT' ? '#CFD8DC' : '#333333' }]} />
+              <View style={[styles.previewCard, { backgroundColor: value === 'LIGHT' ? '#FFFFFF' : '#1E1E1E' }]} />
+              <View style={[styles.previewAction, { backgroundColor: colors.primary }]} />
+            </View>
+            <View style={styles.themeLabel}>
+              <Ionicons name={value === 'LIGHT' ? 'sunny-outline' : 'moon-outline'} size={18} color={accent} />
+              <Text style={[styles.optionLabel, { color: colors.text }]}>{value === 'LIGHT' ? 'Claro' : 'Escuro'}</Text>
+              {selectedTheme === value ? <Ionicons name="checkmark-circle" size={16} color={accent} /> : null}
+            </View>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={[styles.description, { color: colors.subtext, marginVertical: 12 }]}>
+        O tema muda na prévia. Salve as preferências para manter a escolha; sair de Ajustes desfaz a prévia não salva.
+      </Text>
+      {feedback(preferencesError)}
+      <TouchableOpacity accessibilityRole="button" onPress={handleLogout}
+        style={[styles.logout, { borderColor: colors.danger }]}>
+        <Ionicons name="log-out-outline" size={21} color={colors.danger} />
+        <Text style={[styles.optionLabel, { color: colors.danger }]}>Sair da conta</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  return (
+    <View style={[styles.root, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
+        <Text style={[styles.title, { color: colors.text }]}>Ajustes</Text>
+        <Text style={[styles.description, { color: colors.subtext }]}>Perfil, segurança e preferências</Text>
+        <View style={[styles.tabs, { backgroundColor: colors.inputBg }]}>
+          {SECTIONS.map(([value, label]) => (
+            <TouchableOpacity key={value} accessibilityRole="tab"
+              accessibilityState={{ selected: section === value, disabled: changingPassword }}
+              disabled={changingPassword} onPress={() => changeSection(value)}
+              style={[styles.tab, section === value && { backgroundColor: colors.card }]}>
+              <Text style={[styles.tabLabel, { color: section === value ? accent : colors.subtext }]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
-      ) : (
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 40 }}
-        >
-          {/* Card: basic data and bio */}
-          <View style={[styles.card, { backgroundColor: themeColors.card, borderColor: themeColors.border }]}>
-            <View style={styles.profileHeroRow}>
-              <View style={[styles.avatarHero, { backgroundColor: themeColors.primary }]}>
-                <Text style={styles.avatarHeroText}>{nameInitial}</Text>
-                <View style={[styles.statusIndicatorHero, { backgroundColor: getStatusColor(status) }]} />
+      </View>
+      {loadingProfile ? <View style={styles.loading}><ActivityIndicator color={colors.primary} />
+        <Text style={[styles.description, { color: colors.subtext }]}>Carregando perfil...</Text></View>
+      : loadError ? <View style={styles.loading}>{feedback(loadError)}
+        <FormButton label="Tentar novamente" icon="refresh-outline" onPress={loadProfile} /></View>
+      : <>
+        <FormScrollView key={section} contentContainerStyle={styles.content} footer={
+          <View style={[styles.footer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
+          {(section === 'profile' && profileUnsaved) || (section === 'preferences' && preferencesUnsaved)
+            ? <Text style={[styles.description, { color: colors.subtext }]}>Alterações não salvas</Text> : null}
+          {section === 'profile'
+            ? <FormButton label="Salvar Alterações" icon="save-outline" onPress={() => { void handleSaveProfile(); }}
+                loading={savingSection === 'profile'} disabled={savingSection !== null || changingPassword || !profileUnsaved} />
+            : section === 'security'
+              ? <FormButton label="Alterar Senha" icon="shield-checkmark-outline" onPress={handleChangePassword} loading={changingPassword} />
+              : <FormButton label="Salvar preferências" icon="save-outline" onPress={() => { void handleSavePreferences(); }}
+                  loading={savingSection === 'preferences'} disabled={savingSection !== null || changingPassword || !preferencesUnsaved} />}
+          </View>
+        }>
+          {section === 'profile' ? renderProfile() : section === 'security' ? renderSecurity() : renderPreferences()}
+        </FormScrollView>
+      </>}
+      <Modal visible={emailModalVisible} transparent animationType="slide" onRequestClose={closeEmailChangeModal}>
+        <View style={styles.overlay}>
+          <FormScrollView key={emailStep} contentContainerStyle={[styles.sheetContainer, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+            <View style={[styles.sheet, { backgroundColor: colors.card }]}>
+              <View style={styles.sheetHeader}>
+                <Text style={[styles.stepLabel, { color: accent }]}>ETAPA {emailStep} DE 2</Text>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Fechar alteração de e-mail"
+                  disabled={loadingModal} onPress={closeEmailChangeModal} style={styles.close}>
+                  <Ionicons name="close" size={22} color={colors.subtext} />
+                </TouchableOpacity>
               </View>
-              <View style={styles.profileHeroInfo}>
-                <Text style={[styles.heroName, { color: themeColors.text }]}>{name || 'Sem nome'}</Text>
-                <Text style={[styles.heroEmail, { color: themeColors.subtext }]}>{email}</Text>
-                <View style={styles.roleBadge}>
-                  <Text style={styles.roleBadgeText}>
-                    {ROLE_LABELS[role || 'USER'] || ROLE_LABELS.USER}
-                  </Text>
-                </View>
+              <View style={styles.progress}>
+                {[1, 2].map(value => <View key={value} style={[styles.progressStep, { backgroundColor: value <= emailStep ? colors.primary : colors.border }]} />)}
               </View>
-            </View>
-
-            <Text style={[styles.label, { color: themeColors.text }]}>Nome Completo</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: themeColors.inputBg, color: themeColors.text, borderColor: themeColors.border }]}
-              placeholder="Digite seu nome completo"
-              placeholderTextColor={themeColors.subtext}
-              value={name}
-              onChangeText={setName}
-            />
-
-            {/* Read-only e-mail with change button */}
-            <View style={styles.emailContainer}>
-              <Text style={[styles.label, { color: themeColors.text }]}>E-mail</Text>
-
-              <View style={[styles.disabledInput, { backgroundColor: themeColors.inputBg, borderColor: themeColors.border }]}>
-                <Ionicons name="mail" size={16} color={themeColors.subtext} style={{ marginRight: 8 }} />
-                <Text style={[styles.disabledInputText, { color: themeColors.subtext, flex: 1 }]}>{email}</Text>
-                <Ionicons name="lock-closed" size={16} color="#FF9800" />
-              </View>
-
-              <TouchableOpacity
-                style={styles.btnChangeEmail}
-                onPress={openEmailChangeModal}
-              >
-                <Ionicons name="create-outline" size={16} color="#5C6BC0" style={{ marginRight: 6 }} />
-                <Text style={styles.btnChangeEmailText}>Solicitar Alteração Segura de E-mail</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: themeColors.text }]}>Biografia Pessoal</Text>
-              <Text style={[styles.charCounter, { color: themeColors.subtext }]}>
-                {bio.length} / 500
+              <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 20 }]}>
+                {emailStep === 1 ? 'Confirme seu e-mail atual' : 'Verifique o novo e-mail'}
               </Text>
-            </View>
-            <TextInput
-              style={[styles.textArea, { backgroundColor: themeColors.inputBg, color: themeColors.text, borderColor: themeColors.border }]}
-              placeholder="Conte um pouco sobre suas atribuições, equipe ou apresentação pessoal..."
-              placeholderTextColor={themeColors.subtext}
-              multiline
-              numberOfLines={4}
-              maxLength={500}
-              value={bio}
-              onChangeText={setBio}
-            />
-          </View>
-
-          {/* Card: security (password change) */}
-          <View style={[styles.card, { backgroundColor: themeColors.card, borderColor: themeColors.border }]}>
-            <Text style={[styles.cardSectionTitle, { color: themeColors.text }]}>Segurança</Text>
-            <Text style={[styles.cardSectionDesc, { color: themeColors.subtext }]}>
-              Informe a senha atual e escolha uma nova senha com no mínimo 6 caracteres, contendo letra maiúscula, minúscula e número.
-            </Text>
-
-            <Text style={[styles.label, { color: themeColors.text }]}>Senha Atual</Text>
-            <View style={[styles.passwordWrapper, { backgroundColor: themeColors.inputBg, borderColor: themeColors.border }]}>
-              <TextInput
-                style={[styles.passwordInput, { color: themeColors.text }]}
-                placeholder="Digite sua senha atual"
-                placeholderTextColor={themeColors.subtext}
-                value={currentPassword}
-                onChangeText={setCurrentPassword}
-                secureTextEntry={!showCurrentPassword}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity onPress={() => setShowCurrentPassword(!showCurrentPassword)} style={styles.eyeBtn}>
-                <Ionicons name={showCurrentPassword ? 'eye-off' : 'eye'} size={20} color={themeColors.subtext} />
+              <Text style={[styles.description, { color: colors.subtext, marginTop: 8 }]}>
+                {emailStep === 1 ? 'Confira o código recebido em ' : 'Digite o código enviado para '}
+                <Text style={{ color: colors.text, fontWeight: '600' }}>{emailStep === 1 ? email : newEmail}</Text>
+              </Text>
+              <OtpInput label={emailStep === 1 ? 'Código do e-mail atual' : 'Código do novo e-mail'}
+                value={emailStep === 1 ? currentCode : newEmailCode}
+                editable={!loadingModal} error={emailStep === 1 ? currentCodeError : newEmailCodeError}
+                onChangeText={emailStep === 1 ? handleCurrentCodeChange : handleNewEmailCodeChange} />
+              {emailStep === 1 ? <Controller control={emailForm.control} name="newEmail"
+                rules={{ required: 'Campo obrigatório.', validate: value => isValidEmail(value) || 'Informe um endereço de e-mail válido.' }}
+                render={({ field }) => (
+                  <FormField ref={field.ref} label="Novo e-mail" placeholder="novo.email@exemplo.com" required icon="mail-outline"
+                    value={field.value} editable={!loadingModal} keyboardType="email-address" autoCapitalize="none" autoCorrect={false}
+                    error={emailForm.formState.errors.newEmail?.message}
+                    onBlur={field.onBlur} onEndEditing={() => tryVerifyCurrentCode(emailForm.getValues('currentCode'))}
+                    onChangeText={value => {
+                      if (!isCurrentScreen() || emailFlowStep.current !== 1 || emailRequestPending.current) return;
+                      field.onChange(value); emailForm.clearErrors('newEmail'); setEmailRequestError('');
+                    }} />
+                )} /> : null}
+              {feedback(emailRequestError)}
+              <TouchableOpacity accessibilityRole="button" disabled={changeCooldown > 0 || loadingModal}
+                onPress={emailStep === 1 ? handleResendCurrentCode : handleResendNewEmailCode} style={styles.link}>
+                <Text style={[styles.linkText, { color: changeCooldown > 0 ? colors.subtext : accent }]}>
+                  {changeCooldown > 0 ? `Reenviar código em ${changeCooldown}s` : emailStep === 1 ? 'Reenviar código para e-mail atual' : 'Reenviar código para novo e-mail'}
+                </Text>
               </TouchableOpacity>
-            </View>
-
-            <Text style={[styles.label, { color: themeColors.text }]}>Nova Senha</Text>
-            <View style={[styles.passwordWrapper, { backgroundColor: themeColors.inputBg, borderColor: themeColors.border }]}>
-              <TextInput
-                style={[styles.passwordInput, { color: themeColors.text }]}
-                placeholder="Digite a nova senha"
-                placeholderTextColor={themeColors.subtext}
-                value={newPassword}
-                onChangeText={setNewPassword}
-                secureTextEntry={!showNewPassword}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity onPress={() => setShowNewPassword(!showNewPassword)} style={styles.eyeBtn}>
-                <Ionicons name={showNewPassword ? 'eye-off' : 'eye'} size={20} color={themeColors.subtext} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={[styles.label, { color: themeColors.text }]}>Confirmar Nova Senha</Text>
-            <View style={[styles.passwordWrapper, { backgroundColor: themeColors.inputBg, borderColor: themeColors.border }]}>
-              <TextInput
-                style={[styles.passwordInput, { color: themeColors.text }]}
-                placeholder="Repita a nova senha"
-                placeholderTextColor={themeColors.subtext}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry={!showConfirmPassword}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeBtn}>
-                <Ionicons name={showConfirmPassword ? 'eye-off' : 'eye'} size={20} color={themeColors.subtext} />
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.saveButton, changingPassword && styles.buttonDisabled]}
-              onPress={handleChangePassword}
-              disabled={changingPassword}
-            >
-              {changingPassword ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <>
-                  <Ionicons name="key-outline" size={20} color="white" style={{ marginRight: 8 }} />
-                  <Text style={styles.saveButtonText}>Alterar Senha</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {/* Card: visual presence status (dots) */}
-          <View style={[styles.card, { backgroundColor: themeColors.card, borderColor: themeColors.border }]}>
-            <Text style={[styles.cardSectionTitle, { color: themeColors.text }]}>Status de Presença</Text>
-            <Text style={[styles.cardSectionDesc, { color: themeColors.subtext }]}>
-              Selecione como os outros membros, líderes e comissões verão você no sistema:
-            </Text>
-
-            {/* Option: PRESENT */}
-            <TouchableOpacity
-              style={[
-                styles.statusOption,
-                status === 'PRESENT' && styles.statusOptionActive,
-                { backgroundColor: themeColors.inputBg, borderColor: status === 'PRESENT' ? '#4CAF50' : themeColors.border },
-              ]}
-              onPress={() => setStatus('PRESENT')}
-            >
-              <View style={styles.statusOptionLeft}>
-                <View style={[styles.statusDotVisual, { backgroundColor: '#4CAF50' }]} />
-                <View>
-                  <Text style={[styles.statusOptionTitle, { color: themeColors.text }]}>Presente (Disponível)</Text>
-                  <Text style={[styles.statusOptionSubtitle, { color: themeColors.subtext }]}>
-                    Disponível para reuniões, chamadas e atividades
-                  </Text>
-                </View>
-              </View>
-              <Ionicons
-                name={status === 'PRESENT' ? 'radio-button-on' : 'radio-button-off'}
-                size={22}
-                color={status === 'PRESENT' ? '#4CAF50' : themeColors.subtext}
-              />
-            </TouchableOpacity>
-
-            {/* Option: AWAY */}
-            <TouchableOpacity
-              style={[
-                styles.statusOption,
-                status === 'AWAY' && styles.statusOptionActive,
-                { backgroundColor: themeColors.inputBg, borderColor: status === 'AWAY' ? '#FFB300' : themeColors.border },
-              ]}
-              onPress={() => setStatus('AWAY')}
-            >
-              <View style={styles.statusOptionLeft}>
-                <View style={[styles.statusDotVisual, { backgroundColor: '#FFB300' }]} />
-                <View>
-                  <Text style={[styles.statusOptionTitle, { color: themeColors.text }]}>Ausente</Text>
-                  <Text style={[styles.statusOptionSubtitle, { color: themeColors.subtext }]}>
-                    Afastado temporariamente ou fora do posto
-                  </Text>
-                </View>
-              </View>
-              <Ionicons
-                name={status === 'AWAY' ? 'radio-button-on' : 'radio-button-off'}
-                size={22}
-                color={status === 'AWAY' ? '#FFB300' : themeColors.subtext}
-              />
-            </TouchableOpacity>
-
-            {/* Option: BUSY */}
-            <TouchableOpacity
-              style={[
-                styles.statusOption,
-                status === 'BUSY' && styles.statusOptionActive,
-                { backgroundColor: themeColors.inputBg, borderColor: status === 'BUSY' ? '#F44336' : themeColors.border },
-              ]}
-              onPress={() => setStatus('BUSY')}
-            >
-              <View style={styles.statusOptionLeft}>
-                <View style={[styles.statusDotVisual, { backgroundColor: '#F44336' }]} />
-                <View>
-                  <Text style={[styles.statusOptionTitle, { color: themeColors.text }]}>Ocupado</Text>
-                  <Text style={[styles.statusOptionSubtitle, { color: themeColors.subtext }]}>
-                    Em chamada, reunião de comissão ou foco restrito
-                  </Text>
-                </View>
-              </View>
-              <Ionicons
-                name={status === 'BUSY' ? 'radio-button-on' : 'radio-button-off'}
-                size={22}
-                color={status === 'BUSY' ? '#F44336' : themeColors.subtext}
-              />
-            </TouchableOpacity>
-          </View>
-
-          {/* Card: preferred app theme */}
-          <View style={[styles.card, { backgroundColor: themeColors.card, borderColor: themeColors.border }]}>
-            <Text style={[styles.cardSectionTitle, { color: themeColors.text }]}>Tema da Aplicação</Text>
-            <Text style={[styles.cardSectionDesc, { color: themeColors.subtext }]}>
-              Selecione para testar em tempo real. Apenas será salvo definitivamente ao clicar em "Salvar Alterações":
-            </Text>
-
-            <View style={styles.themeRow}>
-              {/* Dark mode */}
-              <TouchableOpacity
-                style={[
-                  styles.themeButton,
-                  theme === 'DARK' && styles.themeButtonActive,
-                  { backgroundColor: themeColors.inputBg, borderColor: theme === 'DARK' ? themeColors.primary : 'transparent' },
-                ]}
-                onPress={() => setTheme('DARK', false)}
-              >
-                <Ionicons name="moon" size={24} color={theme === 'DARK' ? '#7986CB' : '#888'} />
-                <Text style={[styles.themeButtonText, { color: themeColors.text }]}>Modo Escuro</Text>
-                {theme === 'DARK' && (
-                  <Ionicons name="checkmark-circle" size={18} color={themeColors.primary} style={{ marginTop: 4 }} />
-                )}
-              </TouchableOpacity>
-
-              {/* Light mode */}
-              <TouchableOpacity
-                style={[
-                  styles.themeButton,
-                  theme === 'LIGHT' && styles.themeButtonActive,
-                  { backgroundColor: themeColors.inputBg, borderColor: theme === 'LIGHT' ? themeColors.primary : 'transparent' },
-                ]}
-                onPress={() => setTheme('LIGHT', false)}
-              >
-                <Ionicons name="sunny" size={24} color={theme === 'LIGHT' ? '#FFA726' : '#888'} />
-                <Text style={[styles.themeButtonText, { color: themeColors.text }]}>Modo Claro</Text>
-                {theme === 'LIGHT' && (
-                  <Ionicons name="checkmark-circle" size={18} color={themeColors.primary} style={{ marginTop: 4 }} />
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Save changes button */}
-          <TouchableOpacity
-            style={[styles.saveButton, saving && styles.buttonDisabled]}
-            onPress={handleSaveProfile}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-done" size={20} color="white" style={{ marginRight: 8 }} />
-                <Text style={styles.saveButtonText}>Salvar Alterações</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* Logout button */}
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={20} color="#FF6B6B" style={{ marginRight: 8 }} />
-            <Text style={styles.logoutButtonText}>Sair da Conta (Logout)</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      )}
-
-      {/* Secure e-mail change modal (two-step LGPD flow) */}
-      <Modal
-        visible={emailModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => !loadingModal && setEmailModalVisible(false)}
-      >
-        <KeyboardAvoidingView behavior="padding" style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: themeColors.card, borderColor: themeColors.border }]}>
-            {/* Modal header */}
-            <View style={styles.modalHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={styles.modalIconBadge}>
-                  <Ionicons name="shield-checkmark" size={20} color="#5C6BC0" />
-                </View>
-                <View>
-                  <Text style={[styles.modalTitle, { color: themeColors.text }]}>Alterar E-mail</Text>
-                  <Text style={[styles.modalSubtitle, { color: themeColors.subtext }]}>
-                    Segurança e Conformidade LGPD
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => !loadingModal && setEmailModalVisible(false)}
-                disabled={loadingModal}
-                style={styles.modalCloseBtn}
-              >
-                <Ionicons name="close" size={22} color={themeColors.subtext} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Step indicator */}
-            <View style={styles.stepIndicatorContainer}>
-              <View style={[styles.stepItem, emailStep === 1 && styles.stepItemActive]}>
-                <View style={[styles.stepCircle, emailStep === 1 ? styles.stepCircleActive : styles.stepCircleDone]}>
-                  {emailStep === 2 ? (
-                    <Ionicons name="checkmark" size={14} color="#FFF" />
-                  ) : (
-                    <Text style={styles.stepCircleText}>1</Text>
-                  )}
-                </View>
-                <Text style={[styles.stepLabel, emailStep === 1 && { color: '#5C6BC0', fontWeight: 'bold' }]}>
-                  E-mail Atual
-                </Text>
-              </View>
-
-              <View style={[styles.stepLine, emailStep === 2 && styles.stepLineActive]} />
-
-              <View style={[styles.stepItem, emailStep === 2 && styles.stepItemActive]}>
-                <View style={[styles.stepCircle, emailStep === 2 ? styles.stepCircleActive : styles.stepCircleInactive]}>
-                  <Text style={[styles.stepCircleText, emailStep !== 2 && { color: themeColors.subtext }]}>2</Text>
-                </View>
-                <Text style={[styles.stepLabel, emailStep === 2 && { color: '#5C6BC0', fontWeight: 'bold' }]}>
-                  Novo E-mail
-                </Text>
-              </View>
-            </View>
-
-            {/* Dev test info banner */}
-            {modalDevCode ? (
-              <View style={styles.modalDevBanner}>
-                <Ionicons name="information-circle" size={18} color="#FF9800" style={{ marginRight: 6 }} />
-                <Text style={styles.modalDevBannerText}>
-                  Código OTP de Teste (Dev): <Text style={{ fontWeight: 'bold' }}>{modalDevCode}</Text>
-                </Text>
-              </View>
-            ) : null}
-
-            {/* STEP 1 CONTENT */}
-            {emailStep === 1 && (
-              <View style={styles.modalBody}>
-                <Text style={[styles.modalStepDesc, { color: themeColors.subtext }]}>
-                  Um código de autorização de 6 dígitos foi enviado para o seu e-mail atual cadastrado:
-                </Text>
-                <View style={styles.currentEmailHighlight}>
-                  <Ionicons name="mail-outline" size={16} color="#5C6BC0" style={{ marginRight: 6 }} />
-                  <Text style={styles.currentEmailHighlightText}>{email}</Text>
-                </View>
-
-                <Text style={[styles.label, { color: themeColors.text, marginTop: 12 }]}>
-                  Código de Confirmação (6 dígitos)
-                </Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: themeColors.inputBg, color: themeColors.text, borderColor: themeColors.border, letterSpacing: 4, textAlign: 'center', fontSize: 20, fontWeight: 'bold' }]}
-                  placeholder="000000"
-                  placeholderTextColor={themeColors.subtext}
-                  keyboardType="numeric"
-                  maxLength={6}
-                  value={currentCode}
-                  onChangeText={setCurrentCode}
-                />
-
-                <Text style={[styles.label, { color: themeColors.text, marginTop: 12 }]}>
-                  Novo E-mail Desejado
-                </Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: themeColors.inputBg, color: themeColors.text, borderColor: themeColors.border }]}
-                  placeholder="novo.email@exemplo.com"
-                  placeholderTextColor={themeColors.subtext}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  value={newEmail}
-                  onChangeText={setNewEmail}
-                />
-
-                {/* Resend code to current e-mail */}
-                <TouchableOpacity
-                  onPress={handleResendCurrentCode}
-                  disabled={changeCooldown > 0 || loadingModal}
-                  style={styles.modalResendBtn}
-                >
-                  <Text style={[styles.modalResendText, { color: changeCooldown > 0 ? themeColors.subtext : '#5C6BC0' }]}>
-                    {changeCooldown > 0 ? `Reenviar código em ${changeCooldown}s` : 'Reenviar código para e-mail atual'}
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Advance to step 2 button */}
-                <TouchableOpacity
-                  style={[styles.modalPrimaryBtn, loadingModal && styles.btnDisabled]}
-                  onPress={handleAdvanceToStep2}
-                  disabled={loadingModal}
-                >
-                  {loadingModal ? (
-                    <ActivityIndicator color="#FFF" />
-                  ) : (
-                    <>
-                      <Text style={styles.modalPrimaryBtnText}>Avançar para Etapa 2</Text>
-                      <Ionicons name="arrow-forward" size={18} color="#FFF" style={{ marginLeft: 6 }} />
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* STEP 2 CONTENT */}
-            {emailStep === 2 && (
-              <View style={styles.modalBody}>
-                <Text style={[styles.modalStepDesc, { color: themeColors.subtext }]}>
-                  O código do e-mail atual foi validado! Enviamos agora um novo código de 6 dígitos para o seu novo endereço:
-                </Text>
-                <View style={styles.currentEmailHighlight}>
-                  <Ionicons name="mail-open-outline" size={16} color="#4CAF50" style={{ marginRight: 6 }} />
-                  <Text style={[styles.currentEmailHighlightText, { color: '#4CAF50' }]}>{newEmail}</Text>
-                </View>
-
-                <Text style={[styles.label, { color: themeColors.text, marginTop: 14 }]}>
-                  Código Recebido no Novo E-mail
-                </Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: themeColors.inputBg, color: themeColors.text, borderColor: themeColors.border, letterSpacing: 4, textAlign: 'center', fontSize: 20, fontWeight: 'bold' }]}
-                  placeholder="000000"
-                  placeholderTextColor={themeColors.subtext}
-                  keyboardType="numeric"
-                  maxLength={6}
-                  value={newEmailCode}
-                  onChangeText={setNewEmailCode}
-                />
-
-                {/* Resend code to the new e-mail */}
-                <TouchableOpacity
-                  onPress={handleResendNewEmailCode}
-                  disabled={changeCooldown > 0 || loadingModal}
-                  style={styles.modalResendBtn}
-                >
-                  <Text style={[styles.modalResendText, { color: changeCooldown > 0 ? themeColors.subtext : '#5C6BC0' }]}>
-                    {changeCooldown > 0 ? `Reenviar código em ${changeCooldown}s` : 'Reenviar código para novo e-mail'}
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Step 2 action buttons */}
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-                  <TouchableOpacity
-                    style={[styles.modalSecondaryBtn, { borderColor: themeColors.border }]}
-                    onPress={() => setEmailStep(1)}
-                    disabled={loadingModal}
-                  >
-                    <Ionicons name="arrow-back" size={16} color={themeColors.subtext} style={{ marginRight: 4 }} />
-                    <Text style={[styles.modalSecondaryBtnText, { color: themeColors.subtext }]}>Voltar</Text>
+              {emailStep === 1
+                ? <FormButton label="Avançar para Etapa 2" icon="arrow-forward-outline" onPress={() => handleAdvanceToStep2()} loading={loadingModal} />
+                : <>
+                  <FormButton label="Confirmar e Atualizar" icon="checkmark-circle-outline" onPress={() => handleCompleteEmailChange()} loading={loadingModal} />
+                  <TouchableOpacity accessibilityRole="button" disabled={loadingModal} style={styles.link}
+                    onPress={() => {
+                      if (!isCurrentScreen() || emailRequestPending.current) return;
+                      emailFlowStep.current = 1;
+                      setCurrentCode(''); currentCodeAttempt.current = null; setEmailStep(1);
+                      setEmailRequestError('Para alterar o endereço novamente, reenvie o código para o e-mail atual.');
+                    }}>
+                    <Text style={[styles.linkText, { color: accent }]}>Voltar</Text>
                   </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.modalPrimaryBtn, { flex: 1 }, loadingModal && styles.btnDisabled]}
-                    onPress={handleCompleteEmailChange}
-                    disabled={loadingModal}
-                  >
-                    {loadingModal ? (
-                      <ActivityIndicator color="#FFF" />
-                    ) : (
-                      <>
-                        <Ionicons name="checkmark-circle" size={18} color="#FFF" style={{ marginRight: 6 }} />
-                        <Text style={styles.modalPrimaryBtnText}>Confirmar e Atualizar</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </View>
-        </KeyboardAvoidingView>
+                </>}
+            </View>
+          </FormScrollView>
+        </View>
+      <ToastHost active={emailModalVisible} /><ConfirmationHost active={emailModalVisible} />
       </Modal>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 12, // real status bar height comes from the safe area inset applied to the header
-    width: '100%',
-    maxWidth: 700,
-    alignSelf: 'center',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 16,
-    marginBottom: 16,
-    borderBottomWidth: 1,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  brandIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    marginRight: 12,
-    borderWidth: 1.5,
-    borderColor: '#5C6BC0',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  avatarHeader: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#5C6BC0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  avatarHeaderText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  statusIndicatorSmall: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    position: 'absolute',
-    bottom: -1,
-    right: -1,
-    borderWidth: 2,
-    borderColor: '#121212',
-  },
-  centerLoading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 30,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-  },
-  card: {
-    borderRadius: 14,
-    padding: 18,
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  profileHeroRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(150, 150, 150, 0.15)',
-  },
-  avatarHero: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  avatarHeroText: {
-    color: '#FFF',
-    fontSize: 26,
-    fontWeight: 'bold',
-  },
-  statusIndicatorHero: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    borderWidth: 2.5,
-    borderColor: '#1E1E1E',
-  },
-  profileHeroInfo: {
-    marginLeft: 16,
-    flex: 1,
-  },
-  heroName: {
-    fontSize: 17,
-    fontWeight: 'bold',
-  },
-  heroEmail: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  roleBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(92, 107, 192, 0.18)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    marginTop: 6,
-  },
-  roleBadgeText: {
-    color: '#5C6BC0',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  labelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 6,
-  },
-  charCounter: {
-    fontSize: 11,
-  },
-  input: {
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    borderWidth: 1,
-  },
-  disabledInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-  },
-  disabledInputText: {
-    fontSize: 14,
-  },
-  textArea: {
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    borderWidth: 1,
-    textAlignVertical: 'top',
-    minHeight: 85,
-  },
-  cardSectionTitle: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  cardSectionDesc: {
-    fontSize: 12,
-    marginBottom: 14,
-    lineHeight: 18,
-  },
-  statusOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 10,
-    borderWidth: 1.5,
-  },
-  statusOptionActive: {
-    borderWidth: 2,
-  },
-  statusOptionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  statusDotVisual: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    marginRight: 12,
-  },
-  statusOptionTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  statusOptionSubtitle: {
-    fontSize: 11,
-    marginTop: 2,
-  },
-  themeRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  themeButton: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 18,
-    borderRadius: 10,
-    borderWidth: 2,
-  },
-  themeButtonActive: {
-    borderColor: '#5C6BC0',
-  },
-  themeButtonText: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    marginTop: 6,
-  },
-  saveButton: {
-    backgroundColor: '#5C6BC0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 10,
-    marginTop: 8,
-    marginBottom: 14,
-  },
-  saveButtonText: {
-    color: '#FFF',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-  passwordWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginBottom: 14,
-  },
-  passwordInput: {
-    flex: 1,
-    padding: 14,
-    fontSize: 14,
-  },
-  eyeBtn: {
-    padding: 12,
-  },
-  buttonDisabled: {
-    opacity: 0.65,
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: 'rgba(211, 47, 47, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(211, 47, 47, 0.3)',
-    marginBottom: 20,
-  },
-  logoutButtonText: {
-    color: '#FF6B6B',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-
-  // E-mail and LGPD styles
-  emailContainer: {
-    marginBottom: 16,
-  },
-  btnChangeEmail: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: 'rgba(92, 107, 192, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(92, 107, 192, 0.35)',
-  },
-  btnChangeEmailText: {
-    color: '#5C6BC0',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
-  // E-mail change modal
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 480,
-    borderRadius: 16,
-    padding: 22,
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-  modalIconBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: 'rgba(92, 107, 192, 0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  modalCloseBtn: {
-    padding: 6,
-  },
-  stepIndicatorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(150, 150, 150, 0.08)',
-    borderRadius: 10,
-  },
-  stepItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    opacity: 0.5,
-  },
-  stepItemActive: {
-    opacity: 1,
-  },
-  stepCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 6,
-  },
-  stepCircleActive: {
-    backgroundColor: '#5C6BC0',
-  },
-  stepCircleDone: {
-    backgroundColor: '#4CAF50',
-  },
-  stepCircleInactive: {
-    backgroundColor: 'rgba(150, 150, 150, 0.2)',
-  },
-  stepCircleText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  stepLabel: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#999',
-  },
-  stepLine: {
-    width: 30,
-    height: 2,
-    backgroundColor: 'rgba(150, 150, 150, 0.2)',
-    marginHorizontal: 10,
-  },
-  stepLineActive: {
-    backgroundColor: '#4CAF50',
-  },
-  modalDevBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 152, 0, 0.12)',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 152, 0, 0.3)',
-  },
-  modalDevBannerText: {
-    color: '#FF9800',
-    fontSize: 12,
-    flex: 1,
-  },
-  modalBody: {
-    marginTop: 4,
-  },
-  modalStepDesc: {
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 10,
-  },
-  currentEmailHighlight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: 'rgba(92, 107, 192, 0.08)',
-    borderRadius: 8,
-    marginBottom: 10,
-  },
-  currentEmailHighlightText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#5C6BC0',
-  },
-  modalResendBtn: {
-    alignSelf: 'center',
-    marginVertical: 12,
-  },
-  modalResendText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  modalPrimaryBtn: {
-    backgroundColor: '#5C6BC0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 13,
-    borderRadius: 10,
-  },
-  modalPrimaryBtnText: {
-    color: '#FFF',
-    fontSize: 15,
-    fontWeight: 'bold',
-  },
-  modalSecondaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 13,
-    paddingHorizontal: 18,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  modalSecondaryBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  btnDisabled: {
-    opacity: 0.6,
-  },
+  root: { flex: 1 },
+  header: { paddingHorizontal: 16, paddingBottom: 12, width: '100%', maxWidth: 480, alignSelf: 'center' },
+  title: { fontSize: 26, fontWeight: '700', marginBottom: 5 },
+  description: { fontSize: 13, lineHeight: 19 },
+  tabs: { flexDirection: 'row', borderRadius: 14, padding: 4, marginTop: 14, gap: 3 },
+  tab: { flex: 1, minHeight: 48, borderRadius: 10, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 },
+  tabLabel: { fontSize: 12, lineHeight: 17, fontWeight: '600', textAlign: 'center' },
+  content: { flexGrow: 1, padding: 16, width: '100%', maxWidth: 480, alignSelf: 'center' },
+  counter: { fontSize: 12, textAlign: 'right', marginBottom: 12, marginTop: -5 },
+  emailAction: { minHeight: 48, paddingHorizontal: 12, justifyContent: 'center' },
+  emailActionText: { fontSize: 12, fontWeight: '600' },
+  error: { fontSize: 13, lineHeight: 19, marginVertical: 8 },
+  loading: { flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center', gap: 10 },
+  footer: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12, borderTopWidth: 1, width: '100%', maxWidth: 480, alignSelf: 'center' },
+  sectionIntro: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
+  introText: { flex: 1, gap: 5 },
+  sectionTitle: { fontSize: 16, lineHeight: 23, fontWeight: '700' },
+  rules: { borderWidth: 1, padding: 12, paddingBottom: 0, borderRadius: 14, marginBottom: 12 },
+  future: { flexDirection: 'row', gap: 12, borderWidth: 1, borderRadius: 14, padding: 14, alignItems: 'center', marginTop: 8 },
+  label: { fontSize: 11, fontWeight: '700', marginBottom: 10, marginTop: 6 },
+  optionsRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  statusOption: { flex: 1, borderWidth: 2, borderRadius: 14, minHeight: 88, padding: 10, alignItems: 'center', justifyContent: 'center', gap: 7 },
+  statusDot: { width: 10, height: 10, borderRadius: 5 },
+  optionLabel: { fontSize: 12, lineHeight: 17, fontWeight: '600', textAlign: 'center' },
+  themeOption: { flex: 1, borderWidth: 2, borderRadius: 14, padding: 8 },
+  themePreview: { height: 94, padding: 10, borderRadius: 9, gap: 8 },
+  previewLine: { height: 6, width: '60%', borderRadius: 3 },
+  previewCard: { height: 35, borderRadius: 6 },
+  previewAction: { height: 8, width: '55%', borderRadius: 4 },
+  themeLabel: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  logout: { minHeight: 48, borderWidth: 1, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 12 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)' },
+  sheetContainer: { flexGrow: 1, justifyContent: 'flex-end', paddingHorizontal: 12, alignItems: 'center' },
+  sheet: { width: '100%', maxWidth: 480, padding: 18, borderRadius: 24 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  stepLabel: { fontSize: 11, fontWeight: '700' },
+  close: { minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center' },
+  progress: { flexDirection: 'row', gap: 6, marginBottom: 16 },
+  progressStep: { flex: 1, height: 4, borderRadius: 2 },
+  link: { minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
+  linkText: { fontSize: 13, lineHeight: 18, fontWeight: '600', textAlign: 'center' },
 });

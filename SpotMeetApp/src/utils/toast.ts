@@ -1,5 +1,3 @@
-import { useEffect } from 'react';
-
 /**
  * Toast variants. The colour and icon of the notification come from this.
  */
@@ -14,19 +12,20 @@ export interface ToastPayload {
 
 type ToastHandler = (toast: ToastPayload) => void;
 
-let handler: ToastHandler | null = null;
+const hosts = new Map<ToastHandler, (id: number) => void>();
 let nextId = 1;
 
 /**
  * The ToastHost registers itself here so that plain functions (outside React
  * components) can raise a notification without needing a hook.
  */
-export function setToastHandler(fn: ToastHandler | null): void {
-  handler = fn;
+export function registerToastHost(show: ToastHandler, dismiss: (id: number) => void): () => void {
+  hosts.set(show, dismiss);
+  return () => { hosts.delete(show); };
 }
 
 export function isToastHostMounted(): boolean {
-  return handler !== null;
+  return hosts.size > 0;
 }
 
 /**
@@ -49,12 +48,12 @@ export function inferVariant(title: string): ToastVariant {
 }
 
 export function showToast(title: string, message: string, variant?: ToastVariant): boolean {
-  if (!handler) return false;
-  handler({ id: nextId++, title, message, variant: variant || inferVariant(title) });
+  if (!hosts.size) return false;
+  const toast = { id: nextId++, title, message, variant: variant || inferVariant(title) };
+  [...hosts.keys()].forEach(show => show(toast));
   return true;
 }
 
-/** Clears the handler when the host unmounts. */
-export function useToastCleanup(): void {
-  useEffect(() => () => setToastHandler(null), []);
+export function dismissToast(id: number): void {
+  [...hosts.values()].forEach(dismiss => dismiss(id));
 }

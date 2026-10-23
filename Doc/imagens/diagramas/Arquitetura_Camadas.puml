@@ -1,0 +1,38 @@
+@startuml Arquitetura_Camadas
+!pragma layout smetana
+title
+SpotMeet - Comunicação entre as camadas do software
+end title
+left to right direction
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+actor "Usuário" as U
+
+rectangle "Aplicativo (SpotMeetApp)\nReact Native, Expo e TypeScript" as App #F4F6FF {
+  rectangle "Telas e componentes\n(screens, components)" as Telas
+  rectangle "Contextos e hooks\n(context, hooks)" as Ctx
+}
+
+rectangle "API REST (backend)\nJava 21 e Spring Boot" as Api #F6FFF4 {
+  rectangle "Filtro de segurança\n(JwtAuthFilter)" as Filtro
+  rectangle "Controller\n(recebem as requisições HTTP)" as Ctrl
+  rectangle "Service\n(regras de negócio e permissões)" as Svc
+  rectangle "Repository\n(Spring Data JPA)" as Repo
+  rectangle "Model e DTO\n(entidades e objetos da API)" as Model
+}
+
+database "PostgreSQL 18" as DB
+cloud "Servidor SMTP\n(e-mail)" as Mail
+
+U --> Telas : toques e formulários
+Telas --> Ctx : sessão, tema e biometria
+Telas --> Filtro : HTTP e JSON (token JWT)
+Filtro --> Ctrl
+Ctrl --> Svc
+Svc --> Repo
+Repo --> DB : SQL (Hibernate)
+Svc --> Mail : códigos de verificação\n(envio assíncrono)
+Ctrl ..> Model : DTO
+Svc ..> Model : entidades
+@enduml

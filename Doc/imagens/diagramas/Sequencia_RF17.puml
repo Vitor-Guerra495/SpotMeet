@@ -1,0 +1,76 @@
+@startuml Sequencia_RF17
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF17 (Definir Tema)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":SettingsScreen" as Tela
+participant ":ThemeContext" as Tema
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":UserController" as Ctrl
+participant ":UserService" as Svc
+participant ":UserRepository" as Repo
+participant ":AuditLogRepository" as AuditRepo
+end box
+
+group Carregar o tema salvo ao entrar no aplicativo
+  note over Tema : ThemeProvider reage à sessão iniciada (isAuthenticated).\nSem sessão, o tema é DARK.
+  Tema -> Filtro : GET /api/users/me
+  Filtro -> Ctrl : getMyProfile(authentication)
+  Ctrl -> Svc : getMyProfile(email)
+  Svc -> Repo : findByEmail(email)
+  Repo --> Svc : Optional<User>
+  Svc --> Ctrl : UserProfileResponseDTO (fromEntity)
+  Ctrl --> Tema : 200 UserProfileResponseDTO
+  Tema --> U : aplica as cores do tema recebido (LIGHT ou DARK)
+end
+
+group Experimentar o tema (prévia)
+  U -> Tela : na aba "Ajustes", seção "Preferências", tocar em "Claro" ou "Escuro"
+  Tela -> Tema : setTheme(tema, false)
+  Tema --> Tela : Promise<void>
+  Tela --> U : o aplicativo troca de cor na hora, sem enviar nada ao servidor
+end
+
+group Salvar a preferência
+  U -> Tela : tocar em "Salvar preferências"
+  Tela -> Tema : setTheme(tema selecionado, false)
+  Tela -> Filtro : PUT /api/users/me (UpdateUserProfileDTO com availabilityStatus e preferredTheme)
+  Filtro -> Ctrl : updateMyProfile(dto, authentication)
+  activate Ctrl
+  Ctrl -> Svc : updateMyProfile(email, dto)
+  activate Svc
+  Svc -> Repo : findByEmail(email)
+  Repo --> Svc : Optional<User>
+  note over Svc : preferredTheme em maiúsculas: LIGHT, DARK ou SYSTEM.\nValor desconhecido é ignorado e o tema anterior é mantido.
+  Svc -> Repo : save(User com preferred_theme e availability_status)
+  Repo --> Svc : User
+  Svc -> AuditRepo : save(AuditLog PROFILE_UPDATED)
+  AuditRepo --> Svc : AuditLog
+  Svc --> Ctrl : UserProfileResponseDTO
+  deactivate Svc
+  alt gravado
+    Ctrl --> Tela : 200 UserProfileResponseDTO
+    Tela -> Tema : setTheme(preferredTheme recebido, false)
+    Tela --> U : exibe o aviso "Preferências salvas com sucesso." e mantém o tema
+  else usuário não encontrado ou erro inesperado
+    Ctrl --> Tela : 400 (texto da mensagem) ou 500 "Erro ao atualizar perfil: ..."
+    Tela --> U : exibe "Não foi possível salvar as preferências. Tente novamente." e mantém a prévia
+  end
+  deactivate Ctrl
+end
+
+group Sair de Ajustes sem salvar
+  U -> Tela : trocar para outra aba do aplicativo
+  Tela -> Tema : setTheme(último tema salvo, false)
+  Tema --> U : o aplicativo volta ao tema gravado
+end
+@enduml

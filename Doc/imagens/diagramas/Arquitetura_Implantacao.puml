@@ -1,0 +1,22 @@
+@startuml Arquitetura_Implantacao
+!pragma layout smetana
+title
+SpotMeet - Diagrama de implantação
+end title
+skinparam shadowing false
+
+node "Celular do usuário\n(Android ou iOS)" as Cel {
+  artifact "SpotMeetApp\n(APK no Android, Expo Go no iOS)" as App
+}
+
+node "Computador do servidor\n(mesma rede local)" as Srv {
+  artifact "backend-0.0.1-SNAPSHOT.jar\nSpring Boot 3.3.5, Tomcat embutido\nporta 8080" as Api
+  database "PostgreSQL 18\nbanco spotmeet_db" as DB
+}
+
+cloud "Gmail (SMTP)\nsmtp.gmail.com:587" as Mail
+
+App --> Api : HTTP e JSON\n(rede local, token JWT)
+Api --> DB : JDBC
+Api --> Mail : SMTP com STARTTLS
+@enduml

@@ -1,0 +1,122 @@
+@startuml Sequencia_RF36
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF36 (Configurar Bloqueio Biométrico)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":BiometricSettings" as Cfg
+participant ":BiometricContext" as Ctx
+participant ":biometricSession" as Sess
+participant ":LocalAuthentication" as Local
+participant ":SecureStore" as Store
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":UserController" as Ctrl
+participant ":UserService" as Svc
+participant ":UserRepository" as Repo
+end box
+
+group Habilitar o bloqueio biométrico
+  U -> Cfg : tocar na chave "Bloqueio biométrico" (Desligado)
+  Cfg -> Ctx : enable()
+  Ctx -> Sess : getBiometricAvailability()
+  Sess -> Store : isAvailableAsync()
+  Sess -> Local : hasHardwareAsync(), isEnrolledAsync() e getEnrolledLevelAsync()
+  Sess --> Ctx : BiometricAvailability
+  alt aparelho sem biometria forte cadastrada
+    Ctx --> Cfg : error (mensagem sobre o que falta no aparelho)
+    Cfg --> U : exibe a mensagem; a biometria permanece desligada
+  else biometria disponível
+    Ctx -> Sess : authenticateBiometricDevice(true)
+    Sess -> Local : authenticateAsync(sem PIN do aparelho)
+    Local --> U : solicita a biometria
+    U --> Local : confirma a biometria
+    Local --> Sess : resultado
+    Sess --> Ctx : boolean
+    alt biometria não confirmada
+      Ctx --> Cfg : error ("Autenticação cancelada ou não confirmada...")
+    else biometria confirmada
+      Ctx -> Filtro : GET /api/users/me (Authorization: Bearer token, prazo de 10 s)
+      Filtro -> Ctrl : getMyProfile(auth)
+      Ctrl -> Svc : getMyProfile(email)
+      Svc -> Repo : findByEmail(email)
+      Repo --> Svc : User
+      Svc --> Ctrl : UserProfileResponseDTO
+      Ctrl --> Ctx : 200 UserProfileResponseDTO
+      Ctx -> Ctx : confirmSession(): confere id, nome, e-mail e perfil
+      Ctx -> Sess : saveBiometricSession(session, config)
+      Sess -> Store : setItemAsync(token, id do usuário e servidor)
+      Sess --> Ctx : true
+      Ctx --> Cfg : enabled = true
+      Cfg --> U : chave "Habilitado" e as opções de prazo
+    end
+  end
+end
+
+group Definir o prazo do bloqueio
+  U -> Cfg : escolher "Imediatamente", "1 minuto", "5 minutos", "1 hora", "3 horas" ou "24 horas"
+  Cfg -> Ctx : setDelay(delay)
+  Ctx -> Sess : saveBiometricSession(session, config com o novo prazo)
+  Sess --> Ctx : true
+  Ctx --> Cfg : delay atualizado
+  Cfg --> U : opção marcada (a chave mantém o interruptor durante a gravação)
+  note over Cfg, Ctx : o prazo vale com o aplicativo em segundo plano;\nse o aplicativo for fechado, o desbloqueio é sempre pedido
+end
+
+group Religar depois da troca de senha (RF14)
+  note over Ctx : antes do logout da troca de senha, keepForPasswordChange()\nguardou a preferência (habilitada e prazo, sem token)
+  U -> Ctx : entrar de novo com a nova senha (evento signIn)
+  Ctx -> Sess : takeBiometricRearm()
+  Sess --> Ctx : BiometricRearm (mesma conta e servidor)
+  Ctx -> Ctx : enable() com o prazo restaurado
+  Ctx -> Sess : authenticateBiometricDevice(true)
+  Sess -> Local : authenticateAsync(sem PIN do aparelho)
+  Local --> U : solicita a biometria
+  U --> Local : confirma a biometria
+  Local --> Sess : resultado
+  Sess --> Ctx : boolean
+  alt biometria confirmada
+    Ctx -> Filtro : GET /api/users/me (Authorization: Bearer novo token, prazo de 10 s)
+    Filtro -> Ctrl : getMyProfile(auth)
+    Ctrl -> Svc : getMyProfile(email)
+    Svc -> Repo : findByEmail(email)
+    Repo --> Svc : User
+    Svc --> Ctrl : UserProfileResponseDTO
+    Ctrl --> Ctx : 200 UserProfileResponseDTO
+    Ctx -> Sess : saveBiometricSession(session, config com o prazo restaurado)
+    Sess -> Store : setItemAsync(token, id do usuário e servidor)
+    Sess --> Ctx : true
+    Ctx --> U : biometria habilitada de novo, sem o convite
+  else biometria não confirmada
+    Ctx --> U : convite "Deseja habilitar a biometria?" com a mensagem do erro
+  end
+end
+
+group Desabilitar o bloqueio biométrico
+  U -> Cfg : tocar na chave "Bloqueio biométrico" (Habilitado)
+  Cfg -> Ctx : disable()
+  Ctx -> Sess : authenticateBiometricDevice(false)
+  Sess -> Local : authenticateAsync(aceita o PIN do aparelho)
+  Local --> U : solicita a biometria
+  U --> Local : confirma a biometria
+  Local --> Sess : resultado
+  Sess --> Ctx : boolean
+  alt biometria confirmada
+    Ctx -> Sess : clearBiometricSession()
+    Sess -> Store : deleteItemAsync()
+    Sess --> Ctx : true
+    Ctx --> Cfg : enabled = false
+    Cfg --> U : chave "Desligado"; a sessão guardada foi removida do aparelho
+  else biometria não confirmada
+    Ctx --> Cfg : error ("A biometria continua habilitada.")
+    Cfg --> U : exibe a mensagem; a chave continua "Habilitado"
+  end
+end
+@enduml

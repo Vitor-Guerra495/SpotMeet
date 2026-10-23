@@ -1,9 +1,12 @@
 package com.spotmeet.backend.controller;
 
+import com.spotmeet.backend.exception.TooManyAttemptsException;
+
 import com.spotmeet.backend.dto.*;
 import com.spotmeet.backend.model.User;
 import com.spotmeet.backend.security.JwtUtil;
 import com.spotmeet.backend.service.UserService;
+import io.jsonwebtoken.JwtException;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -13,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.time.Instant;
 
 /**
  * Profile controller: profile data, bio, availability, preferences
@@ -86,6 +90,8 @@ public class UserController {
             response.put("success", true);
             response.put("message", message);
             return ResponseEntity.ok(response);
+        } catch (TooManyAttemptsException e) {
+            throw e;
         } catch (IllegalArgumentException e) {
             response.put("success", false);
             response.put("message", e.getMessage());
@@ -112,10 +118,6 @@ public class UserController {
             response.put("success", true);
             response.put("message", result.getMessage());
             response.put("currentEmail", result.getDestination());
-            if (!result.isDelivered() && result.getOtpCode() != null) {
-                response.put("devCode", result.getOtpCode());
-                response.put("warning", result.getWarning());
-            }
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             Map<String, Object> error = new HashMap<>();
@@ -147,11 +149,9 @@ public class UserController {
             response.put("success", true);
             response.put("message", result.getMessage());
             response.put("newEmail", result.getDestination());
-            if (!result.isDelivered() && result.getOtpCode() != null) {
-                response.put("devCode", result.getOtpCode());
-                response.put("warning", result.getWarning());
-            }
             return ResponseEntity.ok(response);
+        } catch (TooManyAttemptsException e) {
+            throw e;
         } catch (IllegalArgumentException e) {
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
@@ -165,6 +165,20 @@ public class UserController {
         }
     }
 
+    /** Resends the code to the authenticated user's pending address. */
+    @PostMapping("/me/email-change/resend-new")
+    public ResponseEntity<?> resendNewEmailCode(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
+        }
+        try {
+            CodeDeliveryResultDTO result = userService.resendNewEmailCode(authentication.getName());
+            return ResponseEntity.ok(Map.of("success", true, "message", result.getMessage(), "newEmail", result.getDestination()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
     /**
      * POST /api/users/me/email-change/complete
      * Step 2 (end): validates the new e-mail code, saves it and returns a new JWT.
@@ -172,13 +186,19 @@ public class UserController {
     @PostMapping("/me/email-change/complete")
     public ResponseEntity<?> completeEmailChange(
             @Valid @RequestBody CompleteEmailChangeDTO dto,
-            Authentication authentication) {
-        if (authentication == null || authentication.getName() == null) {
+            Authentication authentication,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        if (authentication == null || authentication.getName() == null
+                || authorization == null || !authorization.startsWith("Bearer ")) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
+            Instant issuedAt = jwtUtil.extractIssuedAt(authorization.substring(7));
+            if (issuedAt == null) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
+            }
             User updatedUser = userService.completeEmailChange(authentication.getName(), dto);
-            String newToken = jwtUtil.generateToken(updatedUser.getEmail(), updatedUser.getRole());
+            String newToken = jwtUtil.generateToken(updatedUser.getEmail(), updatedUser.getRole(), issuedAt);
 
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
@@ -187,6 +207,10 @@ public class UserController {
             response.put("token", newToken);
 
             return ResponseEntity.ok(response);
+        } catch (TooManyAttemptsException e) {
+            throw e;
+        } catch (JwtException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         } catch (IllegalArgumentException e) {
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
@@ -195,7 +219,7 @@ public class UserController {
         } catch (Exception e) {
             Map<String, Object> error = new HashMap<>();
             error.put("success", false);
-            error.put("message", "Erro ao concluir alteração de e-mail: " + e.getMessage());
+            error.put("message", "Não foi possível concluir a alteração de e-mail.");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
         }
     }

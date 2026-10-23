@@ -1,0 +1,191 @@
+@startuml Diagrama_Classes_Entidades
+!pragma layout smetana
+title
+SpotMeet - Diagrama de classes da API: entidades (pacote model)
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+package "API (backend) - model" {
+
+}
+class User <<entidade>> {
+  -id : Long
+  -name : String
+  -email : String
+  -phone : String
+  -password : String
+  -role : String
+  -emailVerified : boolean
+  -tokensValidAfter : Instant
+  -availabilityStatus : AvailabilityStatus
+  -preferredTheme : PreferredTheme
+  -bio : String
+  -verificationToken : String
+  -verificationTokenExpiresAt : LocalDateTime
+  -recoveryToken : String
+  -recoveryTokenExpiresAt : LocalDateTime
+  -currentEmailChangeToken : String
+  -currentEmailChangeTokenExpiresAt : LocalDateTime
+  -pendingNewEmail : String
+  -newEmailToken : String
+  -newEmailTokenExpiresAt : LocalDateTime
+}
+User +-- AvailabilityStatus
+User +-- PreferredTheme
+class UserProfilePhoto <<entidade>> {
+  -id : Long
+  -imageData : byte[]
+  -version : String
+}
+class Organization <<entidade>> {
+  -moderationReason : String
+  -resubmissionNote : String
+  -resubmittedAt : LocalDateTime
+  -id : Long
+  -name : String
+  -accessKey : String
+  -cnpj : String
+  -approved : boolean
+  -status : String
+  -createdAt : LocalDateTime
+}
+class OrganizationMember <<entidade>> {
+  -id : Long
+  -role : OrganizationRole
+}
+OrganizationMember +-- OrganizationRole
+class AccessRequest <<entidade>> {
+  -id : Long
+  -status : AccessRequestStatus
+  -requestedAt : LocalDateTime
+}
+AccessRequest +-- AccessRequestStatus
+class OrganizationInvitation <<entidade>> {
+  -id : Long
+  -status : InvitationStatus
+  -createdAt : Instant
+  -expiresAt : Instant
+  -respondedAt : Instant
+}
+OrganizationInvitation +-- InvitationStatus
+class Committee <<entidade>> {
+  -id : Long
+  -name : String
+  -description : String
+  -createdAt : LocalDateTime
+}
+class CommitteeMember <<entidade>> {
+  -id : Long
+  -status : CommitteeMembershipStatus
+  -role : CommitteeRole
+  -requestedAt : LocalDateTime
+  -respondedAt : LocalDateTime
+}
+CommitteeMember +-- CommitteeMembershipStatus
+CommitteeMember +-- CommitteeRole
+class Meeting <<entidade>> {
+  -id : Long
+  -title : String
+  -agenda : String
+  -location : String
+  -link : String
+  -priority : MeetingPriority
+  -startsAt : LocalDateTime
+  -endsAt : LocalDateTime
+  -canceledAt : LocalDateTime
+  -attendanceListGeneratedAt : LocalDateTime
+  -createdAt : LocalDateTime
+}
+Meeting +-- MeetingStatus
+Meeting +-- MeetingPriority
+class MeetingParticipant <<entidade>> {
+  -id : Long
+  -response : InvitationResponse
+  -responseComment : String
+  -respondedAt : LocalDateTime
+  -enteredAt : LocalDateTime
+  -leftAt : LocalDateTime
+}
+MeetingParticipant +-- InvitationResponse
+class AuditLog <<entidade>> {
+  -id : Long
+  -action : String
+  -details : String
+  -createdAt : LocalDateTime
+}
+UserProfilePhoto "*" --> "1" User : user
+Organization "*" --> "1" User : owner
+OrganizationMember "*" --> "1" User : user
+OrganizationMember "*" --> "1" Organization : organization
+AccessRequest "*" --> "1" User : user
+AccessRequest "*" --> "1" Organization : organization
+OrganizationInvitation "*" --> "1" Organization : organization
+OrganizationInvitation "*" --> "1" User : user
+OrganizationInvitation "*" --> "1" User : invitedBy
+Committee "*" --> "1" Organization : organization
+CommitteeMember "*" --> "1" User : user
+CommitteeMember "*" --> "1" Committee : committee
+CommitteeMember "*" --> "1" User : invitedBy
+Meeting "*" --> "1" Committee : committee
+Meeting "*" --> "1" User : attendanceListGeneratedBy
+Meeting "*" --> "1" User : createdBy
+MeetingParticipant "*" --> "1" Meeting : meeting
+MeetingParticipant "*" --> "1" User : user
+MeetingParticipant "*" --> "1" User : enteredBy
+MeetingParticipant "*" --> "1" User : leftBy
+AuditLog "*" --> "1" User : user
+enum AvailabilityStatus {
+  PRESENT
+  ONLINE
+  BUSY
+  AWAY
+}
+enum PreferredTheme {
+  LIGHT
+  DARK
+  SYSTEM
+}
+enum OrganizationRole {
+  ORG_OWNER
+  ORG_VICE_OWNER
+  ORG_SUBOWNER
+  MEMBER
+}
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+enum CommitteeMembershipStatus {
+  PENDING_USER_ACCEPTANCE
+  PENDING_LEADER_APPROVAL
+  ACTIVE
+  DECLINED
+}
+enum CommitteeRole {
+  COMMITTEE_ADMIN
+  MEMBER
+}
+enum MeetingStatus {
+  SCHEDULED
+  IN_PROGRESS
+  ENDED
+  CANCELED
+}
+enum MeetingPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+enum InvitationResponse {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+@enduml

@@ -1,0 +1,65 @@
+@startuml Sequencia_RF35
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF35 (Consultar Lista de Presença)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(integrante ou líder)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":AttendanceListView" as Lista
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":AttendanceListController" as Ctrl
+participant ":AttendanceListService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeService" as ComSvc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Tela : abrir a reunião com lista gerada e tocar em "Ver lista"
+Tela -> Filtro : GET /api/meetings/{meetingId}/attendance-list
+Filtro -> Ctrl : get(meetingId, auth)
+Ctrl -> Svc : get(meetingId, email)
+activate Svc
+Svc -> Acc : findMeeting(meetingId)
+Acc --> Svc : Meeting
+Svc -> Acc : findUser(email)
+Acc --> Svc : User
+Svc -> Acc : requireViewer(user, committee)
+Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+CmRepo --> Acc : CommitteeMember
+opt o usuário não é integrante ativo
+  Acc -> ComSvc : requireOrganizationLeader(user, organizationId)
+  ComSvc --> Acc : void ou SecurityException
+end
+Acc --> Svc : void
+Svc -> Svc : attendanceListGeneratedAt deve estar preenchido
+alt integrante ativo ou líder, e lista já gerada
+  Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
+  PartRepo --> Svc : List<MeetingParticipant>
+  Svc -> Svc : AttendanceListDTO.from(meeting, participants, now)
+  Svc --> Ctrl : AttendanceListDTO
+  Ctrl --> Tela : 200 AttendanceListDTO
+  Tela -> Lista : exibir a lista (list)
+  Lista --> U : "Lista de presença": presentes, ausentes, entrada, saída, "registrado por" e tempo na reunião
+else sem permissão, ou lista ainda não gerada
+  Svc --> Ctrl : SecurityException ou IllegalStateException
+  Ctrl --> Handler : exceção propagada
+  Handler --> Tela : 403 ou 409 {message}
+  Tela --> U : exibe a mensagem de erro
+end
+deactivate Svc
+group Lista aberta depois de uma nova entrada ou saída
+  note over Tela : a atualização automática (a cada 10 s) recarrega o detalhe da reunião;\numa entrada ou saída registrada depois da geração deixa attendanceListGeneratedAt vazio
+  Tela -> Tela : detalhe sem lista gerada enquanto a lista está aberta
+  Tela --> U : volta ao detalhe com "A presença mudou depois que a lista foi gerada. A lista precisa ser gerada de novo."
+end
+@enduml

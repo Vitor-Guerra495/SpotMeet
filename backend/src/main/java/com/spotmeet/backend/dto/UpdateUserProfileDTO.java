@@ -22,7 +22,7 @@ public class UpdateUserProfileDTO {
     public UpdateUserProfileDTO() {}
 
     public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
+    public void setName(String name) { this.name = name == null ? null : name.replaceAll(ValidationPatterns.NAME_WHITESPACE, ""); }
 
     public String getBio() { return bio; }
     public void setBio(String bio) { this.bio = bio; }

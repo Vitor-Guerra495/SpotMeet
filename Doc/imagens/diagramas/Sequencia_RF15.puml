@@ -1,0 +1,124 @@
+@startuml Sequencia_RF15
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF15 (Recuperar Conta)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AuthScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":AuthController" as Ctrl
+participant ":UserService" as Svc
+participant ":UserRepository" as Repo
+participant ":AuthenticationAttempts" as Tent
+participant ":PasswordEncoder" as Enc
+participant ":EmailService" as Mail
+participant ":EmailDeliveryService" as Entrega
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+note over Tela, Ctrl : Rotas públicas (/api/auth/**): sem JwtAuthFilter.\n@Valid nos DTOs: se falhar, o método do controller não executa\ne GlobalExceptionHandler responde 400 {message, errors}.
+
+group Etapa 1: solicitar o código
+  U -> Tela : no login, tocar em "Esqueci minha senha", preencher\n"E-mail cadastrado" e tocar em "Enviar Código por E-mail"
+  Tela -> Ctrl : POST /api/auth/forgot-password (ForgotPasswordDTO)
+  activate Ctrl
+  Ctrl -> Svc : forgotPassword(dto)
+  activate Svc
+  note over Svc : transação
+  Svc -> Repo : findByEmailForUpdate(email em minúsculas)
+  Repo --> Svc : Optional<User>
+  Svc -> Svc : generateCode(hashAnterior)
+  Svc -> Enc : encode(código de 6 dígitos)
+  Enc --> Svc : hash BCrypt (custo 12)
+  opt a conta existe
+    Svc -> Repo : save(User com recovery_token e recovery_token_expires_at)
+    Repo --> Svc : User
+    Svc -> Mail : sendPasswordRecoveryEmail(email, nome, código, validade)
+    Mail --> Svc : void (envio registrado para depois do commit)
+    Svc -> AuditRepo : save(AuditLog PASSWORD_RECOVERY_REQUESTED)
+    AuditRepo --> Svc : AuditLog
+  end
+  Svc --> Ctrl : CodeDeliveryResultDTO
+  deactivate Svc
+  opt a conta existe
+    Mail ->> Entrega : sendEmail(destinatário, assunto, texto, código, validade)
+  end
+  Ctrl --> Tela : 200 {success: true, message: "Verifique o seu e-mail."}
+  deactivate Ctrl
+  Tela --> U : exibe o aviso "Código enviado" e a tela "Confirmar código" (Etapa 2 de 3)
+end
+
+group Etapa 2: validar o código sem consumi-lo
+  U -> Tela : digitar os seis dígitos em "Código de verificação"\n(envio automático ao completar) ou tocar em "Validar Código"
+  Tela -> Ctrl : POST /api/auth/verify-recovery-code (VerifyRecoveryCodeDTO)
+  activate Ctrl
+  Ctrl -> Svc : verifyRecoveryCode(dto)
+  activate Svc
+  Svc -> Tent : verify(RECOVERY, email, validação)
+  Tent -> Svc : validação.get() (validateRecoveryToken)
+  Svc -> Repo : findByEmailForUpdate(email)
+  Repo --> Svc : Optional<User>
+  Svc -> Enc : matches(código, recovery_token)
+  Enc --> Svc : boolean
+  Svc --> Tent : User, ou IllegalArgumentException\n(código incorreto, expirado ou conta inexistente)
+  alt código correto e dentro dos 5 minutos
+    Tent --> Svc : User
+    Svc --> Ctrl : "Código validado. Defina a nova senha."
+    Ctrl --> Tela : 200 {success: true, message}
+    Tela --> U : exibe a tela "Criar nova senha" (Etapa 3 de 3)
+  else código incorreto, expirado ou conta inexistente
+    Tent --> Svc : IllegalArgumentException (falha contada)
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Tela : 400 {success: false, message}
+    Tela --> U : exibe a mensagem sob "Código de verificação"
+  else décima falha em 15 minutos
+    Tent --> Svc : TooManyAttemptsException
+    Svc --> Ctrl : TooManyAttemptsException
+    Ctrl --> Handler : TooManyAttemptsException (propagada)
+    Handler --> Tela : 429 {success: false, error: "TOO_MANY_ATTEMPTS",\nmessage, retryAfterSeconds} e cabeçalho Retry-After
+    Tela --> U : exibe "Muitas tentativas. Aguarde e tente novamente em alguns minutos."
+  end
+  deactivate Svc
+  deactivate Ctrl
+end
+
+group Etapa 3: definir a nova senha
+  U -> Tela : preencher "Nova senha" e "Confirmar nova senha"\ne tocar em "Atualizar Senha"
+  Tela -> Ctrl : POST /api/auth/reset-password (ResetPasswordDTO)
+  activate Ctrl
+  Ctrl -> Svc : resetPassword(dto)
+  activate Svc
+  note over Svc : transação
+  Svc -> Tent : verify(RECOVERY, email, validação)
+  note right of Tent : mesma validação da Etapa 2 (findByEmailForUpdate, matches e expiração).\nA décima falha também resulta em TooManyAttemptsException e 429, como na Etapa 2
+  Tent --> Svc : User, IllegalArgumentException ou TooManyAttemptsException
+  alt código válido
+    Svc -> Enc : encode(novaSenha)
+    Enc --> Svc : hash BCrypt (custo 12)
+    Svc -> Repo : save(User com password, tokens_valid_after,\nrecovery_token nulo e email_verified verdadeiro)
+    Repo --> Svc : User
+    Svc -> Mail : sendPasswordChangedEmail(email)
+    Mail --> Svc : void (envio registrado para depois do commit)
+    Svc -> AuditRepo : save(AuditLog PASSWORD_RESET)
+    AuditRepo --> Svc : AuditLog
+    Svc --> Ctrl : "Senha redefinida com sucesso! ..."
+    deactivate Svc
+    Mail ->> Entrega : sendPasswordChangedEmail(destinatário, assunto, texto)
+    Ctrl --> Tela : 200 {success: true, message}
+    Tela --> U : exibe o aviso "Sucesso" e volta ao login com os campos vazios
+  else código incorreto ou expirado
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Tela : 400 {success: false, message}
+    Tela --> U : exibe a mensagem de erro no formulário
+  end
+  deactivate Ctrl
+end
+@enduml

@@ -11,11 +11,11 @@ import jakarta.validation.constraints.Pattern;
 public class ConfirmEmailChangeDTO {
 
     @NotBlank(message = "O código enviado ao e-mail atual é obrigatório.")
-    @Pattern(regexp = "^\\d{6}$", message = "O código de verificação deve conter 6 dígitos numéricos.")
+    @Pattern(regexp = ValidationPatterns.OTP, message = "O código de verificação deve conter 6 dígitos numéricos.")
     private String currentCode;
 
     @NotBlank(message = "O novo e-mail é obrigatório.")
-    @Email(message = "Formato do novo e-mail inválido.")
+    @Email(regexp = ValidationPatterns.EMAIL, message = "Formato do novo e-mail inválido.")
     private String newEmail;
 
     public ConfirmEmailChangeDTO() {}

@@ -1,0 +1,161 @@
+@startuml Diagrama_Relacional
+!pragma layout smetana
+title
+SpotMeet - Modelo relacional (PostgreSQL 18)
+end title
+hide circle
+skinparam linetype ortho
+
+entity "users" as users {
+  *id : bigint <<PK>>
+  *availability_status : varchar(255)
+  bio : varchar(500)
+  current_email_change_token : varchar(255)
+  current_email_change_token_expires_at : timestamp
+  *email : varchar(255)
+  *email_verified : boolean
+  *name : varchar(255)
+  new_email_token : varchar(255)
+  new_email_token_expires_at : timestamp
+  *password : varchar(255)
+  pending_new_email : varchar(255)
+  phone : varchar(255)
+  *preferred_theme : varchar(255)
+  recovery_token : varchar(255)
+  recovery_token_expires_at : timestamp
+  *role : varchar(255)
+  tokens_valid_after : timestamptz
+  verification_token : varchar(255)
+  verification_token_expires_at : timestamp
+}
+
+entity "user_profile_photos" as user_profile_photos {
+  *id : bigint <<PK>>
+  *image_data : bytea
+  *user_id : bigint <<FK>>
+  *version : varchar(36)
+}
+
+entity "organizations" as organizations {
+  *id : bigint <<PK>>
+  *access_key : varchar(100)
+  *approved : boolean
+  cnpj : varchar(255)
+  *created_at : timestamp
+  moderation_reason : varchar(500)
+  *name : varchar(255)
+  *owner_id : bigint <<FK>>
+  resubmission_note : varchar(500)
+  resubmitted_at : timestamp
+  status : varchar(255)
+}
+
+entity "organization_members" as organization_members {
+  *id : bigint <<PK>>
+  *organization_id : bigint <<FK>>
+  *role : varchar(255)
+  *user_id : bigint <<FK>>
+}
+
+entity "access_requests" as access_requests {
+  *id : bigint <<PK>>
+  *organization_id : bigint <<FK>>
+  *requested_at : timestamp
+  *status : varchar(20)
+  *user_id : bigint <<FK>>
+}
+
+entity "organization_invitations" as organization_invitations {
+  *id : bigint <<PK>>
+  *created_at : timestamptz
+  *expires_at : timestamptz
+  *invited_by_id : bigint <<FK>>
+  *organization_id : bigint <<FK>>
+  responded_at : timestamptz
+  *status : varchar(20)
+  *user_id : bigint <<FK>>
+}
+
+entity "committees" as committees {
+  *id : bigint <<PK>>
+  created_at : timestamp
+  description : varchar(500)
+  *name : varchar(50)
+  *organization_id : bigint <<FK>>
+}
+
+entity "committee_members" as committee_members {
+  *id : bigint <<PK>>
+  *committee_id : bigint <<FK>>
+  invited_by_id : bigint <<FK>>
+  requested_at : timestamp
+  responded_at : timestamp
+  *role : varchar(20)
+  *status : varchar(30)
+  *user_id : bigint <<FK>>
+}
+
+entity "meetings" as meetings {
+  *id : bigint <<PK>>
+  agenda : varchar(2000)
+  attendance_list_generated_at : timestamp
+  attendance_list_generated_by_id : bigint <<FK>>
+  canceled_at : timestamp
+  *committee_id : bigint <<FK>>
+  created_at : timestamp
+  *created_by_id : bigint <<FK>>
+  *ends_at : timestamp
+  link : varchar(300)
+  location : varchar(100)
+  *priority : varchar(10)
+  *starts_at : timestamp
+  *title : varchar(100)
+}
+
+entity "meeting_participants" as meeting_participants {
+  *id : bigint <<PK>>
+  entered_at : timestamp
+  entered_by_id : bigint <<FK>>
+  left_at : timestamp
+  left_by_id : bigint <<FK>>
+  *meeting_id : bigint <<FK>>
+  responded_at : timestamp
+  *response : varchar(20)
+  response_comment : varchar(200)
+  *user_id : bigint <<FK>>
+}
+
+entity "audit_logs" as audit_logs {
+  *id : bigint <<PK>>
+  *action : varchar(255)
+  *created_at : timestamp
+  details : varchar(1000)
+  user_id : bigint <<FK>>
+}
+
+access_requests }o--|| organizations : organization_id
+access_requests }o--|| users : user_id
+audit_logs }o--o| users : user_id
+committee_members }o--|| committees : committee_id
+committee_members }o--o| users : invited_by_id
+committee_members }o--|| users : user_id
+committees }o--|| organizations : organization_id
+meeting_participants }o--o| users : entered_by_id
+meeting_participants }o--o| users : left_by_id
+meeting_participants }o--|| meetings : meeting_id
+meeting_participants }o--|| users : user_id
+meetings }o--o| users : attendance_list_generated_by_id
+meetings }o--|| committees : committee_id
+meetings }o--|| users : created_by_id
+organization_invitations }o--|| users : invited_by_id
+organization_invitations }o--|| organizations : organization_id
+organization_invitations }o--|| users : user_id
+organization_members }o--|| organizations : organization_id
+organization_members }o--|| users : user_id
+organizations }o--|| users : owner_id
+user_profile_photos |o--|| users : user_id
+
+legend bottom
+  * campo obrigatório (NOT NULL). PK: chave primária. FK: chave estrangeira.
+endlegend
+@enduml

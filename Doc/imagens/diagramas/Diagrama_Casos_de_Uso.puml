@@ -1,0 +1,313 @@
+@startuml Diagrama_Casos_de_Uso
+!pragma layout smetana
+title
+SpotMeet - Diagrama de casos de uso
+end title
+left to right direction
+skinparam shadowing false
+
+actor "Usuário" as Usuario
+actor "Administrador\ndo sistema" as Admin
+
+rectangle "Cadastro de usuário (RF01 a RF05)" as PK0 {
+  usecase "Cadastrar conta" as UC01
+  usecase "Confirmar o e-mail com\no código" as UC02
+  usecase "Reenviar o código de\nconfirmação" as UC03
+  usecase "Autenticar com e-mail\ne senha" as UC04
+  usecase "Entrar por biometria\nao reabrir o\naplicativo" as UC05
+  usecase "Solicitar acesso a uma\norganização pela chave" as UC06
+  usecase "Consultar os convites\nde organização\nrecebidos" as UC07
+  usecase "Responder a um convite\nde organização" as UC08
+  usecase "Consultar as\nsolicitações de acesso\npendentes" as UC09
+  usecase "Aprovar uma\nsolicitação de acesso" as UC10
+  usecase "Rejeitar uma\nsolicitação de acesso" as UC11
+  usecase "Convidar uma pessoa\npara a organização" as UC12
+  usecase "Consultar os membros\nda organização" as UC13
+  usecase "Promover um membro" as UC14
+  usecase "Rebaixar um membro" as UC15
+  usecase "Remover um membro da\norganização" as UC16
+  usecase "Transferir a liderança\nda organização" as UC17
+}
+
+rectangle "Cadastro de organização (RF06 a RF08)" as PK1 {
+  usecase "Cadastrar organização" as UC18
+  usecase "Consultar minhas\norganizações" as UC19
+  usecase "Editar organização" as UC20
+  usecase "Excluir organização" as UC21
+  usecase "Transferir liderança\nda organização" as UC22
+  usecase "Consultar organizações\ncadastradas" as UC23
+  usecase "Consultar organizações\npendentes" as UC24
+  usecase "Aprovar ou reativar\norganização" as UC25
+  usecase "Recusar organização" as UC26
+  usecase "Bloquear organização" as UC27
+  usecase "Pedir reavaliação de\norganização recusada" as UC28
+}
+
+rectangle "Cadastro de comissão (RF09 a RF13)" as PK2 {
+  usecase "Cadastrar comissão" as UC29
+  usecase "Consultar comissões da\norganização" as UC30
+  usecase "Editar comissão" as UC31
+  usecase "Excluir comissão" as UC32
+  usecase "Convidar integrante\npara comissão" as UC33
+  usecase "Consultar convites de\ncomissão" as UC34
+  usecase "Aceitar ou recusar\nconvite de comissão" as UC35
+  usecase "Solicitar entrada em\ncomissão" as UC36
+  usecase "Consultar solicitações\nde entrada em comissão" as UC37
+  usecase "Aprovar ou rejeitar\nsolicitação de entrada\nem comissão" as UC38
+  usecase "Consultar a situação\nde um integrante nas\ncomissões" as UC39
+  usecase "Remover integrante da\ncomissão" as UC40
+}
+
+rectangle "Configurações de usuário (RF14 a RF18 e RF36)" as PK3 {
+  usecase "Alterar senha" as UC41
+  usecase "Recuperar conta" as UC42
+  usecase "Consultar dados\npessoais" as UC43
+  usecase "Alterar nome e\nbiografia" as UC44
+  usecase "Alterar\ndisponibilidade" as UC45
+  usecase "Adicionar ou trocar\nfoto de perfil" as UC46
+  usecase "Remover foto de perfil" as UC47
+  usecase "Definir tema" as UC48
+  usecase "Alterar e-mail" as UC49
+  usecase "Habilitar o bloqueio\nbiométrico" as UC50
+  usecase "Definir o prazo do\nbloqueio" as UC51
+  usecase "Desabilitar o bloqueio\nbiométrico" as UC52
+}
+
+rectangle "Informações do sistema (RF19 a RF23)" as PK4 {
+  usecase "Iniciar o servidor" as UC53
+  usecase "Abrir o aplicativo e\nlocalizar o servidor" as UC54
+  usecase "Configurar o endereço\ndo servidor" as UC55
+  usecase "Atualizar o aplicativo\nAndroid" as UC56
+  usecase "Consultar o status do\nsistema" as UC57
+  usecase "Consultar os detalhes\nde banco, API e\nrecursos" as UC58
+  usecase "Consultar os\nrelatórios" as UC59
+  usecase "Reiniciar um\nsubsistema" as UC60
+  usecase "Resetar o sistema" as UC61
+}
+
+rectangle "Reuniões e lista de presença (RF24 a RF35)" as PK5 {
+  usecase "Consultar os\nintegrantes ativos de\numa comissão" as UC62
+  usecase "Designar o presidente\nda comissão" as UC63
+  usecase "Agendar reunião" as UC64
+  usecase "Editar reunião\nagendada" as UC65
+  usecase "Cancelar reunião" as UC66
+  usecase "Consultar minhas\nreuniões" as UC67
+  usecase "Consultar o detalhe de\numa reunião" as UC68
+  usecase "Escolher os convidados\nda reunião" as UC69
+  usecase "Aceitar convite de\nreunião" as UC70
+  usecase "Recusar convite de\nreunião" as UC71
+  usecase "Registrar a própria\nentrada" as UC72
+  usecase "Registrar a entrada de\noutro convidado" as UC73
+  usecase "Registrar a entrada de\ntodos que aceitaram" as UC74
+  usecase "Registrar a própria\nsaída" as UC75
+  usecase "Registrar a saída de\noutro convidado" as UC76
+  usecase "Registrar a saída de\ntodos que estão dentro" as UC77
+  usecase "Corrigir os registros\nde presença de um\nconvidado" as UC78
+  usecase "Gerar a lista de\npresença" as UC79
+  usecase "Consultar a lista de\npresença" as UC80
+}
+
+Usuario --> UC01
+Usuario --> UC02
+Usuario --> UC03
+Usuario --> UC04
+Admin --> UC04
+Usuario --> UC05
+Admin --> UC05
+Usuario --> UC06
+Usuario --> UC07
+Usuario --> UC08
+Usuario --> UC09
+Usuario --> UC10
+Usuario --> UC11
+Usuario --> UC12
+Usuario --> UC13
+Usuario --> UC14
+Usuario --> UC15
+Usuario --> UC16
+Usuario --> UC17
+Usuario --> UC18
+Usuario --> UC19
+Usuario --> UC20
+Usuario --> UC21
+Usuario --> UC22
+Admin --> UC22
+Admin --> UC23
+Admin --> UC24
+Admin --> UC25
+Admin --> UC26
+Admin --> UC27
+Usuario --> UC28
+Usuario --> UC29
+Usuario --> UC30
+Usuario --> UC31
+Usuario --> UC32
+Usuario --> UC33
+Usuario --> UC34
+Usuario --> UC35
+Usuario --> UC36
+Usuario --> UC37
+Usuario --> UC38
+Usuario --> UC39
+Usuario --> UC40
+Usuario --> UC41
+Admin --> UC41
+Usuario --> UC42
+Usuario --> UC43
+Usuario --> UC44
+Usuario --> UC45
+Usuario --> UC46
+Usuario --> UC47
+Usuario --> UC48
+Usuario --> UC49
+Usuario --> UC50
+Usuario --> UC51
+Usuario --> UC52
+Admin --> UC53
+Usuario --> UC54
+Usuario --> UC55
+Usuario --> UC56
+Admin --> UC57
+Admin --> UC58
+Admin --> UC59
+Admin --> UC60
+Admin --> UC61
+Usuario --> UC62
+Usuario --> UC63
+Usuario --> UC64
+Usuario --> UC65
+Usuario --> UC66
+Usuario --> UC67
+Usuario --> UC68
+Usuario --> UC69
+Usuario --> UC70
+Usuario --> UC71
+Usuario --> UC72
+Usuario --> UC73
+Usuario --> UC74
+Usuario --> UC75
+Usuario --> UC76
+Usuario --> UC77
+Usuario --> UC78
+Usuario --> UC79
+Usuario --> UC80
+UC01 -[hidden]right-> UC02
+UC01 -[hidden]down-> UC05
+UC02 -[hidden]right-> UC03
+UC02 -[hidden]down-> UC06
+UC03 -[hidden]right-> UC04
+UC03 -[hidden]down-> UC07
+UC04 -[hidden]down-> UC08
+UC05 -[hidden]right-> UC06
+UC05 -[hidden]down-> UC09
+UC06 -[hidden]right-> UC07
+UC06 -[hidden]down-> UC10
+UC07 -[hidden]right-> UC08
+UC07 -[hidden]down-> UC11
+UC08 -[hidden]down-> UC12
+UC09 -[hidden]right-> UC10
+UC09 -[hidden]down-> UC13
+UC10 -[hidden]right-> UC11
+UC10 -[hidden]down-> UC14
+UC11 -[hidden]right-> UC12
+UC11 -[hidden]down-> UC15
+UC12 -[hidden]down-> UC16
+UC13 -[hidden]right-> UC14
+UC13 -[hidden]down-> UC17
+UC14 -[hidden]right-> UC15
+UC15 -[hidden]right-> UC16
+UC18 -[hidden]right-> UC19
+UC18 -[hidden]down-> UC22
+UC19 -[hidden]right-> UC20
+UC19 -[hidden]down-> UC23
+UC20 -[hidden]right-> UC21
+UC20 -[hidden]down-> UC24
+UC21 -[hidden]down-> UC25
+UC22 -[hidden]right-> UC23
+UC22 -[hidden]down-> UC26
+UC23 -[hidden]right-> UC24
+UC23 -[hidden]down-> UC27
+UC24 -[hidden]right-> UC25
+UC24 -[hidden]down-> UC28
+UC26 -[hidden]right-> UC27
+UC27 -[hidden]right-> UC28
+UC29 -[hidden]right-> UC30
+UC29 -[hidden]down-> UC33
+UC30 -[hidden]right-> UC31
+UC30 -[hidden]down-> UC34
+UC31 -[hidden]right-> UC32
+UC31 -[hidden]down-> UC35
+UC32 -[hidden]down-> UC36
+UC33 -[hidden]right-> UC34
+UC33 -[hidden]down-> UC37
+UC34 -[hidden]right-> UC35
+UC34 -[hidden]down-> UC38
+UC35 -[hidden]right-> UC36
+UC35 -[hidden]down-> UC39
+UC36 -[hidden]down-> UC40
+UC37 -[hidden]right-> UC38
+UC38 -[hidden]right-> UC39
+UC39 -[hidden]right-> UC40
+UC41 -[hidden]right-> UC42
+UC41 -[hidden]down-> UC45
+UC42 -[hidden]right-> UC43
+UC42 -[hidden]down-> UC46
+UC43 -[hidden]right-> UC44
+UC43 -[hidden]down-> UC47
+UC44 -[hidden]down-> UC48
+UC45 -[hidden]right-> UC46
+UC45 -[hidden]down-> UC49
+UC46 -[hidden]right-> UC47
+UC46 -[hidden]down-> UC50
+UC47 -[hidden]right-> UC48
+UC47 -[hidden]down-> UC51
+UC48 -[hidden]down-> UC52
+UC49 -[hidden]right-> UC50
+UC50 -[hidden]right-> UC51
+UC51 -[hidden]right-> UC52
+UC53 -[hidden]right-> UC54
+UC53 -[hidden]down-> UC57
+UC54 -[hidden]right-> UC55
+UC54 -[hidden]down-> UC58
+UC55 -[hidden]right-> UC56
+UC55 -[hidden]down-> UC59
+UC56 -[hidden]down-> UC60
+UC57 -[hidden]right-> UC58
+UC57 -[hidden]down-> UC61
+UC58 -[hidden]right-> UC59
+UC59 -[hidden]right-> UC60
+UC62 -[hidden]right-> UC63
+UC62 -[hidden]down-> UC66
+UC63 -[hidden]right-> UC64
+UC63 -[hidden]down-> UC67
+UC64 -[hidden]right-> UC65
+UC64 -[hidden]down-> UC68
+UC65 -[hidden]down-> UC69
+UC66 -[hidden]right-> UC67
+UC66 -[hidden]down-> UC70
+UC67 -[hidden]right-> UC68
+UC67 -[hidden]down-> UC71
+UC68 -[hidden]right-> UC69
+UC68 -[hidden]down-> UC72
+UC69 -[hidden]down-> UC73
+UC70 -[hidden]right-> UC71
+UC70 -[hidden]down-> UC74
+UC71 -[hidden]right-> UC72
+UC71 -[hidden]down-> UC75
+UC72 -[hidden]right-> UC73
+UC72 -[hidden]down-> UC76
+UC73 -[hidden]down-> UC77
+UC74 -[hidden]right-> UC75
+UC74 -[hidden]down-> UC78
+UC75 -[hidden]right-> UC76
+UC75 -[hidden]down-> UC79
+UC76 -[hidden]right-> UC77
+UC76 -[hidden]down-> UC80
+UC78 -[hidden]right-> UC79
+UC79 -[hidden]right-> UC80
+PK0 -[hidden]down-> PK1
+PK1 -[hidden]down-> PK2
+PK2 -[hidden]down-> PK3
+PK3 -[hidden]down-> PK4
+PK4 -[hidden]down-> PK5
+@enduml

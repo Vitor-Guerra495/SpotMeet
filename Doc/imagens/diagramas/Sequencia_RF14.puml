@@ -1,0 +1,96 @@
+@startuml Sequencia_RF14
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF14 (Alterar Senha)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":SettingsScreen" as Tela
+participant ":AuthContext" as Auth
+participant ":BiometricContext" as Bio
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":UserController" as Ctrl
+participant ":UserService" as Svc
+participant ":UserRepository" as Repo
+participant ":AuthenticationAttempts" as Tent
+participant ":PasswordEncoder" as Enc
+participant ":EmailService" as Mail
+participant ":EmailDeliveryService" as Entrega
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Tela : na aba "Ajustes", seção "Segurança", preencher\n"Senha atual", "Nova senha" e "Confirmar nova senha"\ne tocar em "Alterar Senha"
+alt campo vazio, nova senha fora de PASSWORD_REGEX,\nconfirmação diferente ou nova igual à atual
+  Tela --> U : exibe a mensagem sob o campo, sem enviar a requisição
+else campos válidos no aplicativo
+  Tela -> Bio : confirmIdentity()
+  note right of Bio : só pede a biometria se o bloqueio estiver habilitado (RF36);\nsem confirmação, exibe "Confirme com a biometria para alterar a senha."
+  Bio --> Tela : true
+  Tela -> Filtro : PUT /api/users/me/password (ChangePasswordDTO)
+  note right of Filtro : valida assinatura, validade e tokens_valid_after do JWT.\nSem JWT válido, responde 401 sem corpo (SessionGuard encerra a sessão)
+  Filtro -> Ctrl : changeMyPassword(dto, authentication)
+  note right of Ctrl : @Valid em ChangePasswordDTO: se falhar, o método não executa\ne GlobalExceptionHandler responde 400 {message, errors}
+  activate Ctrl
+  Ctrl -> Svc : changePassword(email, dto)
+  activate Svc
+  note over Svc : transação
+  Svc -> Repo : findByEmailForUpdate(email)
+  Repo --> Svc : Optional<User>
+  Svc -> Tent : verify(CURRENT_PASSWORD, "user:" + id, verificação)
+  Tent -> Svc : verificação.get()
+  Svc -> Enc : matches(senhaAtual, hash)
+  Enc --> Svc : boolean
+  Svc --> Tent : null, ou IllegalArgumentException\n("A senha atual está incorreta.")
+  alt senha atual correta
+    Tent --> Svc : null
+    Svc -> Enc : matches(novaSenha, hash)
+    Enc --> Svc : boolean
+    alt nova senha diferente da atual
+      Svc -> Enc : encode(novaSenha)
+      Enc --> Svc : hash BCrypt (custo 12)
+      Svc -> Repo : save(User com password e tokens_valid_after)
+      Repo --> Svc : User
+      Svc -> Mail : sendPasswordChangedEmail(email)
+      Mail --> Svc : void (envio registrado para depois do commit)
+      Svc -> AuditRepo : save(AuditLog PASSWORD_CHANGED)
+      AuditRepo --> Svc : AuditLog
+      Svc --> Ctrl : "Senha alterada com sucesso!"
+      note over Svc : commit da transação
+      Mail ->> Entrega : sendPasswordChangedEmail(destinatário, assunto, texto)
+      Ctrl --> Tela : 200 {success: true, message}
+      Tela -> Bio : keepForPasswordChange()
+      note right of Bio : com a biometria habilitada, guarda só a preferência\n(saveBiometricRearm, sem token) para o próximo login
+      Bio --> Tela : Promise<void>
+      Tela -> Auth : signOut()
+      Auth --> Tela : Promise<void>
+      Tela --> U : volta ao login (Auth, modo login) e exibe o aviso\n"Senha alterada com sucesso. Entre novamente com a nova senha."
+    else nova senha igual à atual
+      Svc --> Ctrl : IllegalArgumentException\n("A nova senha deve ser diferente da senha atual.")
+      Ctrl --> Tela : 400 {success: false, message}
+      Tela --> U : exibe a mensagem sob "Nova senha"
+    end
+  else senha atual incorreta
+    Tent --> Svc : IllegalArgumentException (falha contada)
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Tela : 400 {success: false, message}
+    Tela --> U : exibe "A senha atual está incorreta." sob "Senha atual"
+  else décima falha em 15 minutos
+    Tent --> Svc : TooManyAttemptsException
+    Svc --> Ctrl : TooManyAttemptsException
+    Ctrl --> Handler : TooManyAttemptsException (relançada)
+    Handler --> Tela : 429 {success: false, error: "TOO_MANY_ATTEMPTS",\nmessage, retryAfterSeconds} e cabeçalho Retry-After
+    Tela --> U : exibe "Muitas tentativas. Aguarde e tente novamente em alguns minutos."
+  end
+  deactivate Svc
+  deactivate Ctrl
+end
+note over Tela, Filtro : O administrador faz a mesma troca na aba "Controles" (AdminControlsScreen),\nbotão "Alterar senha", com o mesmo PUT /api/users/me/password e sem código por e-mail.
+@enduml

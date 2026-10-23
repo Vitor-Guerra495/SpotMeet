@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { API_BASE_URL } from '../config/api';
 
@@ -75,12 +75,17 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const { token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, getSession } = useAuth();
+  const renderedSessionVersion = getSession().version;
   const [theme, setThemeState] = useState<ThemeType>('DARK');
+  const themeRevision = useRef(0);
 
   // Loads the theme preference from the user profile on the backend
   const loadThemeFromProfile = useCallback(async () => {
     if (!token) return;
+    const session = getSession();
+    if (session.token !== token || session.version !== renderedSessionVersion) return;
+    const revision = themeRevision.current;
     try {
       const res = await fetch(`${API_BASE_URL}/users/me`, {
         method: 'GET',
@@ -91,6 +96,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       });
       if (res.ok) {
         const data = await res.json();
+        const current = getSession();
+        if (current.version !== session.version || current.token !== session.token
+            || revision !== themeRevision.current) return;
         if (data.preferredTheme === 'LIGHT' || data.preferredTheme === 'DARK') {
           setThemeState(data.preferredTheme);
         }
@@ -98,17 +106,21 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Ignore transient failures
     }
-  }, [token]);
+  }, [token, getSession, renderedSessionVersion]);
 
   useEffect(() => {
     if (isAuthenticated) {
       loadThemeFromProfile();
     } else {
+      themeRevision.current += 1;
       setThemeState('DARK');
     }
   }, [isAuthenticated, loadThemeFromProfile]);
 
   const setTheme = useCallback(async (newTheme: ThemeType, persistToBackend = false) => {
+    const current = getSession();
+    if (current.token !== token || current.version !== renderedSessionVersion) return;
+    themeRevision.current += 1;
     setThemeState(newTheme);
     if (persistToBackend && token) {
       try {
@@ -126,7 +138,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         console.warn('Erro ao sincronizar tema no backend:', err);
       }
     }
-  }, [token]);
+  }, [token, getSession, renderedSessionVersion]);
 
   const colors = theme === 'LIGHT' ? lightTheme : darkTheme;
 

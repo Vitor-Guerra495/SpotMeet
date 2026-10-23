@@ -1,65 +1,70 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, type IoniconsIconName } from '@react-native-vector-icons/ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
-import { setToastHandler, ToastPayload, ToastVariant } from '../../utils/toast';
+import { registerToastHost, dismissToast, ToastPayload, ToastVariant } from '../../utils/toast';
 
 /** How long a notification stays on screen before sliding out. */
 const VISIBLE_MS = 3500;
 
-const ICONS: Record<ToastVariant, keyof typeof Ionicons.glyphMap> = {
+const ICONS: Record<ToastVariant, IoniconsIconName> = {
   success: 'checkmark-circle',
   error: 'close-circle',
   warning: 'alert-circle',
   info: 'information-circle',
 };
 
-/**
- * In-app notification shown at the bottom of the screen, in the SpotMeet identity,
- * dismissing on its own. Replaces the blocking system dialogs for informational messages.
- *
- * Mounted once at the app root: `showAlert()` routes every existing call here.
- */
-export default function ToastHost() {
+/** Top notification layer for the root screen or a visible native modal. */
+export default function ToastHost({ active = true }: { active?: boolean }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [toast, setToast] = useState<ToastPayload | null>(null);
-  const translateY = useRef(new Animated.Value(120)).current;
+  const translateY = useRef(new Animated.Value(-160)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastVersion = useRef(0);
+  const currentId = useRef<number | null>(null);
 
   const hide = useCallback(() => {
+    const version = toastVersion.current;
     if (hideTimer.current) {
       clearTimeout(hideTimer.current);
       hideTimer.current = null;
     }
     Animated.parallel([
-      Animated.timing(translateY, { toValue: 120, duration: 180, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: -160, duration: 180, easing: Easing.in(Easing.quad), useNativeDriver: true }),
       Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }),
-    ]).start(() => setToast(null));
+    ]).start(({ finished }) => {
+      if (finished && version === toastVersion.current) setToast(null);
+    });
   }, [opacity, translateY]);
 
   useEffect(() => {
-    setToastHandler((next) => {
+    if (!active) { setToast(null); currentId.current = null; return; }
+    const unregister = registerToastHost((next) => {
+      toastVersion.current += 1;
       if (hideTimer.current) clearTimeout(hideTimer.current);
       setToast(next);
-      translateY.setValue(120);
+      currentId.current = next.id;
+      translateY.setValue(-160);
       opacity.setValue(0);
       Animated.parallel([
         Animated.timing(translateY, { toValue: 0, duration: 240, easing: Easing.out(Easing.back(1.2)), useNativeDriver: true }),
         Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
       hideTimer.current = setTimeout(() => hide(), VISIBLE_MS);
-    });
+    }, id => { if (currentId.current === id) hide(); });
 
     return () => {
-      setToastHandler(null);
+      toastVersion.current += 1;
+      currentId.current = null;
+      unregister();
       if (hideTimer.current) clearTimeout(hideTimer.current);
     };
-  }, [hide, opacity, translateY]);
+  }, [active, hide, opacity, translateY]);
 
-  if (!toast) return null;
+  if (!active || !toast) return null;
 
   const accent =
     toast.variant === 'success' ? colors.success
@@ -72,10 +77,10 @@ export default function ToastHost() {
       pointerEvents="box-none"
       style={[
         styles.wrapper,
-        { bottom: insets.bottom + 74, opacity, transform: [{ translateY }] },
+        { top: insets.top + 12, opacity, transform: [{ translateY }] },
       ]}
     >
-      <View style={[styles.toast, { backgroundColor: colors.card, borderColor: accent }]}>
+      <View accessibilityLiveRegion="polite" style={[styles.toast, { backgroundColor: colors.card, borderColor: accent }]}>
         {/* SpotMeet identity: accent stripe + variant icon */}
         <View style={[styles.stripe, { backgroundColor: accent }]} />
         <Ionicons name={ICONS[toast.variant]} size={20} color={accent} style={styles.icon} />
@@ -91,7 +96,7 @@ export default function ToastHost() {
           ) : null}
         </View>
 
-        <TouchableOpacity onPress={hide} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Fechar aviso" onPress={() => dismissToast(toast.id)} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Ionicons name="close" size={16} color={colors.subtext} />
         </TouchableOpacity>
       </View>
@@ -146,6 +151,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   closeBtn: {
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
     padding: 6,
     marginLeft: 6,
   },

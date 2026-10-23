@@ -1,11 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { ActivityIndicator, Image, Text, View } from 'react-native';
+import { createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, type IoniconsIconName } from '@react-native-vector-icons/ionicons';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ToastHost from './src/components/ui/ToastHost';
+import ConfirmationHost from './src/components/ui/ConfirmationHost';
+import AppStatusBar from './src/components/ui/AppStatusBar';
+import AppUpdateNotice from './src/components/ui/AppUpdateNotice';
+import SessionGuard from './src/components/auth/SessionGuard';
+import SessionNavigation from './src/components/auth/SessionNavigation';
+import { BiometricProvider } from './src/context/BiometricContext';
+import { ProfilePhotoProvider } from './src/context/ProfilePhotoContext';
+import { interceptLeave } from './src/utils/leaveGuard';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
@@ -15,6 +23,7 @@ import { discoverBackendHost } from './src/config/discovery';
 import AuthScreen from './src/screens/AuthScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import OrganizationScreen from './src/screens/OrganizationScreen';
+import MeetingsScreen from './src/screens/MeetingsScreen';
 
 // Unified SysAdmin panel screens
 import AdminOrganizationsScreen from './src/screens/admin/AdminOrganizationsScreen';
@@ -23,6 +32,7 @@ import AdminControlsScreen from './src/screens/admin/AdminControlsScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+const navigationRef = createNavigationContainerRef();
 
 /**
  * Bottom tab bar exclusive to the Administrator (SysAdmin).
@@ -47,7 +57,7 @@ function AdminTabs() {
         tabBarActiveTintColor: colors.tabBarActive,
         tabBarInactiveTintColor: colors.tabBarInactive,
         tabBarIcon: ({ focused, color, size }) => {
-          let iconName: keyof typeof Ionicons.glyphMap = 'shield-checkmark';
+          let iconName: IoniconsIconName = 'shield-checkmark';
 
           if (route.name === 'AdminApprovals') {
             iconName = focused ? 'checkmark-done-circle' : 'checkmark-done-circle-outline';
@@ -98,6 +108,12 @@ function UserTabs() {
 
   return (
     <Tab.Navigator
+      // Ajustes asks about unsaved changes before another tab opens.
+      screenListeners={({ navigation, route }) => ({
+        tabPress: event => {
+          if (!navigation.isFocused() && interceptLeave(() => navigation.navigate(route.name))) event.preventDefault();
+        },
+      })}
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarStyle: {
@@ -111,10 +127,12 @@ function UserTabs() {
         tabBarActiveTintColor: colors.tabBarActive,
         tabBarInactiveTintColor: colors.tabBarInactive,
         tabBarIcon: ({ focused, color, size }) => {
-          let iconName: keyof typeof Ionicons.glyphMap = 'business';
+          let iconName: IoniconsIconName = 'business';
 
           if (route.name === 'Organization') {
             iconName = focused ? 'business' : 'business-outline';
+          } else if (route.name === 'Meetings') {
+            iconName = focused ? 'calendar' : 'calendar-outline';
           } else if (route.name === 'Settings') {
             iconName = focused ? 'settings' : 'settings-outline';
           }
@@ -129,6 +147,11 @@ function UserTabs() {
         options={{ tabBarLabel: 'Organização', title: 'Organização' }}
       />
       <Tab.Screen
+        name="Meetings"
+        component={MeetingsScreen}
+        options={{ tabBarLabel: 'Reuniões', title: 'Reuniões' }}
+      />
+      <Tab.Screen
         name="Settings"
         component={SettingsScreen}
         options={{ tabBarLabel: 'Ajustes', title: 'Ajustes' }}
@@ -140,12 +163,23 @@ function UserTabs() {
 /**
  * Tab dispatcher with role validation (ADMIN / SYSADMIN).
  */
-function AppTabs({ route }: any) {
+function AppTabs() {
   const { role } = useAuth();
-  const profile = route.params?.role || role;
-  const isAdmin = profile === 'ADMIN' || profile === 'SYSADMIN';
+  const isAdmin = role === 'ADMIN' || role === 'SYSADMIN';
 
   return isAdmin ? <AdminTabs /> : <UserTabs />;
+}
+
+function AppNavigation() {
+  const { isAuthenticated } = useAuth();
+  return <Stack.Navigator initialRouteName={isAuthenticated ? 'Main' : 'Auth'} screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Auth" component={AuthScreen} initialParams={{ mode: 'login' }} />
+      <Stack.Screen name="Register" component={AuthScreen} initialParams={{ mode: 'register' }} />
+      <Stack.Screen name="VerifyEmail" component={AuthScreen} initialParams={{ mode: 'verify' }} />
+      <Stack.Screen name="ForgotPassword" component={AuthScreen} initialParams={{ mode: 'forgot' }} />
+      <Stack.Screen name="ResetPassword" component={AuthScreen} initialParams={{ mode: 'reset' }} />
+      <Stack.Screen name="Main" component={AppTabs} />
+  </Stack.Navigator>;
 }
 
 export default function App() {
@@ -170,6 +204,8 @@ export default function App() {
   if (!ready) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1E1E2E' }}>
+        <Image source={require('./assets/splash-icon.png')} resizeMode="contain" accessibilityLabel="SpotMeet"
+          style={{ width: 128, height: 128, marginBottom: 24 }} />
         <ActivityIndicator color="#FFF" />
         {statusText ? <Text style={{ color: '#E0E0E0', marginTop: 12, fontSize: 13 }}>{statusText}</Text> : null}
       </View>
@@ -179,41 +215,20 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <ThemeProvider>
-          <NavigationContainer>
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
-              {/* Auth routes unified through AuthScreen with transparent aliases */}
-              <Stack.Screen
-                name="Auth"
-                component={AuthScreen}
-                initialParams={{ mode: 'login' }}
-              />
-              <Stack.Screen
-                name="Register"
-                component={AuthScreen}
-                initialParams={{ mode: 'register' }}
-              />
-              <Stack.Screen
-                name="VerifyEmail"
-                component={AuthScreen}
-                initialParams={{ mode: 'verify' }}
-              />
-              <Stack.Screen
-                name="ForgotPassword"
-                component={AuthScreen}
-                initialParams={{ mode: 'forgot' }}
-              />
-              <Stack.Screen
-                name="ResetPassword"
-                component={AuthScreen}
-                initialParams={{ mode: 'reset' }}
-              />
-              <Stack.Screen name="Main" component={AppTabs} />
-            </Stack.Navigator>
-          </NavigationContainer>
-          {/* In-app notifications, above every screen */}
-          <ToastHost />
-        </ThemeProvider>
+        <BiometricProvider>
+          <ThemeProvider>
+            <ProfilePhotoProvider>
+            <AppStatusBar />
+            <AppUpdateNotice />
+            <SessionGuard navigationRef={navigationRef} />
+            <SessionNavigation navigationRef={navigationRef}>
+              <AppNavigation />
+              <ToastHost />
+              <ConfirmationHost />
+            </SessionNavigation>
+            </ProfilePhotoProvider>
+          </ThemeProvider>
+        </BiometricProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

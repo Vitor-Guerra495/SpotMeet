@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useIsFocused } from '@react-navigation/native';
-import { subscribeSync, SyncEventType, SyncEvent, isAppVisible } from '../utils/syncBus';
+import { subscribeSync, subscribeVisibility, SyncEventType, SyncEvent, isAppVisible } from '../utils/syncBus';
 
 export interface LiveSyncOptions {
   /**
@@ -19,15 +19,7 @@ export interface LiveSyncOptions {
   enabled?: boolean;
 }
 
-/**
- * Real-time refresh hook for active screens on Web and Mobile.
- *
- * Features:
- * - Runs silent, non-intrusive polling while the screen is focused.
- * - Pauses automatically when the user leaves the screen, minimizes the app or switches browser tabs.
- * - Reacts instantly to local bus events and to BroadcastChannel events from other Web tabs.
- * - Avoids concurrent calls when a previous request is still in flight.
- */
+// Periodic and event-driven refreshes share one in-flight callback.
 export function useLiveSync(
   onSync: (event?: SyncEvent) => void | Promise<void>,
   options: LiveSyncOptions = {}
@@ -43,16 +35,25 @@ export function useLiveSync(
   onSyncRef.current = onSync;
 
   const isSyncingRef = useRef(false);
+  const pendingRef = useRef<SyncEvent | true | null>(null);
+  const runnerRef = useRef<((event?: SyncEvent, force?: boolean) => Promise<void>) | null>(null);
+  const wasEnabledRef = useRef(enabled);
 
   // Serializes the event list for a stable useEffect dependency
   const eventTypesKey = eventTypes.join(',');
 
   useEffect(() => {
+    const resumed = enabled && !wasEnabledRef.current;
+    wasEnabledRef.current = enabled;
     if (!enabled || !isFocused) return;
+    let active = true;
 
-    const runSync = async (event?: SyncEvent) => {
-      if (!isAppVisible()) return;
-      if (isSyncingRef.current) return;
+    const runSync = async (event?: SyncEvent, force = false) => {
+      if (!active || !isAppVisible()) return;
+      if (isSyncingRef.current) {
+        if (event || force) pendingRef.current = event || true;
+        return;
+      }
       try {
         isSyncingRef.current = true;
         await onSyncRef.current(event);
@@ -60,26 +61,38 @@ export function useLiveSync(
         // Background failures must stay silent to avoid interrupting the UX
       } finally {
         isSyncingRef.current = false;
+        const pending = pendingRef.current;
+        pendingRef.current = null;
+        if (pending && runnerRef.current) void runnerRef.current(pending === true ? undefined : pending, true);
       }
     };
+    runnerRef.current = runSync;
 
-    // 1. Subscribe to local and multi-tab events
-    const unsubscribes = eventTypes.map((type) =>
+    const subscribedTypes = eventTypes.includes('*') ? ['*' as const]
+      : [...new Set([...eventTypes, 'VISIBILITY_RESTORED' as const])];
+    const unsubscribes = subscribedTypes.map((type) =>
       subscribeSync(type, (event) => {
-        runSync(event);
+        void runSync(event);
       })
     );
 
-    // 2. Silent periodic heartbeat while focused
-    let timer: any = null;
-    if (intervalMs > 0) {
-      timer = setInterval(() => {
-        runSync();
-      }, intervalMs);
-    }
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stopTimer = () => { if (timer !== null) clearInterval(timer); timer = null; };
+    const startTimer = () => {
+      if (active && isAppVisible() && intervalMs > 0 && timer === null) {
+        timer = setInterval(() => { void runSync(); }, intervalMs);
+      }
+    };
+    const unsubscribeVisibility = subscribeVisibility(visible => { if (visible) startTimer(); else stopTimer(); });
+    startTimer();
+    if (resumed) void runSync(undefined, true);
 
     return () => {
-      if (timer) clearInterval(timer);
+      active = false;
+      stopTimer();
+      unsubscribeVisibility();
+      if (runnerRef.current === runSync) runnerRef.current = null;
+      pendingRef.current = null;
       unsubscribes.forEach((unsub) => unsub());
     };
   }, [enabled, isFocused, intervalMs, eventTypesKey]);

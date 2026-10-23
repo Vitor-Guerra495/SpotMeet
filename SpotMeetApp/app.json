@@ -2,23 +2,20 @@
   "expo": {
     "name": "SpotMeetApp",
     "slug": "SpotMeetApp",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#1E1E2E"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.SpotMeetApp",
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "O SpotMeet procura o servidor da aplicação na sua rede Wi-Fi."
+        "NSLocalNetworkUsageDescription": "O SpotMeet procura o servidor da aplicação na sua rede Wi-Fi.",
+        "NSFaceIDUsageDescription": "O SpotMeet usa o Face ID para proteger o acesso ao aplicativo neste aparelho."
       }
     },
     "android": {
+      "versionCode": 2,
       "adaptiveIcon": {
         "backgroundColor": "#901ECE",
         "foregroundImage": "./assets/android-icon-foreground.png"
@@ -36,11 +33,45 @@
     },
     "plugins": [
       [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#1E1E2E",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#1E1E2E"
+          }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O SpotMeet permite selecionar uma imagem para sua foto de perfil.",
+          "cameraPermission": "O SpotMeet usa a câmera somente quando você escolhe tirar uma foto de perfil.",
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {
             "usesCleartextTraffic": true
           }
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "O SpotMeet usa o Face ID para proteger o acesso ao aplicativo neste aparelho."
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true,
+          "faceIDPermission": "O SpotMeet usa o Face ID para proteger o acesso ao aplicativo neste aparelho."
         }
       ]
     ]

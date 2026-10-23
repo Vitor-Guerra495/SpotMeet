@@ -1,0 +1,68 @@
+@startuml Diagrama_Classes_App
+!pragma layout smetana
+title
+SpotMeet - Diagrama de classes do aplicativo: telas e dependências específicas
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+left to right direction
+package "Aplicativo (SpotMeetApp)" {
+package "Telas" {
+class AuthScreen <<tela>>
+class MeetingsScreen <<tela>>
+class OrganizationScreen <<tela>>
+class SettingsScreen <<tela>>
+class AdminControlsScreen <<tela>>
+class AdminMonitoringReportsScreen <<tela>>
+class AdminOrganizationsScreen <<tela>>
+}
+package "Contextos" {
+class BiometricContext <<contexto>>
+class ProfilePhotoContext <<contexto>>
+}
+package "Hooks" {
+class useAdminOperation <<hook>>
+class useLiveSync <<hook>>
+class useRefreshRequest <<hook>>
+}
+package "Componentes" {
+class AdminUi <<componente>>
+class AuthLayout <<componente>>
+class BiometricSettings <<componente>>
+class ServerSettings <<componente>>
+class AttendanceListView <<componente>>
+class MeetingAttendancePanel <<componente>>
+class MeetingForm <<componente>>
+class MeetingInvitationActions <<componente>>
+class PresidentSheet <<componente>>
+class meetingStyles <<componente>>
+class ProfilePhotoEditor <<componente>>
+}
+}
+AuthScreen --> AuthLayout
+AuthScreen --> ServerSettings
+MeetingsScreen --> AttendanceListView
+MeetingsScreen --> MeetingAttendancePanel
+MeetingsScreen --> MeetingForm
+MeetingsScreen --> MeetingInvitationActions
+MeetingsScreen --> meetingStyles
+MeetingsScreen --> useLiveSync
+MeetingsScreen --> useRefreshRequest
+OrganizationScreen --> PresidentSheet
+OrganizationScreen --> useLiveSync
+OrganizationScreen --> useRefreshRequest
+SettingsScreen --> BiometricSettings
+SettingsScreen --> ProfilePhotoEditor
+SettingsScreen --> BiometricContext
+SettingsScreen --> ProfilePhotoContext
+AdminControlsScreen --> AdminUi
+AdminControlsScreen --> useAdminOperation
+AdminMonitoringReportsScreen --> AdminUi
+AdminMonitoringReportsScreen --> useLiveSync
+AdminMonitoringReportsScreen --> useRefreshRequest
+AdminOrganizationsScreen --> AdminUi
+AdminOrganizationsScreen --> useAdminOperation
+AdminOrganizationsScreen --> useLiveSync
+AdminOrganizationsScreen --> useRefreshRequest
+@enduml
