@@ -1,0 +1,101 @@
+@startuml Diagrama_Classes_API_Organizacao
+!pragma layout smetana
+title
+SpotMeet - Diagrama de classes da API: Organização (RF03 a RF08)
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+package "API (backend)" {
+class OrganizationController <<controller>> {
+  +createOrganization()
+  +listMyOrganizations()
+  +updateOrganization()
+  +resubmitOrganization()
+  +deleteOrganization()
+}
+class MembershipController <<controller>> {
+  +requestAccess()
+  +previewOrganization()
+  +approveAccess()
+  +rejectAccess()
+  +revokeAccess()
+  +listPendingRequests()
+  +listMembers()
+  +promoteMember()
+  +demoteMember()
+}
+class OrganizationInvitationController <<controller>> {
+  +invalidRequest()
+  +invite()
+  +candidates()
+  +listMine()
+  +respond()
+}
+class OrganizationLeadershipController <<controller>> {
+  +invalidIdentifier()
+  +transfer()
+}
+class OrganizationService <<service>> {
+  +createOrganization()
+  +listMyOrganizations()
+  +updateOrganization()
+  +resubmitOrganization()
+  +deleteOrganization()
+}
+class MembershipService <<service>> {
+  +requireOrganizationMember()
+  +requireOwnerOrViceOwner()
+  +requireOwner()
+  +requestAccess()
+  +previewByKey()
+  +approveAccess()
+  +rejectAccess()
+  +promoteMember()
+  +demoteMember()
+  +transferLeadership()
+  +revokeAccess()
+  +listPendingRequests()
+  +listMembers()
+}
+class OrganizationInvitationService <<service>> {
+  +invite()
+  +findCandidates()
+  +listMine()
+  +respond()
+}
+interface AccessRequestRepository <<repository>>
+interface AuditLogRepository <<repository>>
+interface CommitteeMemberRepository <<repository>>
+interface CommitteeRepository <<repository>>
+interface OrganizationInvitationRepository <<repository>>
+interface OrganizationMemberRepository <<repository>>
+interface OrganizationRepository <<repository>>
+interface UserRepository <<repository>>
+}
+OrganizationController --> OrganizationService
+MembershipController --> MembershipService
+OrganizationInvitationController --> OrganizationInvitationService
+OrganizationLeadershipController --> MembershipService
+OrganizationService ..> AccessRequestRepository
+OrganizationService ..> AuditLogRepository
+OrganizationService ..> CommitteeMemberRepository
+OrganizationService ..> CommitteeRepository
+OrganizationService ..> OrganizationInvitationRepository
+OrganizationService ..> OrganizationMemberRepository
+OrganizationService ..> OrganizationRepository
+OrganizationService ..> UserRepository
+MembershipService ..> AccessRequestRepository
+MembershipService ..> AuditLogRepository
+MembershipService ..> CommitteeMemberRepository
+MembershipService ..> OrganizationInvitationRepository
+MembershipService ..> OrganizationMemberRepository
+MembershipService ..> OrganizationRepository
+MembershipService ..> UserRepository
+OrganizationInvitationService ..> AccessRequestRepository
+OrganizationInvitationService ..> AuditLogRepository
+OrganizationInvitationService ..> OrganizationInvitationRepository
+OrganizationInvitationService ..> OrganizationMemberRepository
+OrganizationInvitationService ..> OrganizationRepository
+OrganizationInvitationService ..> UserRepository
+@enduml

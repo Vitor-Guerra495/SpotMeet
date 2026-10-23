@@ -1,0 +1,72 @@
+@startuml Sequencia_RF25
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF25 (Agendar Reunião)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MeetingForm" as Form
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingController" as Ctrl
+participant ":MeetingService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingRepository" as MeetRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+note over Tela : o botão "Agendar reunião" só aparece quando\nGET /api/committees/presided devolve ao menos uma comissão (RF28)
+U -> Tela : tocar em "Agendar reunião"
+Tela -> Form : abrir o modal "Agendar reunião"
+note over Form : a lista de convidados vem de\nGET /api/committees/{id}/members (RF29)
+U -> Form : informar título, início, término, local, link, pauta,\nprioridade e convidados e tocar em "Agendar reunião"
+Form -> Form : valida os campos (obrigatórios, data real, início futuro,\ntérmino depois do início, até 24 h, link http ou https)
+Form -> Tela : onSubmit(payload)
+Tela -> Filtro : POST /api/committees/{committeeId}/meetings (MeetingRequestDTO)
+Filtro -> Ctrl : createMeeting(committeeId, dto, auth)
+alt corpo inválido (@Valid)
+  Ctrl --> Handler : MethodArgumentNotValidException
+  Handler --> Tela : 400 {message, errors}
+else corpo válido
+  Ctrl -> Svc : createMeeting(committeeId, email, dto)
+  activate Svc
+  Svc -> Acc : findCommittee(committeeId)
+  Acc --> Svc : Committee
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
+  Svc -> Acc : requirePresident(user, committee)
+  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Acc : CommitteeMember
+  Acc --> Svc : void
+  Svc -> Svc : requireFutureStart(dto, now)
+  Svc -> Svc : resolveInvitees(committeeId, president, invitedUserIds)
+  note right of Svc : confere a organização aprovada e escolhe os\nconvidados, conforme o RF29
+  alt regra violada (403 ou 409)
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 ou 409 {message}
+    Tela --> Form : error (mensagem exibida, formulário continua aberto)
+  else dados aceitos
+    Svc -> MeetRepo : save(Meeting)
+    MeetRepo --> Svc : Meeting
+    Svc -> PartRepo : saveAll(List<MeetingParticipant>)
+    Svc -> Acc : audit(president, "MEETING_CREATED", meeting, extra)
+    Acc -> AuditRepo : save(AuditLog)
+    Svc --> Ctrl : MeetingResponseDTO
+    Ctrl --> Tela : 201 MeetingResponseDTO
+    Tela --> U : aviso "Reunião agendada." e abre o detalhe da reunião
+    Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+  end
+  deactivate Svc
+end
+@enduml

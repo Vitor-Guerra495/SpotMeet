@@ -1,0 +1,96 @@
+@startuml Diagrama_Classes_API_Reunioes
+!pragma layout smetana
+title
+SpotMeet - Diagrama de classes da API: Reuniões e presença (RF25 a RF35)
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+package "API (backend)" {
+class MeetingController <<controller>> {
+  +createMeeting()
+  +listCommitteeMeetings()
+  +listMyMeetings()
+  +getMeeting()
+  +updateMeeting()
+  +cancelMeeting()
+}
+class MeetingInvitationController <<controller>> {
+  +respond()
+}
+class MeetingAttendanceController <<controller>> {
+  +registerEntry()
+  +registerExit()
+  +registerAllEntries()
+  +registerAllExits()
+  +resetAttendance()
+}
+class AttendanceListController <<controller>> {
+  +generate()
+  +get()
+}
+class MeetingService <<service>> {
+  +createMeeting()
+  +listCommitteeMeetings()
+  +listMyMeetings()
+  +getMeeting()
+  +updateMeeting()
+  +cancelMeeting()
+}
+class MeetingInvitationService <<service>> {
+  +respond()
+}
+class MeetingAttendanceService <<service>> {
+  +registerEntry()
+  +registerExit()
+  +registerAllEntries()
+  +registerAllExits()
+  +resetAttendance()
+}
+class AttendanceListService <<service>> {
+  +generate()
+  +get()
+}
+class MeetingAccess <<service>> {
+  +findUser()
+  +findCommittee()
+  +findMeeting()
+  +activeMembership()
+  +requireViewer()
+  +requireActiveMember()
+  +requirePresident()
+  +clean()
+  +audit()
+  +detail()
+  +summaries()
+  +invalidateList()
+}
+interface AuditLogRepository <<repository>>
+interface CommitteeMemberRepository <<repository>>
+interface CommitteeRepository <<repository>>
+interface MeetingParticipantRepository <<repository>>
+interface MeetingRepository <<repository>>
+interface UserRepository <<repository>>
+}
+MeetingController --> MeetingService
+MeetingInvitationController --> MeetingInvitationService
+MeetingAttendanceController --> MeetingAttendanceService
+AttendanceListController --> AttendanceListService
+MeetingService ..> CommitteeMemberRepository
+MeetingService --> MeetingAccess
+MeetingService ..> MeetingParticipantRepository
+MeetingService ..> MeetingRepository
+MeetingInvitationService --> MeetingAccess
+MeetingInvitationService ..> MeetingParticipantRepository
+MeetingAttendanceService --> MeetingAccess
+MeetingAttendanceService ..> MeetingParticipantRepository
+AttendanceListService --> MeetingAccess
+AttendanceListService ..> MeetingParticipantRepository
+AttendanceListService ..> MeetingRepository
+MeetingAccess ..> AuditLogRepository
+MeetingAccess ..> CommitteeMemberRepository
+MeetingAccess ..> CommitteeRepository
+MeetingAccess ..> MeetingParticipantRepository
+MeetingAccess ..> MeetingRepository
+MeetingAccess ..> UserRepository
+@enduml

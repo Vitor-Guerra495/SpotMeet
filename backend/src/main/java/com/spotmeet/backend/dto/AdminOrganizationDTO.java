@@ -20,6 +20,17 @@ public class AdminOrganizationDTO {
     private String cnpjMasked;
     private boolean approved;
     private String status;
+    private String moderationReason;
+
+    public String getModerationReason() { return moderationReason; }
+    public void setModerationReason(String moderationReason) { this.moderationReason = moderationReason; }
+    private String resubmissionNote;
+    private LocalDateTime resubmittedAt;
+
+    public String getResubmissionNote() { return resubmissionNote; }
+    public void setResubmissionNote(String resubmissionNote) { this.resubmissionNote = resubmissionNote; }
+    public LocalDateTime getResubmittedAt() { return resubmittedAt; }
+    public void setResubmittedAt(LocalDateTime resubmittedAt) { this.resubmittedAt = resubmittedAt; }
     private LocalDateTime createdAt;
     private int totalMembers;
     private int totalCommittees;

@@ -1,0 +1,250 @@
+@startuml Sequencia_RF07
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF07 (Manter Organização)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":OrganizationController" as Ctrl
+participant ":OrganizationLeadershipController" as LCtrl
+participant ":OrganizationService" as Svc
+participant ":MembershipService" as MSvc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":OrganizationMemberRepository" as MemRepo
+participant ":OrganizationInvitationRepository" as InvRepo
+participant ":CommitteeRepository" as ComRepo
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":AccessRequestRepository" as ArRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Pesquisar as organizações do usuário
+  U -> Tela : abrir a aba "Organização" (ou atualizar a lista)
+  Tela -> Filtro : GET /api/organizations/mine
+  Filtro -> Ctrl : listMyOrganizations(authentication)
+  Ctrl -> Svc : listMyOrganizations(userEmail)
+  Svc -> UserRepo : findByEmail(userEmail)
+  UserRepo --> Svc : Optional<User>
+  Svc -> MemRepo : findByUserId(userId)
+  MemRepo --> Svc : List<OrganizationMember>
+  note over Svc : DTO por vínculo, com myRole
+  Svc --> Ctrl : List<OrganizationResponseDTO>
+  Ctrl --> Tela : 200 List<OrganizationResponseDTO>
+  Tela --> U : exibe "SUAS ORGANIZAÇÕES" com estado e papel
+end
+
+group Editar a organização
+  U -> Tela : tocar em "Editar organização", alterar os campos e tocar em "Salvar alterações"
+  note over Tela : validateOrganizationName e validateAccessKey (organizationForms)
+  Tela -> Filtro : PUT /api/organizations/{organizationId} (OrganizationRequestDTO)
+  alt corpo viola @Valid
+    Filtro -> Handler : MethodArgumentNotValidException
+    Handler --> Tela : 400 {message, errors}
+    Tela --> U : exibe o erro sob o campo
+  else corpo válido
+    Filtro -> Ctrl : updateOrganization(organizationId, dto, authentication)
+    activate Ctrl
+    Ctrl -> Svc : updateOrganization(organizationId, executorEmail, dto)
+    activate Svc
+    note over Svc : transação READ_COMMITTED
+    Svc -> UserRepo : findByEmail(executorEmail)
+    UserRepo --> Svc : Optional<User>
+    Svc -> OrgRepo : lockForUniquenessCheck()
+    OrgRepo --> Svc : void
+    Svc -> OrgRepo : findByIdForUpdate(organizationId)
+    OrgRepo --> Svc : Optional<Organization>
+    Svc -> Svc : requireOwnerOrViceOwner(executor, org)
+    opt executor não é SYSADMIN nem o dono (owner_id)
+      Svc -> MemRepo : findByUserIdAndOrganizationId(executorId, organizationId)
+      MemRepo --> Svc : Optional<OrganizationMember>
+    end
+    alt é dono, vice-líder ou SYSADMIN
+      Svc -> Svc : checkAvailability(nome, chave, cnpj, organizationId)
+      Svc -> OrgRepo : existsByNormalizedName(nome, espaços, organizationId)
+      OrgRepo --> Svc : boolean
+      Svc -> OrgRepo : existsByNormalizedAccessKey(chave, espaços, organizationId)
+      OrgRepo --> Svc : boolean
+      opt há CNPJ (enviado ou já gravado)
+        Svc -> OrgRepo : existsByCnpjExcludingId(cnpj, organizationId)
+        OrgRepo --> Svc : boolean
+      end
+      alt nenhuma consulta encontrou conflito
+        Svc -> OrgRepo : save(Organization com novo name e access_key)
+        OrgRepo --> Svc : Organization
+        Svc -> AuditRepo : save(AuditLog "ORGANIZATION_UPDATED")
+        AuditRepo --> Svc : AuditLog
+        Svc --> Ctrl : OrganizationResponseDTO
+        Ctrl --> Tela : 200 OrganizationResponseDTO
+        Tela --> U : exibe o aviso "Organização atualizada." e fecha o formulário
+      else nome, chave ou CNPJ já em uso
+        Svc --> Ctrl : IllegalArgumentException
+        Ctrl --> Tela : 409 (mensagem em texto)
+        Tela --> U : exibe a mensagem abaixo do formulário
+      end
+    else não é dono, vice-líder nem SYSADMIN
+      Svc --> Ctrl : SecurityException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Tela : 403 {message}
+      Tela --> U : exibe o acesso negado
+    else organização inexistente
+      Svc --> Ctrl : IllegalArgumentException
+      Ctrl --> Tela : 409 (mensagem em texto)
+      Tela --> U : exibe a mensagem de erro
+    end
+    deactivate Svc
+    deactivate Ctrl
+  end
+end
+
+group Excluir a organização
+  U -> Tela : tocar em "Excluir organização" e confirmar com "Excluir"
+  Tela -> Filtro : DELETE /api/organizations/{organizationId}
+  Filtro -> Ctrl : deleteOrganization(organizationId, authentication)
+  activate Ctrl
+  Ctrl -> Svc : deleteOrganization(organizationId, executorEmail)
+  activate Svc
+  Svc -> UserRepo : findByEmail(executorEmail)
+  UserRepo --> Svc : Optional<User>
+  Svc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> Svc : Optional<Organization>
+  opt executor não é SYSADMIN nem o dono (owner_id)
+    Svc -> MemRepo : findByUserIdAndOrganizationId(executorId, organizationId)
+    MemRepo --> Svc : Optional<OrganizationMember>
+  end
+  alt é dono, vice-líder ou SYSADMIN
+    Svc -> InvRepo : deleteByOrganizationId(organizationId)
+    Svc -> ComRepo : findByOrganizationIdOrderByNameAsc(organizationId)
+    ComRepo --> Svc : List<Committee>
+    loop cada comissão da organização
+      Svc -> CmRepo : findByCommitteeId(committeeId)
+      CmRepo --> Svc : List<CommitteeMember>
+      Svc -> CmRepo : deleteAll(vínculos da comissão)
+    end
+    Svc -> ComRepo : deleteAll(comissões)
+    Svc -> ArRepo : findByOrganizationId(organizationId)
+    ArRepo --> Svc : List<AccessRequest>
+    Svc -> ArRepo : deleteAll(solicitações de acesso)
+    Svc -> MemRepo : findByOrganizationId(organizationId)
+    MemRepo --> Svc : List<OrganizationMember>
+    Svc -> MemRepo : deleteAll(integrantes)
+    Svc -> OrgRepo : delete(Organization)
+    Svc -> AuditRepo : save(AuditLog "ORGANIZATION_DELETED")
+    AuditRepo --> Svc : AuditLog
+    Svc --> Ctrl : void
+    Ctrl --> Tela : 200 "Organizacao excluida com sucesso."
+    Tela --> U : exibe o aviso "Organização excluída." e volta a "Minhas"
+  else não é dono, vice-líder nem SYSADMIN
+    Svc --> Ctrl : SecurityException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 {message}
+    Tela --> U : exibe o acesso negado
+  else organização inexistente
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 409 {message}
+    Tela --> U : exibe a mensagem de erro
+  end
+  deactivate Svc
+  deactivate Ctrl
+end
+
+group Transferir a liderança
+  U -> Tela : tocar em "Transferir liderança", escolher o integrante e confirmar com "Transferir"
+  note over Tela : o botão só aparece para organização aprovada; o SYSADMIN usa a AdminOrganizationsScreen
+  Tela -> Filtro : POST /api/organizations/{organizationId}/members/{userId}/make-owner
+  Filtro -> LCtrl : transfer(organizationId, userId, authentication)
+  activate LCtrl
+  LCtrl -> MSvc : transferLeadership(organizationId, userId, executorEmail)
+  activate MSvc
+  MSvc -> UserRepo : findByEmail(executorEmail)
+  UserRepo --> MSvc : Optional<User>
+  MSvc -> OrgRepo : findByIdForUpdate(organizationId)
+  OrgRepo --> MSvc : Optional<Organization>
+  alt executor é o dono (owner_id) ou SYSADMIN, organização aprovada
+    MSvc -> MemRepo : findByOrganizationIdAndRole(organizationId, ORG_OWNER)
+    MemRepo --> MSvc : List<OrganizationMember>
+    MSvc -> MemRepo : findByUserIdAndOrganizationId(userId, organizationId)
+    MemRepo --> MSvc : Optional<OrganizationMember>
+    alt destino é integrante e não é o dono
+      MSvc -> MemRepo : save(vínculo do dono anterior com role MEMBER)
+      MSvc -> MemRepo : save(vínculo do destino com role ORG_OWNER)
+      MSvc -> OrgRepo : save(Organization com owner igual ao destino)
+      MSvc -> AuditRepo : save(AuditLog "ORGANIZATION_LEADER_CHANGED")
+      AuditRepo --> MSvc : AuditLog
+      MSvc --> LCtrl : OrganizationLeadershipResponseDTO
+      LCtrl --> Tela : 200 OrganizationLeadershipResponseDTO
+      Tela --> U : exibe o aviso "Liderança transferida." e abre "Comissões"
+    else destino já é o dono ou liderança inconsistente
+      MSvc --> LCtrl : IllegalStateException
+      LCtrl --> Tela : 409 (mensagem)
+      Tela --> U : exibe a mensagem de erro
+    else destino fora da organização
+      MSvc --> LCtrl : IllegalArgumentException
+      LCtrl --> Tela : 404 (mensagem)
+      Tela --> U : exibe a mensagem de erro
+    end
+  else organização não aprovada
+    MSvc --> LCtrl : IllegalStateException
+    LCtrl --> Tela : 409 "A liderança só pode ser transferida depois que a organização for aprovada."
+    Tela --> U : exibe a mensagem de erro
+  else executor não é o dono nem SYSADMIN
+    MSvc --> LCtrl : SecurityException
+    LCtrl --> Tela : 403 (mensagem)
+    Tela --> U : exibe o acesso negado
+  end
+  deactivate MSvc
+  deactivate LCtrl
+end
+
+group Reenviar para avaliação (organização recusada, uma única vez)
+  U -> Tela : tocar em "Reenviar para avaliação", escrever a justificativa e confirmar
+  note over Tela : o botão só aparece ao dono de organização recusada que ainda não usou a reavaliação
+  Tela -> Filtro : POST /api/organizations/{organizationId}/resubmit (OrganizationResubmitDTO)
+  alt corpo viola @Valid
+    Filtro -> Handler : MethodArgumentNotValidException
+    Handler --> Tela : 400 {message, errors}
+    Tela --> U : exibe a mensagem abaixo do formulário
+  else corpo válido
+    Filtro -> Ctrl : resubmitOrganization(organizationId, body, authentication)
+    activate Ctrl
+    Ctrl -> Svc : resubmitOrganization(organizationId, executorEmail, justification)
+    activate Svc
+    Svc -> UserRepo : findByEmail(executorEmail)
+    UserRepo --> Svc : Optional<User>
+    Svc -> OrgRepo : findByIdForUpdate(organizationId)
+    OrgRepo --> Svc : Optional<Organization>
+    alt executor é o dono, status REJECTED e resubmitted_at nulo
+      Svc -> OrgRepo : save(Organization com status PENDING, resubmission_note e resubmitted_at)
+      OrgRepo --> Svc : Organization
+      Svc -> AuditRepo : save(AuditLog "ORGANIZATION_RESUBMITTED")
+      AuditRepo --> Svc : AuditLog
+      Svc --> Ctrl : OrganizationResponseDTO
+      Ctrl --> Tela : 200 OrganizationResponseDTO
+      Tela --> U : exibe "Organização reenviada. Aguarde a nova avaliação do administrador do sistema."
+    else executor não é o dono
+      Svc --> Ctrl : SecurityException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Tela : 403 {message}
+      Tela --> U : exibe o acesso negado
+    else não está recusada, reavaliação já usada ou justificativa inválida
+      Svc --> Ctrl : IllegalStateException ou IllegalArgumentException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Tela : 409 {message}
+      Tela --> U : exibe a mensagem abaixo do formulário
+    end
+    deactivate Svc
+    deactivate Ctrl
+  end
+end
+@enduml

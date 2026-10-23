@@ -1,0 +1,59 @@
+@startuml Sequencia_RF27
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF27 (Cancelar Reunião)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingController" as Ctrl
+participant ":MeetingService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingRepository" as MeetRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Tela : abrir a reunião agendada ou em andamento e tocar em "Cancelar reunião"
+Tela --> U : confirmação "Cancelar reunião" (Cancelar "<título>"? Os convidados verão a reunião como cancelada.)
+U -> Tela : confirmar com "Cancelar reunião"
+Tela -> Filtro : POST /api/meetings/{meetingId}/cancel
+Filtro -> Ctrl : cancelMeeting(meetingId, auth)
+Ctrl -> Svc : cancelMeeting(meetingId, email)
+activate Svc
+Svc -> Acc : findMeeting(meetingId)
+Acc --> Svc : Meeting
+Svc -> Acc : findUser(email)
+Acc --> Svc : User
+Svc -> Acc : requirePresident(user, committee)
+Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+CmRepo --> Acc : CommitteeMember
+Acc --> Svc : void
+Svc -> Svc : statusAt(now)
+alt presidente e reunião não cancelada nem encerrada
+  Svc -> MeetRepo : save(Meeting com canceledAt = agora)
+  Svc -> Acc : audit(president, "MEETING_CANCELED", meeting, "")
+  Acc -> AuditRepo : save(AuditLog)
+  Svc -> Acc : detail(meeting, president, now)
+  Acc --> Svc : MeetingResponseDTO
+  Svc --> Ctrl : MeetingResponseDTO
+  Ctrl --> Tela : 200 MeetingResponseDTO
+  Tela --> U : aviso "Reunião cancelada." e detalhe com a situação "Cancelada"
+  Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+else não é presidente, ou a reunião já foi cancelada ou encerrada
+  Svc --> Ctrl : SecurityException ou IllegalStateException
+  Ctrl --> Handler : exceção propagada
+  Handler --> Tela : 403 ou 409 {message}
+  Tela --> U : exibe a mensagem de erro
+end
+deactivate Svc
+@enduml

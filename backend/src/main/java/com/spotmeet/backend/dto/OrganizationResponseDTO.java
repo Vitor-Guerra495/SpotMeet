@@ -19,6 +19,20 @@ public class OrganizationResponseDTO {
     private String myRole;
     private boolean approved;
     private String status;
+    private String moderationReason;
+    private boolean resubmitted;
+
+    public String getModerationReason() { return moderationReason; }
+    public boolean isResubmitted() { return resubmitted; }
+
+    public static OrganizationResponseDTO forViewer(Organization org, com.spotmeet.backend.model.User viewer) {
+        OrganizationResponseDTO dto = fromEntity(org);
+        if (org.getOwner().getId().equals(viewer.getId())
+                || "ADMIN".equals(viewer.getRole()) || "SYSADMIN".equals(viewer.getRole())) {
+            dto.moderationReason = org.getModerationReason();
+        }
+        return dto;
+    }
 
     public OrganizationResponseDTO() {}
 
@@ -32,6 +46,7 @@ public class OrganizationResponseDTO {
         dto.createdAt = org.getCreatedAt();
         dto.approved = org.isApproved();
         dto.status = org.getStatus() != null ? org.getStatus() : (org.isApproved() ? "APPROVED" : "PENDING");
+        dto.resubmitted = org.getResubmittedAt() != null;
         return dto;
     }
 

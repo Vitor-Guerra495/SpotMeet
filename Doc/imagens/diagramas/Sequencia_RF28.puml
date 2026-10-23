@@ -1,0 +1,104 @@
+@startuml Sequencia_RF28
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF28 (Consultar Reuniões)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingController" as Ctrl
+participant ":MeetingService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeController" as ComCtrl
+participant ":CommitteeService" as ComSvc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingRepository" as MeetRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Abrir a aba "Reuniões" (e a cada 10 s, ao puxar para atualizar ou ao tocar em "Atualizar reuniões")
+  U -> Tela : abrir a aba "Reuniões"
+  Tela -> Filtro : GET /api/meetings/mine
+  Filtro -> Ctrl : listMyMeetings(auth)
+  Ctrl -> Svc : listMyMeetings(email)
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
+  Svc -> PartRepo : findActiveByUser(userId, ACTIVE)
+  PartRepo --> Svc : List<MeetingParticipant>
+  Svc -> CmRepo : findByUserIdAndStatus(userId, ACTIVE)
+  CmRepo --> Svc : List<CommitteeMember>
+  loop cada comissão em que o usuário é COMMITTEE_ADMIN
+    Svc -> MeetRepo : findByCommitteeIdOrderByStartsAtDesc(committeeId)
+    MeetRepo --> Svc : List<Meeting>
+  end
+  note right of Svc : junta as reuniões sem repetir, da mais recente para a mais antiga;\no presidente vê também as reuniões para as quais não foi convidado
+  Svc -> Acc : summaries(meetings, user, now)
+  Acc -> PartRepo : findByMeetingIdIn(meetingIds)
+  PartRepo --> Acc : List<MeetingParticipant>
+  Acc --> Svc : List<MeetingResponseDTO> (sem a lista de participantes)
+  Svc --> Ctrl : List<MeetingResponseDTO>
+  Ctrl --> Tela : 200 List<MeetingResponseDTO>
+  Tela -> Filtro : GET /api/committees/presided
+  Filtro -> ComCtrl : listPresidedCommittees(auth)
+  ComCtrl -> ComSvc : listPresidedCommittees(email)
+  ComSvc -> CmRepo : findByUserIdAndStatus(userId, ACTIVE)
+  CmRepo --> ComSvc : List<CommitteeMember>
+  note right of ComSvc : mantém só os vínculos com role COMMITTEE_ADMIN
+  ComSvc --> ComCtrl : List<CommitteeMemberResponseDTO>
+  ComCtrl --> Tela : 200 List<CommitteeMemberResponseDTO>
+  Tela --> U : cartões em "Próximas" e "Anteriores", "CONVITES PARA RESPONDER" e, para o presidente, o botão "Agendar reunião"
+end
+
+group Abrir o detalhe de uma reunião
+  U -> Tela : tocar no cartão da reunião
+  Tela -> Filtro : GET /api/meetings/{meetingId}
+  Filtro -> Ctrl : getMeeting(meetingId, auth)
+  Ctrl -> Svc : getMeeting(meetingId, email)
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
+  Svc -> Acc : requireViewer(user, committee)
+  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Acc : CommitteeMember
+  opt o usuário não é integrante ativo
+    Acc -> ComSvc : requireOrganizationLeader(user, organizationId)
+    ComSvc --> Acc : void ou SecurityException
+  end
+  alt integrante ativo ou líder da organização
+    Svc -> Acc : detail(meeting, user, now)
+    Acc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
+    PartRepo --> Acc : List<MeetingParticipant>
+    Acc --> Svc : MeetingResponseDTO (com os participantes)
+    Svc --> Ctrl : MeetingResponseDTO
+    Ctrl --> Tela : 200 MeetingResponseDTO
+    Tela --> U : modal "Reunião" com datas, local, link, pauta e contadores de convidados
+  else sem permissão, ou reunião inexistente
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 ou 409 {message}
+    Tela --> U : fecha o detalhe e recarrega a lista
+  end
+end
+
+group Consultar as reuniões de uma comissão (rota da API, o aplicativo usa /api/meetings/mine)
+  Tela -> Filtro : GET /api/committees/{committeeId}/meetings
+  Filtro -> Ctrl : listCommitteeMeetings(committeeId, auth)
+  Ctrl -> Svc : listCommitteeMeetings(committeeId, email)
+  Svc -> Acc : requireViewer(user, committee)
+  Svc -> MeetRepo : findByCommitteeIdOrderByStartsAtDesc(committeeId)
+  MeetRepo --> Svc : List<Meeting>
+  Svc -> Acc : summaries(meetings, user, now)
+  Svc --> Ctrl : List<MeetingResponseDTO>
+  Ctrl --> Tela : 200 List<MeetingResponseDTO>
+end
+@enduml

@@ -1,0 +1,79 @@
+@startuml Sequencia_RF26
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF26 (Editar Reunião)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MeetingForm" as Form
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingController" as Ctrl
+participant ":MeetingService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingRepository" as MeetRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Tela : abrir a reunião agendada e tocar em "Editar reunião"
+note right of Tela : o botão só fica ativo depois que o detalhe carregou os participantes
+Tela -> Form : abrir o modal "Editar reunião" com os dados atuais
+U -> Form : alterar os campos e tocar em "Salvar alterações"
+Form -> Form : valida os campos (mesmas regras do RF25)
+Form -> Tela : onSubmit(payload)
+Tela -> Filtro : PUT /api/meetings/{meetingId} (MeetingRequestDTO)
+Filtro -> Ctrl : updateMeeting(meetingId, dto, auth)
+alt corpo inválido (@Valid)
+  Ctrl --> Handler : MethodArgumentNotValidException
+  Handler --> Tela : 400 {message, errors}
+else corpo válido
+  Ctrl -> Svc : updateMeeting(meetingId, email, dto)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
+  Svc -> Acc : requirePresident(user, committee)
+  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  CmRepo --> Acc : CommitteeMember
+  Acc --> Svc : void
+  Svc -> Svc : statusAt(now) deve ser SCHEDULED
+  Svc -> Svc : requireFutureStart(dto, now)
+  opt invitedUserIds informado
+    Svc -> Svc : resolveInvitees(committeeId, president, invitedUserIds)
+  end
+  alt regra violada (403 ou 409)
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 ou 409 {message}
+    Tela --> Form : error (mensagem exibida, formulário continua aberto)
+  else dados aceitos
+    Svc -> MeetRepo : save(Meeting com os novos campos)
+    opt invitedUserIds informado
+      Svc -> Svc : syncInvitees(meeting, invitees)
+      Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
+      PartRepo --> Svc : participantes atuais
+      Svc -> PartRepo : deleteAll(removidos) e saveAll(adicionados)
+    end
+    Svc -> Acc : audit(president, "MEETING_UPDATED", meeting, "")
+    Acc -> AuditRepo : save(AuditLog)
+    Svc -> Acc : detail(meeting, president, now)
+    Acc --> Svc : MeetingResponseDTO
+    Svc --> Ctrl : MeetingResponseDTO
+    Ctrl --> Tela : 200 MeetingResponseDTO
+    Tela --> U : aviso "Reunião atualizada." e abre o detalhe
+    Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+  end
+  deactivate Svc
+end
+@enduml

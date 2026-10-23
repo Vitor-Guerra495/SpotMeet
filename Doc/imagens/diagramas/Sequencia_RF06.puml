@@ -1,0 +1,76 @@
+@startuml Sequencia_RF06
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF06 (Cadastrar Organização)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":OrganizationScreen" as Tela
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":OrganizationController" as Ctrl
+participant ":OrganizationService" as Svc
+participant ":UserRepository" as UserRepo
+participant ":OrganizationRepository" as OrgRepo
+participant ":OrganizationMemberRepository" as MemRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+U -> Tela : abrir a aba "Criar", preencher "Nome da organização" e "Chave de acesso" e tocar em "Criar organização"
+note over Tela : validateOrganizationName e validateAccessKey (organizationForms) antes do envio
+
+alt nome ou chave inválidos no aplicativo
+  Tela --> U : exibe a mensagem de erro sob o campo (nada é enviado)
+else campos válidos
+  Tela -> Filtro : POST /api/organizations (OrganizationRequestDTO)
+  alt corpo viola @Valid (nome em branco ou acima de 255 caracteres, chave fora do padrão, CNPJ acima de 255)
+    Filtro -> Handler : MethodArgumentNotValidException
+    note right of Handler : lançada pelo Spring MVC ao validar o corpo, antes de chamar o controller
+    Handler --> Tela : 400 {message, errors}
+    Tela --> U : exibe a mensagem sob o campo correspondente
+  else corpo válido
+    Filtro -> Ctrl : createOrganization(dto, authentication)
+    activate Ctrl
+    Ctrl -> Svc : createOrganization(ownerEmail, dto)
+    activate Svc
+    note over Svc : transação READ_COMMITTED; nome, chave e CNPJ normalizados com ValidationPatterns
+    Svc -> UserRepo : findByEmail(ownerEmail)
+    UserRepo --> Svc : Optional<User>
+    Svc -> OrgRepo : lockForUniquenessCheck()
+    OrgRepo --> Svc : void
+    Svc -> Svc : checkAvailability(nome, chave, cnpj, null)
+    Svc -> OrgRepo : existsByNormalizedName(nome, espaços, null)
+    OrgRepo --> Svc : boolean
+    Svc -> OrgRepo : existsByNormalizedAccessKey(chave, espaços, null)
+    OrgRepo --> Svc : boolean
+    opt CNPJ informado
+      Svc -> OrgRepo : existsByCnpjExcludingId(cnpj, null)
+      OrgRepo --> Svc : boolean
+    end
+    alt nenhuma consulta encontrou conflito
+      Svc -> OrgRepo : save(Organization com approved=false e status "PENDING")
+      OrgRepo --> Svc : Organization
+      Svc -> MemRepo : save(OrganizationMember com role ORG_OWNER)
+      MemRepo --> Svc : OrganizationMember
+      Svc -> AuditRepo : save(AuditLog "ORGANIZATION_CREATED")
+      AuditRepo --> Svc : AuditLog
+      Svc --> Ctrl : OrganizationResponseDTO
+      Ctrl --> Tela : 201 OrganizationResponseDTO
+      Tela --> U : exibe o aviso "Organização criada. Aguarde a avaliação do administrador do sistema." e lista a organização em "Minhas" com o selo "Pendente"
+    else nome, chave ou CNPJ já pertencem a outra organização
+      Svc --> Ctrl : IllegalArgumentException
+      Ctrl --> Tela : 409 (mensagem em texto)
+      Tela --> U : exibe a mensagem abaixo do formulário e mantém os dados digitados
+    end
+    deactivate Svc
+    deactivate Ctrl
+  end
+end
+@enduml

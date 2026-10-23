@@ -29,7 +29,7 @@ public class OrganizationController {
      * POST /api/organizations
      *
      * @return 201 CREATED with the organization data.
-     *         409 CONFLICT if the access key is already in use.
+     *         409 CONFLICT if the name, access key or CNPJ is already in use.
      *         400 BAD_REQUEST if the DTO is invalid.
      */
     @PostMapping
@@ -37,7 +37,7 @@ public class OrganizationController {
             @Valid @RequestBody OrganizationRequestDTO dto,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String ownerEmail = authentication.getName();
@@ -57,7 +57,7 @@ public class OrganizationController {
     public ResponseEntity<?> listMyOrganizations(
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         String email = authentication.getName();
         return ResponseEntity.ok(organizationService.listMyOrganizations(email));
@@ -68,7 +68,7 @@ public class OrganizationController {
      * Updates name, access key and CNPJ. Allowed only for owners and vice owners.
      *
      * @return 200 OK with the updated organization.
-     *         409 CONFLICT if the new access key already belongs to another organization.
+     *         409 CONFLICT if the name, access key or CNPJ belongs to another organization.
      */
     @PutMapping("/{organizationId}")
     public ResponseEntity<?> updateOrganization(
@@ -76,7 +76,7 @@ public class OrganizationController {
             @Valid @RequestBody OrganizationRequestDTO dto,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         try {
             String email = authentication.getName();
@@ -84,6 +84,25 @@ public class OrganizationController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         }
+    }
+
+    /**
+     * POST /api/organizations/{organizationId}/resubmit
+     * Sends a rejected organization back for review, once, with the owner's justification.
+     *
+     * @return 200 OK with the organization (status PENDING).
+     *         403 FORBIDDEN if the user is not the owner.
+     *         409 CONFLICT if the organization is not rejected, the review was already used or the justification is invalid.
+     */
+    @PostMapping("/{organizationId}/resubmit")
+    public ResponseEntity<?> resubmitOrganization(
+            @PathVariable Long organizationId,
+            @Valid @RequestBody com.spotmeet.backend.dto.OrganizationResubmitDTO body,
+            Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
+        }
+        return ResponseEntity.ok(organizationService.resubmitOrganization(organizationId, authentication.getName(), body.getJustification()));
     }
 
     /**
@@ -96,10 +115,10 @@ public class OrganizationController {
             @PathVariable Long organizationId,
             Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuario nao autenticado.");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Usuário não autenticado.");
         }
         String email = authentication.getName();
         organizationService.deleteOrganization(organizationId, email);
-        return ResponseEntity.ok("Organizacao excluida com sucesso.");
+        return ResponseEntity.ok("Organização excluída com sucesso.");
     }
 }

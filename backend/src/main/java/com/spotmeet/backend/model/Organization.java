@@ -8,13 +8,32 @@ import java.time.LocalDateTime;
  *
  * Business rules:
  *   - The access key is created by the owner and must start with '#' (e.g. "#Minerva").
- *   - Lookup by access key is strictly case-sensitive.
+ *   - Name and access key uniqueness and key lookup ignore case and extra whitespace.
  *   - 'approved' is false by default; a SysAdmin must approve before use.
  *   - The owner is the first ORG_OWNER and is also registered in OrganizationMember.
  */
 @Entity
 @Table(name = "organizations")
 public class Organization {
+
+    @Column(name = "moderation_reason", length = 500)
+    private String moderationReason;
+
+    public String getModerationReason() { return moderationReason; }
+    public void setModerationReason(String moderationReason) { this.moderationReason = moderationReason; }
+
+    /** Owner's justification when a rejected organization is sent back for review. Only one review is allowed. */
+    @Column(name = "resubmission_note", length = 500)
+    private String resubmissionNote;
+
+    /** When the single review was requested; null while it has not been used. */
+    @Column(name = "resubmitted_at")
+    private LocalDateTime resubmittedAt;
+
+    public String getResubmissionNote() { return resubmissionNote; }
+    public void setResubmissionNote(String resubmissionNote) { this.resubmissionNote = resubmissionNote; }
+    public LocalDateTime getResubmittedAt() { return resubmittedAt; }
+    public void setResubmittedAt(LocalDateTime resubmittedAt) { this.resubmittedAt = resubmittedAt; }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -26,7 +45,7 @@ public class Organization {
     /**
      * Unique access key of the organization.
      * Format: '#' followed by 2-50 alphanumeric characters, '_' or '-'.
-     * Stored exactly as provided; PostgreSQL comparison is case-sensitive.
+     * Case is preserved. The service enforces normalized uniqueness alongside the existing index.
      */
     @Column(name = "access_key", unique = true, nullable = false, length = 100)
     private String accessKey;
