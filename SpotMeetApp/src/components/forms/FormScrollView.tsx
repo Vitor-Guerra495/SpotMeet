@@ -1,12 +1,12 @@
 import React, { useEffect, useRef } from 'react';
-import { Keyboard, KeyboardAvoidingView, ScrollView, ScrollViewProps } from 'react-native';
+import { Keyboard, KeyboardAvoidingView, ScrollView, ScrollViewProps, type ScrollViewInstance } from 'react-native';
 import { AuthInputFocus } from '../auth/AuthInputFocus';
 
 interface FormScrollViewProps extends ScrollViewProps { footer?: React.ReactNode; scrollableFooter?: boolean; }
 
 export default function FormScrollView({ children, footer, scrollableFooter = false, style, ...props }: FormScrollViewProps) {
-  const scroll = useRef<ScrollView>(null);
-  const footerScroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
+  const footerScroll = useRef<ScrollViewInstance>(null);
   const inputScroll = useRef(scroll);
   const target = useRef<number | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -15,9 +15,14 @@ export default function FormScrollView({ children, footer, scrollableFooter = fa
     target.current = input;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      if (target.current !== null) {
-        inputScroll.current.current?.scrollResponderScrollNativeHandleToKeyboard(target.current, 16, true);
-      }
+      const view = inputScroll.current.current;
+      const field = target.current;
+      if (!view || field === null) return;
+      // React Native places the field as if the list started at the top of the screen. Inside a sheet the list
+      // starts lower, so its top is added; without it the field ends up behind the keyboard.
+      view.measureInWindow((_x, top) => {
+        if (target.current === field) view.scrollResponderScrollNativeHandleToKeyboard(field, 16 + Math.max(0, top), true);
+      });
     }, 150);
   };
 

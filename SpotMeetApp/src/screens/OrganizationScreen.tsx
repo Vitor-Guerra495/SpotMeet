@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Modal, RefreshControl } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Modal, RefreshControl, BackHandler } from 'react-native';
 import { Controller, useForm, useWatch, type UseFormReturn } from 'react-hook-form';
 import { Ionicons, type IoniconsIconName } from '@react-native-vector-icons/ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,21 +19,23 @@ import FormField from '../components/forms/FormField';
 import FormButton from '../components/forms/FormButton';
 import FormScrollView from '../components/forms/FormScrollView';
 import PresidentSheet from '../components/meetings/PresidentSheet';
+import UserAvatar from '../components/profile/UserAvatar';
 
 type OrganizationRole = 'ORG_OWNER' | 'ORG_VICE_OWNER' | 'ORG_SUBOWNER' | 'MEMBER';
-interface MyOrganization { id: number; name: string; accessKey: string; ownerId: number; ownerName: string; myRole?: OrganizationRole; approved?: boolean; status?: string; moderationReason?: string | null; resubmitted?: boolean; }
-interface Member { userId: number; name: string; email: string; role: OrganizationRole; }
-interface OrganizationAccessRequest { id: number; userName: string; userEmail: string; }
+interface MyOrganization { id: number; name: string; accessKey: string; ownerId: number; ownerName: string; myRole?: OrganizationRole; approved?: boolean; status?: string; moderationReason?: string | null; resubmitted?: boolean; listed?: boolean; }
+interface Member { userId: number; name: string; email: string; role: OrganizationRole; availabilityStatus?: string; }
+interface OrganizationAccessRequest { id: number; userId?: number; userName: string; userEmail: string; }
 interface CommitteeJoinRequest extends OrganizationAccessRequest { committeeId: number; committeeName: string; }
 interface Committee { id: number; name: string; description: string | null; totalActiveMembers: number; totalPending: number; presidentName?: string | null; }
 interface UserCommitteeLink { committeeId: number; committeeName: string; description: string | null; linked: boolean; membershipStatus: string | null; }
 interface PendingInvitation { id: number; committeeId: number; committeeName: string; organizationId: number; invitedByName: string; }
 interface OrganizationInvitation { id: number; organizationId: number; organizationName: string; invitedByName: string; expiresAt: string; }
 interface OrganizationPreview { name: string; ownerName: string; }
-interface InviteCandidate { name: string; email: string; }
+interface ListedOrganization { id: number; name: string; accessKey: string; ownerName: string; memberCount: number; }
+interface InviteCandidate { userId?: number; name: string; email: string; }
 type Tab = 'mine' | 'join' | 'create' | 'manage' | 'committees';
 type Page = 'overview' | 'members' | 'requests' | 'committees' | 'invitations';
-type Sheet = 'organization' | 'committee' | 'invite' | 'transfer' | 'member' | 'resubmit' | null;
+type Sheet = 'organization' | 'committee' | 'invite' | 'committeeInvite' | 'transfer' | 'member' | 'resubmit' | null;
 type Fields = { name: string; accessKey: string; description: string; email: string; };
 const EMPTY_FORM: Fields = { name: '', accessKey: '', description: '', email: '' };
 const ROLE_LABELS: Record<OrganizationRole, string> = { ORG_OWNER: 'Dono', ORG_VICE_OWNER: 'Vice-líder', ORG_SUBOWNER: 'Subdono', MEMBER: 'Membro' };
@@ -120,6 +122,16 @@ export default function OrganizationScreen() {
   const [candidatesError, setCandidatesError] = useState('');
   const [candidatesLoading, setCandidatesLoading] = useState(false);
   const pickedEmail = useRef('');
+  const [inviteCommittee, setInviteCommittee] = useState<Committee | null>(null);
+  const [committeeCandidates, setCommitteeCandidates] = useState<InviteCandidate[] | null>(null);
+  const [committeeCandidatesError, setCommitteeCandidatesError] = useState('');
+  const [candidateSearch, setCandidateSearch] = useState('');
+  const [candidateReload, setCandidateReload] = useState(0);
+  const [createListed, setCreateListed] = useState(true);
+  const [editListed, setEditListed] = useState(true);
+  const [listedOrgs, setListedOrgs] = useState<ListedOrganization[] | null>(null);
+  const [listedError, setListedError] = useState('');
+  const [listedSearch, setListedSearch] = useState('');
   const orgsRequest = useRefreshRequest<MyOrganization | null>();
   const invitationsRequest = useRefreshRequest();
   const organizationScope = `${selectedOrg?.id ?? ''}:${selectedOrg?.myRole ?? ''}`;
@@ -203,6 +215,51 @@ export default function OrganizationScreen() {
     }, 400);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [sheet, selectedOrg?.id, token, inviteDraft]);
+  // Approved organizations that chose to appear in the Entrar tab; tapping one fills its key.
+  useEffect(() => {
+    setListedOrgs(null); setListedError('');
+    if (tab !== 'join' || !token) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/organizations/listed`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        const text = await res.text();
+        if (controller.signal.aborted) return;
+        if (!res.ok) { setListedError(errorMessage(res, text, 'Não foi possível carregar a lista de organizações.')); setListedOrgs([]); return; }
+        const data: unknown = JSON.parse(text);
+        setListedOrgs(Array.isArray(data) ? data.filter((row): row is ListedOrganization => record(row) && id(row.id) && typeof row.name === 'string'
+          && typeof row.accessKey === 'string' && typeof row.ownerName === 'string' && typeof row.memberCount === 'number') : []);
+      } catch {
+        if (!controller.signal.aborted) { setListedError('Não foi possível carregar a lista de organizações.'); setListedOrgs([]); }
+      }
+    })();
+    return () => controller.abort();
+  }, [tab, token]);
+  const pickListed = (org: ListedOrganization) => {
+    if (!currentView() || writeLock.current) return;
+    joinForm.setValue('accessKey', normalizeAccessKey(org.accessKey), { shouldValidate: true });
+    setJoinMessage(''); setFormError('');
+  };
+
+  // Organization members who can still be invited to the committee opened in "Convidar integrantes".
+  useEffect(() => {
+    setCommitteeCandidates(null); setCommitteeCandidatesError('');
+    if (sheet !== 'committeeInvite' || !inviteCommittee || !token) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/committees/${inviteCommittee.id}/invitations/candidates`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        const text = await res.text();
+        if (controller.signal.aborted) return;
+        if (!res.ok) { setCommitteeCandidatesError(errorMessage(res, text, 'Não foi possível buscar os integrantes.')); setCommitteeCandidates([]); return; }
+        const data: unknown = JSON.parse(text);
+        setCommitteeCandidates(Array.isArray(data) ? data.filter((row): row is InviteCandidate => record(row) && id(row.userId) && typeof row.name === 'string' && typeof row.email === 'string') : []);
+      } catch {
+        if (!controller.signal.aborted) { setCommitteeCandidatesError('Não foi possível buscar os integrantes.'); setCommitteeCandidates([]); }
+      }
+    })();
+    return () => controller.abort();
+  }, [sheet, inviteCommittee?.id, token, candidateReload]);
   const pickCandidate = (candidate: InviteCandidate) => {
     pickedEmail.current = candidate.email;
     sheetForm.setValue('email', candidate.email, { shouldValidate: true });
@@ -211,6 +268,7 @@ export default function OrganizationScreen() {
   // Drafts of "Entrar" and "Criar" do not survive leaving the tab or the screen.
   const clearDrafts = useCallback(() => {
     joinForm.reset({ ...EMPTY_FORM }); createForm.reset({ ...EMPTY_FORM }); setJoinMessage(''); setFormError('');
+    setCreateListed(true); setListedSearch('');
   }, [joinForm.reset, createForm.reset]);
   useFocusEffect(useCallback(() => clearDrafts, [clearDrafts]));
 
@@ -395,11 +453,11 @@ export default function OrganizationScreen() {
       setJoinMessage('Solicitação enviada. Aguarde a aprovação dos responsáveis.');
     }
   };
-  const handleCreate = createForm.handleSubmit(data => mutate('/organizations', 'POST', { name: normalizeOrganizationName(data.name), accessKey: normalizeAccessKey(data.accessKey) },
-    'Organização criada. Aguarde a avaliação do administrador do sistema.', () => { createForm.reset({ ...EMPTY_FORM }); setTab('mine'); }, createForm));
+  const handleCreate = createForm.handleSubmit(data => mutate('/organizations', 'POST', { name: normalizeOrganizationName(data.name), accessKey: normalizeAccessKey(data.accessKey), listed: createListed },
+    'Organização criada. Aguarde a avaliação do administrador do sistema.', () => { createForm.reset({ ...EMPTY_FORM }); setCreateListed(true); setTab('mine'); }, createForm));
   const handleSheetSave = sheetForm.handleSubmit(data => {
     if (!selectedOrg) return;
-    if (sheet === 'organization' && isOwnerOrVice) return mutate(`/organizations/${selectedOrg.id}`, 'PUT', { name: normalizeOrganizationName(data.name), accessKey: normalizeAccessKey(data.accessKey) },
+    if (sheet === 'organization' && isOwnerOrVice) return mutate(`/organizations/${selectedOrg.id}`, 'PUT', { name: normalizeOrganizationName(data.name), accessKey: normalizeAccessKey(data.accessKey), listed: editListed },
       'Organização atualizada. Uma chave alterada passa a valer para novas solicitações.', () => setSheet(null), sheetForm);
     if (sheet === 'committee' && isLeader) return mutate(editingCommittee ? `/committees/${editingCommittee.id}` : `/organizations/${selectedOrg.id}/committees`, editingCommittee ? 'PUT' : 'POST',
       { name: normalizeOrganizationName(data.name), description: data.description.trim() || null }, editingCommittee ? 'Comissão atualizada.' : 'Comissão criada.', () => setSheet(null), sheetForm);
@@ -452,6 +510,13 @@ export default function OrganizationScreen() {
     if (!currentView() || writeLock.current || confirmLock.current) return;
     setSelectedMember(member); openSheet('member');
   };
+  const openCommitteeInvite = (committee: Committee) => {
+    if (!currentView() || writeLock.current || confirmLock.current) return;
+    setInviteCommittee(committee); setCandidateSearch(''); openSheet('committeeInvite');
+  };
+  const inviteToCommittee = (committee: Committee, candidate: InviteCandidate) => mutate(`/committees/${committee.id}/members/${candidate.userId}`, 'POST', undefined,
+    data => record(data) && data.status === 'ACTIVE' ? 'Integrante aprovado após seu pedido de ingresso.' : 'Convite enviado. Aguarde o aceite do integrante.',
+    () => setCandidateReload(value => value + 1));
   const deleteCommittee = (committee: Committee) => {
     if (!isOwnerOrVice) return;
     confirm('Excluir comissão', `Excluir ${committee.name} e todos os seus vínculos?`, 'Excluir', () => mutate(`/committees/${committee.id}`, 'DELETE', undefined, 'Comissão excluída.'), true);
@@ -463,6 +528,7 @@ export default function OrganizationScreen() {
         prefix={name === 'accessKey' ? '#' : undefined} value={name === 'accessKey' ? input.value.replace(/^#/, '') : input.value}
         onChangeText={value => { if (currentView() && !writeLock.current) { input.onChange(name === 'accessKey' ? normalizeAccessKey(value) : value); setFormError(''); setJoinMessage(''); } }}
         onBlur={() => { if (currentView() && !writeLock.current) input.onBlur(); }} ref={input.ref} error={fieldState.error?.message} editable={!busy} multiline={multiline}
+        maxLength={multiline ? 500 : undefined} showCount={multiline}
         autoCorrect={false} autoCapitalize={name === 'accessKey' || name === 'email' ? 'none' : 'sentences'}
         style={multiline ? { minHeight: 90, textAlignVertical: 'top' } : undefined} />}
     />
@@ -474,6 +540,8 @@ export default function OrganizationScreen() {
       : /^(Aprovar|Rejeitar) (pedido|ingresso)/.test(label) ? label.split(' ')[0]
         : /^Transferir para/.test(label) ? 'Transferir'
           : /^Presidente de/.test(label) ? 'Presidente'
+          : /^Convidar integrantes para/.test(label) ? 'Convidar integrantes'
+          : /^Convidar .+ para /.test(label) ? 'Convidar'
           : /^Solicitar entrada em/.test(label) ? 'Solicitar ingresso'
             : /^Remover vínculo com/.test(label) ? 'Remover vínculo' : label;
     const tint = danger ? colors.danger : primary ? '#FFFFFF' : colors.isDark ? '#ADB5EF' : colors.primary;
@@ -484,7 +552,20 @@ export default function OrganizationScreen() {
     </TouchableOpacity>
     );
   };
+  const listedOption = (value: boolean, onChange: (next: boolean) => void) => <>
+    <TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: value, disabled: busy }} disabled={busy} style={[styles.row, styles.option]}
+      onPress={() => { if (currentView() && !writeLock.current) onChange(!value); }}>
+      <Ionicons name={value ? 'checkbox' : 'square-outline'} size={26} color={value ? colors.primary : colors.subtext} />
+      <Text style={[styles.optionText, styles.flex]}>Mostrar na lista de organizações</Text>
+    </TouchableOpacity>
+    <Text style={styles.hint}>{value ? 'Depois de aprovada, aparece na aba Entrar de quem procura uma organização. Para entrar, a pessoa ainda precisa da aprovação dos responsáveis.'
+      : 'Não aparece na lista. Só encontra a organização quem souber a chave.'}</Text>
+  </>;
   const avatar = (name: string) => <View style={styles.avatar}><Text style={styles.avatarText}>{name.trim().slice(0, 1).toUpperCase()}</Text></View>;
+  const person = (name: string, userId?: number) => <UserAvatar userId={userId} name={name} style={styles.avatar} textStyle={styles.avatarText} />;
+  // The presence status chosen in Ajustes, shown to the other members.
+  const presenceOf = (member: Member) => member.availabilityStatus === 'AWAY' ? ['Ausente', colors.warning]
+    : member.availabilityStatus === 'BUSY' ? ['Ocupado', colors.danger] : ['Presente', colors.success];
   const status = (org: MyOrganization) => org.status === 'BLOCKED' ? ['Bloqueada', colors.danger] : org.status === 'REJECTED' ? ['Rejeitada', colors.danger] : org.approved === true ? ['Aprovada', colors.success] : ['Pendente', colors.warning];
   const badge = (text: string, color = colors.primary) => <View style={[styles.badge, { borderColor: color }]}><Text style={[styles.badgeText, { color }]}>{text}</Text></View>;
   const empty = (text: string) => <View style={styles.empty}><Ionicons name="folder-open-outline" size={28} color={colors.subtext} /><Text style={styles.subtitle}>{text}</Text></View>;
@@ -495,6 +576,7 @@ export default function OrganizationScreen() {
   const back = () => { if (currentView() && !writeLock.current && !confirmLock.current) { setPage('overview'); if (tab === 'committees') setTab('mine'); setFormError(''); } };
   const showPage = (next: Page) => { if (currentView() && !writeLock.current && !confirmLock.current) { setPage(next); setFormError(''); } };
   const requestCount = pendingOrgRequests.length + committeeJoinRequests.length;
+  const visibleListed = (listedOrgs ?? []).filter(org => matchesSearch(listedSearch, org.name));
   const visibleOrgs = myOrgs.filter(org => matchesSearch(search, org.name, org.accessKey, org.ownerName));
   const visibleMembers = members.filter(member => (memberRole === 'ALL' || member.role === memberRole) && matchesSearch(memberSearch, member.name, member.email));
 
@@ -551,7 +633,7 @@ export default function OrganizationScreen() {
       <Ionicons name={(['people-outline', 'mail-outline', 'layers-outline'] as const)[index]} size={25} color={colors.primary} />
       <Text style={styles.tileLabel}>{['Membros', 'Solicitações', 'Comissões'][index]}</Text><Text style={styles.tileCount}>{detailsLoaded ? [members.length, requestCount, committees.length][index] : '...'}</Text>
     </TouchableOpacity>)}</View>
-    {isOwnerOrVice && <View style={styles.actions}>{action('Editar organização', () => openSheet('organization', { ...EMPTY_FORM, name: selectedOrg.name, accessKey: selectedOrg.accessKey }), 'create-outline')}
+    {isOwnerOrVice && <View style={styles.actions}>{action('Editar organização', () => { setEditListed(selectedOrg.listed !== false); openSheet('organization', { ...EMPTY_FORM, name: selectedOrg.name, accessKey: selectedOrg.accessKey }); }, 'create-outline')}
       {action('Excluir organização', deleteOrganization, 'trash-outline', true)}</View>}
     {isOwnerOrVice && action('Convidar para organização', () => { if (!warnIfNotApproved()) openSheet('invite'); }, 'person-add-outline')}
     {isOwner && selectedOrg.approved === true && action('Transferir liderança', () => openSheet('transfer'), 'swap-horizontal-outline')}
@@ -567,21 +649,24 @@ export default function OrganizationScreen() {
         <Text style={[styles.filterText, memberRole === role && { color: '#FFFFFF' }]}>{role === 'ALL' ? 'Todos' : ROLE_LABELS[role]}</Text>
       </TouchableOpacity>)}
     </View></ScrollView>
-    {visibleMembers.map(member => <TouchableOpacity key={member.userId} accessibilityRole="button" accessibilityLabel={`Ações de ${member.name}`} disabled={busy} style={styles.card}
-      onPress={() => openMember(member)}><View style={styles.row}>{avatar(member.name)}<View style={styles.flex}>
-        <Text style={styles.cardTitle}>{member.name}</Text><Text style={styles.subtitle}>{member.email}</Text>{badge(ROLE_LABELS[member.role] ?? 'Membro')}</View>
-        <Ionicons name="ellipsis-horizontal" size={22} color={colors.subtext} /></View></TouchableOpacity>)}
+    {visibleMembers.map(member => { const [presence, presenceColor] = presenceOf(member); return <TouchableOpacity key={member.userId} accessibilityRole="button"
+      accessibilityLabel={`Ações de ${member.name}`} accessibilityHint={`Status ${presence}`} disabled={busy} style={styles.card}
+      onPress={() => openMember(member)}><View style={styles.row}>{person(member.name, member.userId)}<View style={styles.flex}>
+        <Text style={styles.cardTitle}>{member.name}</Text><Text style={styles.subtitle}>{member.email}</Text>
+        <View style={styles.presence}><View style={[styles.presenceDot, { backgroundColor: presenceColor }]} /><Text style={styles.subtitle}>{presence}</Text></View>
+        {badge(ROLE_LABELS[member.role] ?? 'Membro')}</View>
+        <Ionicons name="ellipsis-horizontal" size={22} color={colors.subtext} /></View></TouchableOpacity>; })}
     {detailsLoaded && !visibleMembers.length && empty('Nenhum integrante corresponde ao filtro.')}
   </>;
   const renderRequests = () => <>
     {pendingOrgRequests.length > 0 && <Text style={styles.sectionLabel}>ENTRADA NA ORGANIZAÇÃO</Text>}
-    {pendingOrgRequests.map(request => <View key={`org-${request.id}`} style={styles.card}><View style={styles.row}>{avatar(request.userName)}<View style={styles.flex}>
+    {pendingOrgRequests.map(request => <View key={`org-${request.id}`} style={styles.card}><View style={styles.row}>{person(request.userName, request.userId)}<View style={styles.flex}>
       <Text style={styles.cardTitle}>{request.userName}</Text><Text style={styles.subtitle}>{request.userEmail}</Text></View></View>
       <View style={styles.actions}>{action(`Rejeitar pedido de ${request.userName}`, () => mutate(`/access-requests/${request.id}/reject`, 'POST', undefined, 'Solicitação rejeitada.'), 'close-outline', true)}
         {action(`Aprovar pedido de ${request.userName}`, () => mutate(`/access-requests/${request.id}/approve`, 'POST', undefined, 'Integrante aprovado.'), 'checkmark-outline')}</View></View>)}
     {committeeJoinRequests.length > 0 && <Text style={styles.sectionLabel}>INGRESSO EM COMISSÃO</Text>}
-    {committeeJoinRequests.map(request => <View key={`committee-${request.id}`} style={styles.card}><View style={styles.row}>{avatar(request.userName)}<View style={styles.flex}>
-      <Text style={styles.cardTitle}>{request.userName}</Text><Text style={styles.subtitle}>{request.committeeName}</Text></View></View>
+    {committeeJoinRequests.map(request => <View key={`committee-${request.id}`} style={styles.card}><View style={styles.row}>{person(request.userName, request.userId)}<View style={styles.flex}>
+      <Text style={styles.cardTitle}>{request.userName}</Text><Text style={styles.subtitle}>Quer entrar na comissão {request.committeeName}</Text></View></View>
       <View style={styles.actions}>{action(`Rejeitar ingresso de ${request.userName}`, () => mutate(`/committees/join-requests/${request.id}/respond?approve=false`, 'POST', undefined, 'Solicitação rejeitada.'), 'close-outline', true)}
         {action(`Aprovar ingresso de ${request.userName}`, () => mutate(`/committees/join-requests/${request.id}/respond?approve=true`, 'POST', undefined, 'Integrante aprovado na comissão.'), 'checkmark-outline')}</View></View>)}
     {detailsLoaded && !requestCount && empty('Nenhuma solicitação pendente para seu papel.')}
@@ -601,6 +686,7 @@ export default function OrganizationScreen() {
           {link?.membershipStatus === 'PENDING_LEADER_APPROVAL' && badge('Seu pedido está pendente', colors.warning)}</View>
         {isLeader ? <View style={styles.actions}>{action(`Editar ${committee.name}`, () => editCommittee(committee), 'create-outline')}
           {action(`Presidente de ${committee.name}`, () => { if (currentView() && !writeLock.current && !confirmLock.current) { cancelReads(); setPresidentCommittee(committee); } }, 'ribbon-outline')}
+          {action(`Convidar integrantes para ${committee.name}`, () => openCommitteeInvite(committee), 'person-add-outline')}
           {isOwnerOrVice && action(`Excluir ${committee.name}`, () => deleteCommittee(committee), 'trash-outline', true)}</View>
           : invitation ? <View style={styles.actions}>{action(`Recusar convite de ${committee.name}`, () => respondCommitteeInvitation(committee.id, false), 'close-outline', true)}
               {action(`Aceitar convite de ${committee.name}`, () => respondCommitteeInvitation(committee.id, true), 'checkmark-outline')}</View>
@@ -613,10 +699,13 @@ export default function OrganizationScreen() {
   const canDemote = selectedMember && ((isOwner && ['ORG_VICE_OWNER', 'ORG_SUBOWNER'].includes(selectedMember.role)) || (isVice && selectedMember.role === 'ORG_SUBOWNER'));
   const canRemove = selectedMember && selectedMember.userId !== authUserId && selectedMember.role !== 'ORG_OWNER'
     && (isOwner || (isVice && selectedMember.role !== 'ORG_VICE_OWNER') || (isSubowner && selectedMember.role === 'MEMBER'));
-  const sheetTitle = sheet === 'organization' ? 'Editar organização' : sheet === 'committee' ? editingCommittee ? 'Editar comissão' : 'Nova comissão' : sheet === 'invite' ? 'Convidar integrante' : sheet === 'transfer' ? 'Transferir liderança' : sheet === 'resubmit' ? 'Reenviar para avaliação' : selectedMember?.name ?? 'Integrante';
+  const visibleCandidates = (committeeCandidates ?? []).filter(candidate => matchesSearch(candidateSearch, candidate.name, candidate.email));
+  const sheetTitle = sheet === 'organization' ? 'Editar organização' : sheet === 'committee' ? editingCommittee ? 'Editar comissão' : 'Nova comissão' : sheet === 'invite' ? 'Convidar integrante'
+    : sheet === 'committeeInvite' ? `Convidar para ${inviteCommittee?.name ?? 'a comissão'}` : sheet === 'transfer' ? 'Transferir liderança' : sheet === 'resubmit' ? 'Reenviar para avaliação' : selectedMember?.name ?? 'Integrante';
   const renderSheet = () => <>
     {sheet === 'organization' && <>{field(sheetForm, 'name', 'Nome da organização', 'Digite o nome da organização', validateOrganizationName, false, 'business-outline')}
-      {field(sheetForm, 'accessKey', 'Chave de acesso', 'ChaveDaOrganizacao', validateAccessKey, false, 'key-outline')}<Text style={styles.hint}>O # é automático. Maiúsculas e minúsculas são equivalentes. Ao alterar, a chave anterior deixa de valer para novos pedidos.</Text></>}
+      {field(sheetForm, 'accessKey', 'Chave de acesso', 'ChaveDaOrganizacao', validateAccessKey, false, 'key-outline')}<Text style={styles.hint}>O # é automático. Maiúsculas e minúsculas são equivalentes. Ao alterar, a chave anterior deixa de valer para novos pedidos.</Text>
+      {listedOption(editListed, setEditListed)}</>}
     {sheet === 'committee' && <>{field(sheetForm, 'name', 'Nome da comissão', 'Ex: Comissão de Eventos 2', validateCommitteeName, false, 'layers-outline')}
       {field(sheetForm, 'description', 'Descrição (opcional)', 'Finalidade desta comissão', undefined, true)}<Text style={styles.hint}>Nome único nesta organização. Letras, espaços, números, '_' e '-'.</Text></>}
     {sheet === 'invite' && <><Text style={styles.subtitle}>Procure uma pessoa já cadastrada pelo nome ou e-mail e toque nela. Ela decide se aceita ou recusa em até 24 horas.</Text>
@@ -624,9 +713,16 @@ export default function OrganizationScreen() {
       {candidatesLoading && <ActivityIndicator color={colors.primary} accessibilityLabel="Buscando pessoas" />}
       {error(candidatesError)}
       {candidates.map(candidate => <TouchableOpacity key={candidate.email} accessibilityRole="button" accessibilityLabel={`Escolher ${candidate.name}`} style={styles.card} onPress={() => pickCandidate(candidate)}>
-        <View style={styles.row}>{avatar(candidate.name)}<View style={styles.flex}><Text style={styles.cardTitle}>{candidate.name}</Text><Text style={styles.subtitle}>{candidate.email}</Text></View></View></TouchableOpacity>)}
+        <View style={styles.row}>{person(candidate.name, candidate.userId)}<View style={styles.flex}><Text style={styles.cardTitle}>{candidate.name}</Text><Text style={styles.subtitle}>{candidate.email}</Text></View></View></TouchableOpacity>)}
       {!candidatesLoading && !candidatesError && !candidates.length && (inviteDraft ?? '').trim().length >= 3 && (inviteDraft ?? '').trim() !== pickedEmail.current
         && <Text style={styles.hint}>Nenhuma pessoa encontrada. Confira o nome ou digite o e-mail completo.</Text>}</>}
+    {sheet === 'committeeInvite' && inviteCommittee && <><Text style={styles.subtitle}>Integrantes da organização que ainda não participam da comissão. Quem já foi convidado ou pediu para entrar não aparece aqui; os pedidos ficam em Solicitações.</Text>
+      <FormField label="Buscar integrante" placeholder="Nome ou e-mail" icon="search-outline" value={candidateSearch} onChangeText={value => { if (currentView()) setCandidateSearch(value); }} />
+      {error(committeeCandidatesError)}
+      {committeeCandidates === null ? <ActivityIndicator color={colors.primary} accessibilityLabel="Carregando integrantes" /> : visibleCandidates.map(candidate => <View key={candidate.userId ?? candidate.email} style={styles.card}>
+        <View style={styles.row}>{person(candidate.name, candidate.userId)}<View style={styles.flex}><Text style={styles.cardTitle}>{candidate.name}</Text><Text style={styles.subtitle}>{candidate.email}</Text></View></View>
+        <View style={styles.actions}>{action(`Convidar ${candidate.name} para ${inviteCommittee.name}`, () => inviteToCommittee(inviteCommittee, candidate), 'person-add-outline')}</View></View>)}
+      {committeeCandidates !== null && !committeeCandidatesError && !visibleCandidates.length && empty(candidateSearch.trim() ? 'Nenhum integrante corresponde à busca.' : 'Todos os integrantes da organização já participam, foram convidados ou pediram para entrar.')}</>}
     {sheet === 'transfer' && <><Text style={styles.subtitle}>Escolha um integrante atual. Depois da transferência, você será membro comum.</Text>
       {members.filter(member => member.userId !== authUserId && member.role !== 'ORG_OWNER').map(member => <View key={member.userId} style={styles.card}>
         <Text style={styles.cardTitle}>{member.name}</Text><Text style={styles.subtitle}>{member.email}</Text>
@@ -643,6 +739,18 @@ export default function OrganizationScreen() {
   </>;
   const title = page === 'invitations' ? 'Convites' : tab === 'committees' || page === 'committees' ? 'Comissões' : page === 'members' ? 'Membros' : page === 'requests' ? 'Solicitações' : 'Organizações';
   const nested = page !== 'overview' || tab === 'committees';
+  // The back button of the phone does what the arrow on the screen does; Entrar, Criar and Gerenciar go back
+  // to Minhas, and only Minhas leaves the tab.
+  const backRef = useRef<() => boolean>(() => false);
+  backRef.current = () => {
+    if (nested) { back(); return true; }
+    if (tab !== 'mine') { switchTab('mine'); return true; }
+    return false;
+  };
+  useFocusEffect(useCallback(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => backRef.current());
+    return () => subscription.remove();
+  }, []));
   const footer = tab === 'join' ? <View style={styles.footer}>{error(formError)}
     <FormButton label="Solicitar acesso" icon="paper-plane-outline" onPress={handleJoin} loading={busy} />
   </View> : tab === 'create' ? <View style={styles.footer}>{error(formError)}<FormButton label="Criar organização" icon="add-circle-outline" onPress={handleCreate} loading={busy} /></View> : undefined;
@@ -672,20 +780,33 @@ export default function OrganizationScreen() {
       {!footer && error(formError)}
       {page === 'invitations' ? renderInvitations() : tab === 'mine' ? renderMine() : tab === 'join' ? <>
         <Text style={styles.cardTitle}>Entrar em uma organização</Text>
-        <Text style={styles.subtitle}>Informe a chave e aguarde a aprovação dos responsáveis.</Text>
+        <Text style={styles.subtitle}>Informe a chave ou escolha uma organização da lista. Depois, aguarde a aprovação dos responsáveis.</Text>
         {field(joinForm, 'accessKey', 'Chave da organização', 'NomeDaOrganizacao', validateAccessKey, false, 'key-outline')}
         {previewLoading && <ActivityIndicator color={colors.primary} accessibilityLabel="Consultando organização" />}
         {preview && <View style={styles.card}><View style={styles.row}>{avatar(preview.name)}<View style={styles.flex}>
           <Text style={styles.cardTitle}>{preview.name}</Text><Text style={styles.subtitle}>Responsável: {preview.ownerName}</Text></View></View></View>}
         {error(previewError)}
         {joinMessage ? <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: colors.success }]}>{joinMessage}</Text> : null}
+        <Text style={styles.sectionLabel}>ORGANIZAÇÕES NA LISTA</Text>
+        <FormField label="Buscar organização" placeholder="Nome da organização" icon="search-outline" value={listedSearch} onChangeText={value => { if (currentView()) setListedSearch(value); }} />
+        {error(listedError)}
+        {listedOrgs === null ? <ActivityIndicator color={colors.primary} accessibilityLabel="Carregando organizações" /> : visibleListed.map(org => {
+          const picked = normalizeAccessKey(joinDraft.accessKey ?? '').toLowerCase() === org.accessKey.toLowerCase();
+          return <TouchableOpacity key={org.id} accessibilityRole="button" accessibilityLabel={`Escolher ${org.name}`} accessibilityState={{ selected: picked }} disabled={busy}
+            style={[styles.card, picked && { borderColor: colors.primary }]} onPress={() => pickListed(org)}>
+            <View style={styles.row}>{avatar(org.name)}<View style={styles.flex}><Text style={styles.cardTitle}>{org.name}</Text>
+              <Text style={styles.subtitle}>Responsável: {org.ownerName}</Text>
+              <Text style={styles.hint}>{org.accessKey} · {org.memberCount} {org.memberCount === 1 ? 'integrante' : 'integrantes'}</Text></View>
+              {picked && <Ionicons name="checkmark-circle" size={24} color={colors.primary} />}</View>
+          </TouchableOpacity>;
+        })}
+        {listedOrgs !== null && !listedError && !visibleListed.length && empty(listedSearch.trim() ? 'Nenhuma organização corresponde à busca.' : 'Nenhuma organização na lista no momento. Peça a chave ao responsável.')}
       </> : tab === 'create' ? <>
         {field(createForm, 'name', 'Nome da organização', 'Digite o nome da organização', validateOrganizationName, false, 'business-outline')}
         {field(createForm, 'accessKey', 'Chave de acesso', 'NomeSemEspacos', validateAccessKey, false, 'key-outline')}
         <Text style={styles.hint}>O # é adicionado automaticamente à chave.</Text>
         <Text style={styles.hint}>Nome e chave são únicos. Maiúsculas, minúsculas e espaços extras não tornam o nome diferente.</Text>
-        <View style={styles.notice}><Ionicons name="time-outline" size={24} color={colors.warning} /><View style={styles.flex}><Text style={styles.cardTitle}>Em análise pelo administrador</Text>
-          <Text style={styles.subtitle}>Após criar, aguarde a avaliação. Acompanhe o status em Minhas.</Text></View></View>
+        {listedOption(createListed, setCreateListed)}
       </> : page === 'members' ? renderMembers() : page === 'requests' ? renderRequests() : page === 'committees' || tab === 'committees' ? renderCommittees() : renderOverview()}
     </FormScrollView>
     <Modal visible={!!sheet} transparent animationType="slide" onRequestClose={closeSheet}>
@@ -703,10 +824,9 @@ export default function OrganizationScreen() {
           <Text style={styles.cardTitle}>{link.committeeName}</Text><Text style={styles.subtitle}>{link.description ?? ''}</Text>
           {badge(link.membershipStatus === 'ACTIVE' ? 'Membro ativo' : link.membershipStatus === 'PENDING_USER_ACCEPTANCE' ? 'Aguardando aceite' : link.membershipStatus === 'PENDING_LEADER_APPROVAL' ? 'Pedido pendente' : 'Sem vínculo')}
           {isLeader && selectedMember && (link.membershipStatus === 'PENDING_LEADER_APPROVAL' ? <Text style={styles.hint}>Responda ao pedido em Solicitações.</Text> : link.linked && ['ACTIVE', 'PENDING_USER_ACCEPTANCE'].includes(link.membershipStatus ?? '')
-            ? action(`Remover vínculo com ${link.committeeName}`, () => confirm('Remover vínculo', `Remover o vínculo de ${selectedMember.name} com ${link.committeeName}?`, 'Remover',
-                () => mutate(`/committees/${link.committeeId}/members/${selectedMember.userId}`, 'DELETE', undefined, 'Vínculo removido.'), true), 'remove-circle-outline', true)
-            : action(`Convidar para ${link.committeeName}`, () => mutate(`/committees/${link.committeeId}/members/${selectedMember.userId}`, 'POST', undefined,
-                data => record(data) && data.status === 'ACTIVE' ? 'Integrante aprovado após seu pedido de ingresso.' : 'Convite enviado. Aguarde o aceite do integrante.'), 'person-add-outline'))}
+            ? <View style={styles.actions}>{action(`Remover vínculo com ${link.committeeName}`, () => confirm('Remover vínculo', `Remover o vínculo de ${selectedMember.name} com ${link.committeeName}?`, 'Remover',
+                () => mutate(`/committees/${link.committeeId}/members/${selectedMember.userId}`, 'DELETE', undefined, 'Vínculo removido.'), true), 'remove-circle-outline', true)}</View>
+            : <Text style={styles.hint}>Para convidar, abra Comissões e toque em Convidar integrantes.</Text>)}
         </View>)}{!loadingLinks && !memberLinks.length && !formError && empty('Nenhuma comissão cadastrada.')}
           {formError && action('Tentar novamente', () => selectedMember ? loadMemberLinks(selectedMember.userId) : undefined, 'refresh-outline')}
         </FormScrollView></View></View><ToastHost active={linksModalVisible} /><ConfirmationHost active={linksModalVisible} />
@@ -730,6 +850,8 @@ function createStyles(colors: ThemeColors) {
     sectionLabel: { color: colors.subtext, fontSize: 11, lineHeight: 18, fontWeight: '700', letterSpacing: 0.6, marginBottom: 10, marginTop: 8 },
     card: { padding: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, borderRadius: 16, marginBottom: 12 },
     cardTitle: { color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: '700', flexShrink: 1, marginBottom: 3 },
+    presence: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    presenceDot: { width: 9, height: 9, borderRadius: 5 },
     avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.isDark ? '#292D45' : '#EBEDF8', alignItems: 'center', justifyContent: 'center' },
     avatarText: { color: colors.isDark ? '#ADB5EF' : colors.primary, fontSize: 17, fontWeight: '700' },
     badges: { flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 8 }, badge: { alignSelf: 'flex-start', borderWidth: 1, borderRadius: 14, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4 },
@@ -751,8 +873,8 @@ function createStyles(colors: ThemeColors) {
     selector: { flexGrow: 0, maxHeight: 64, paddingHorizontal: 20, marginBottom: 12 },
     filters: { marginBottom: 16 }, filter: { minHeight: 48, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', borderRadius: 24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
     filterActive: { backgroundColor: colors.primary, borderColor: colors.primary }, filterText: { fontSize: 13, lineHeight: 18, fontWeight: '600', color: colors.text },
-    notice: { backgroundColor: colors.card, padding: 16, borderWidth: 1, borderColor: colors.warning, borderRadius: 16, flexDirection: 'row', gap: 12, marginTop: 20 },
     committeeCard: { borderLeftWidth: 3, borderLeftColor: colors.primary },
+    option: { minHeight: 48, marginTop: 8 }, optionText: { color: colors.text, fontSize: 15, lineHeight: 22, fontWeight: '600' },
     overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)', paddingTop: 48 },
     sheet: { height: '85%', maxHeight: 720, backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
     sheetHandle: { width: 38, height: 4, backgroundColor: colors.border, borderRadius: 2, alignSelf: 'center', marginTop: 12 },

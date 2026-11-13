@@ -81,6 +81,18 @@ public class MembershipController {
         }
     }
 
+    /**
+     * GET /api/organizations/listed
+     * Approved organizations that appear in the list of the Entrar tab; tapping one fills its key.
+     */
+    @GetMapping(value = "/api/organizations/listed", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> listedOrganizations(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "Usuário não autenticado."));
+        }
+        return ResponseEntity.ok(membershipService.listListed(authentication.getName()));
+    }
+
     // Leader routes (ORG_OWNER / ORG_VICE_OWNER / SYSADMIN)
 
     @PostMapping("/api/access-requests/{requestId}/approve")

@@ -1,0 +1,143 @@
+@startuml Sequencia_RF02_Google
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF02 (Autenticar Usuário): login com Google
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 180
+skinparam wrapWidth 180
+autonumber "<b>0"
+
+actor "Usuário ou\nAdministrador do sistema" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AuthScreen" as Tela
+participant ":googleSignIn" as GoogleApp
+participant ":GoogleSignin" as Native
+participant ":AuthContext" as Ctx
+participant ":BiometricContext" as Bio
+end box
+box "API (backend)" #F6FFF4
+participant ":AuthController" as Ctrl
+participant ":GoogleSignInService" as GoogleSvc
+participant ":GoogleKeysClient" as Keys
+participant ":UserRepository" as Repo
+participant ":AuditLogRepository" as AuditRepo
+participant ":BCryptPasswordEncoder" as Enc
+participant ":JwtUtil" as Jwt
+end box
+participant "Google\n(chaves públicas)" as Google
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom o cadastro Google ou confirmação da conta pendente e seu e-mail; não é uma variável local.
+
+
+group Entrar com Google (APK Android)
+  U -> Tela : tocar em "Continuar com Google"
+  Tela -> GoogleApp : signInWithGoogle()
+  alt plataforma diferente de Android
+    GoogleApp --> Tela : GoogleSignInResult (unavailable)
+    Tela --> U : informa que o acesso Google está disponível somente no Android
+  else Android
+    GoogleApp -> GoogleApp : loadGoogleModule()
+    alt módulo nativo ausente
+      GoogleApp --> Tela : GoogleSignInResult (unavailable)
+      Tela --> U : informa que exige o APK instalado, não Expo Go
+    else módulo nativo disponível
+      GoogleApp -> GoogleApp : readServerStatus(apiBase)
+      GoogleApp -> Ctrl : GET /api/auth/google/status
+      Ctrl -> GoogleSvc : isEnabled()
+      GoogleSvc --> Ctrl : boolean
+      opt Google habilitado no servidor
+        Ctrl -> GoogleSvc : getClientId()
+        GoogleSvc --> Ctrl : String
+      end
+      Ctrl --> GoogleApp : 200 {enabled, clientId}
+      alt servidor indisponível ou Google desabilitado
+        GoogleApp --> Tela : GoogleSignInResult (unavailable)
+        Tela --> U : "O login com Google não está disponível neste servidor."
+      else servidor habilitado
+        GoogleApp -> Native : configure({ webClientId: server.clientId })
+        GoogleApp -> Native : hasPlayServices()
+        GoogleApp -> Native : signOut()
+        note right of Native : esquece a conta anterior para sempre abrir a escolha de contas
+        GoogleApp -> Native : signIn()
+        Native --> U : abre a escolha de contas do aparelho
+        U -> Native : escolher a conta ou cancelar
+        Native --> GoogleApp : SignInResponse
+        alt escolha cancelada
+          GoogleApp --> Tela : GoogleSignInResult (cancelled)
+          note right of Tela : mantém o formulário, sem iniciar sessão nem exibir erro
+        else ID token recebido
+          GoogleApp -> Ctrl : POST /api/auth/google (GoogleSignInDTO {idToken})
+          activate Ctrl
+          note right of Ctrl : @Valid recusa idToken vazio ou acima de 4000 caracteres:\nGlobalExceptionHandler responde 400 {message, errors}
+          Ctrl -> GoogleSvc : signIn(dto.getIdToken())
+          activate GoogleSvc
+          GoogleSvc -> GoogleSvc : isEnabled()
+          alt Google desabilitado no servidor
+            GoogleSvc --> Ctrl : IllegalStateException
+            Ctrl --> GoogleApp : 503 {success: false, message}
+            GoogleApp --> Tela : GoogleSignInResult (error)
+            Tela --> U : "Não foi possível entrar com o Google. Tente novamente."
+          else Google habilitado
+            GoogleSvc -> GoogleSvc : verify(idToken)
+            GoogleSvc -> GoogleSvc : keyFor(kid)
+            opt chaves com mais de 1 hora, ou kid desconhecido após 1 minuto
+              GoogleSvc -> Keys : fetch()
+              Keys -> Google : GET https://www.googleapis.com/oauth2/v3/certs
+              Google --> Keys : conjunto de chaves públicas (JWK)
+              Keys --> GoogleSvc : JsonNode
+              note right of GoogleSvc : converte as chaves RSA e atualiza o cache em memória
+            end
+            note right of GoogleSvc : verify usa o JJWT para conferir a assinatura e a validade;\nconfere o emissor Google, audience contendo clientId,\ne-mail não vazio e email_verified verdadeiro
+            alt token recusado
+              GoogleSvc --> Ctrl : IllegalArgumentException
+              Ctrl --> GoogleApp : 401 {success: false, message}
+              GoogleApp --> Tela : GoogleSignInResult (error)
+              Tela --> U : "Não foi possível entrar com o Google. Tente novamente."
+            else identidade aceita
+              GoogleSvc -> GoogleSvc : findOrCreateUser(email, name)
+              GoogleSvc -> Repo : findByEmailForUpdate(email)
+              Repo --> GoogleSvc : Optional<User>
+              alt conta existente e já verificada
+                note right of GoogleSvc : mantém os dados, a senha e o papel existentes
+              else conta existente ainda não verificada
+                GoogleSvc -> Enc : encode(randomSecret())
+                Enc --> GoogleSvc : hash BCrypt
+                note right of GoogleSvc : confirma o e-mail, substitui a senha por segredo aleatório,\napaga o código de verificação e atualiza tokensValidAfter
+                GoogleSvc -> Repo : save(user)
+                Repo --> GoogleSvc : User saved
+                GoogleSvc -> AuditRepo : save(new AuditLog(saved, "USER_REGISTERED_GOOGLE", details))
+              else e-mail novo
+                GoogleSvc -> GoogleSvc : displayName(googleName, email)
+                GoogleSvc -> Enc : encode(randomSecret())
+                Enc --> GoogleSvc : hash BCrypt
+                note right of GoogleSvc : cria USER com e-mail confirmado e tokensValidAfter atual;\nnome curto ou vazio usa a parte local do e-mail, até 100 caracteres;\na recuperação por e-mail permite definir uma senha conhecida depois
+                GoogleSvc -> Repo : save(user)
+                Repo --> GoogleSvc : User saved
+                GoogleSvc -> AuditRepo : save(new AuditLog(saved, "USER_REGISTERED_GOOGLE", details))
+              end
+              GoogleSvc --> Ctrl : User
+              Ctrl -> Ctrl : createSession(user, issuedAt)
+              Ctrl -> Jwt : generateToken(user.getEmail(), user.getRole(), issuedAt)
+              Jwt --> Ctrl : token JWT
+              Ctrl --> GoogleApp : 200 AuthResponseDTO
+              GoogleApp --> Tela : GoogleSignInResult (success, session)
+              Tela -> Ctx : signIn(result.session)
+              Ctx -> Bio : onSession(event)
+              note right of Bio : mesma oferta ou reativação da biometria do login com senha
+              Tela --> U : abre a mesma área principal, conforme o papel da conta
+            end
+          end
+          deactivate GoogleSvc
+          deactivate Ctrl
+        else sem ID token ou falha no módulo, rede ou resposta da API
+          GoogleApp --> Tela : GoogleSignInResult (error)
+          Tela --> U : "Não foi possível entrar com o Google. Tente novamente."
+        end
+      end
+    end
+  end
+  note over GoogleApp, GoogleSvc : fluxo nativo, sem callback do Google e sem segredo do cliente;\ncelular e servidor precisam de internet. APK assinado 1.2.0 (versionCode 5)\ncom teste Android já registrado em 03/11/2026, não reexecutado nesta revisão.\niOS e Expo Go não oferecem este acesso.
+end
+@enduml

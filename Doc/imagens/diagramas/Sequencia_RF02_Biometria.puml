@@ -1,0 +1,83 @@
+@startuml Sequencia_RF02_Biometria
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF02 (Autenticar Usuário): reentrada pela biometria
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 180
+skinparam wrapWidth 180
+autonumber "<b>0"
+
+actor "Usuário ou\nAdministrador do sistema" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":AuthContext" as Ctx
+participant ":BiometricContext" as Bio
+participant ":BiometricGate" as Gate
+participant ":alerts" as Alertas
+end box
+box "API (backend)" #F6FFF4
+participant "Ponto de entrada HTTP do Spring Security" as Entry
+participant ":JwtAuthFilter" as Filtro
+participant ":UserController" as UCtrl
+end box
+
+
+group Reabrir o aplicativo com a biometria habilitada
+  note over Gate : a tela "SpotMeet bloqueado" é uma janela (Modal) opaca por cima do aplicativo.\nDepois do primeiro desbloqueio da sessão, as telas continuam montadas embaixo;\nna abertura do aplicativo, nada é montado antes do desbloqueio.
+  Gate -> Bio : unlockOnOpen()
+  note right of Bio : pede a digital assim que a tela "SpotMeet bloqueado" aparece;\nse o Android cancela em menos de 1 s (aplicativo ainda abrindo),\npede de novo uma vez depois de 0,7 s, sem mensagem de erro
+  U -> Gate : ou tocar em "Desbloquear" ou em "Usar a senha do aparelho"
+  Gate -> Bio : unlock(devicePassword)
+  activate Bio
+  note right of Bio : autentica o aparelho (biometria, PIN, padrão ou senha) e lê o token\nguardado no cofre do aparelho; não é um novo login no servidor;\ndevicePassword só muda o texto do aviso do sistema
+  Bio -> Bio : confirmSession(stored, operation)
+  Bio -> Filtro : GET /api/users/me (Authorization: Bearer token)
+  alt o filtro aceita o token (mesma validação da sessão da figura de e-mail e senha)
+    Filtro -> UCtrl : getMyProfile(authentication)
+    UCtrl --> Bio : 200 UserProfileResponseDTO
+    note right of Bio : confirmSession compara o ID com a sessão; valida nome e e-mail como textos\ne papel como valor permitido,\ne só aplica a resposta enquanto a operação continua atual
+    alt aplicativo reaberto sem sessão em memória
+      Bio -> Ctx : signIn(session)
+    else sessão ainda em memória
+      Bio -> Ctx : updateSession(session)
+    end
+    Bio --> Gate : locked = false
+    alt mesma sessão (token e perfil) já desbloqueada antes
+      Gate --> U : fecha a janela de bloqueio; a pessoa continua na tela em que estava,\ncom o que tinha digitado
+    else aplicativo reaberto ou perfil diferente
+      Gate --> U : mostra a área principal, com as telas abertas do começo (nova chave screensKey)
+    end
+  else sessão recusada com 401, 403 ou 404
+    note over Filtro, UCtrl : Spring Security responde 401/403; getMyProfile responde 404\nse a conta consultada não for encontrada.
+    alt token ou autorização recusados
+      Entry --> Bio : 401 ou 403
+    else conta não encontrada por getMyProfile
+      UCtrl --> Bio : 404
+    end
+    Bio -> Ctx : signOut()
+    note right of Gate : sem token, as telas guardadas sob o bloqueio são descartadas
+    Bio --> U : aviso "Sessão encerrada" e volta à tela de acesso
+  else falha de conexão ou outra indisponibilidade
+    Bio --> Gate : mantém o bloqueio e exibe a mensagem de erro
+  end
+  deactivate Bio
+end
+
+group Botão voltar do Android na tela de bloqueio
+  U -> Gate : tocar no botão voltar do aparelho
+  Gate --> U : fecha o aplicativo (BackHandler.exitApp), sem mostrar as telas de baixo
+end
+
+group Sair desta conta pela tela de bloqueio
+  U -> Gate : tocar em "Sair desta conta"
+  Gate -> Alertas : confirmAction("Sair desta conta", message, biometric.returnToLogin, "Sair", true)
+  Alertas --> U : "A biometria deste aparelho será desligada..." com "Cancelar" e "Sair"
+  U -> Alertas : tocar em "Sair"
+  Alertas -> Bio : returnToLogin()
+  Bio -> Ctx : signOut()
+  note right of Ctx : a saída apaga a sessão guardada e a configuração da biometria (RF36)
+  Bio --> U : tela de acesso
+end
+@enduml

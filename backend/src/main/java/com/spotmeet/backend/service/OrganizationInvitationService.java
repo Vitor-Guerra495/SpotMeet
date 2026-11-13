@@ -28,6 +28,7 @@ public class OrganizationInvitationService {
     @Autowired private UserRepository userRepo;
     @Autowired private AccessRequestRepository accessRequestRepo;
     @Autowired private AuditLogRepository auditLogRepo;
+    @Autowired private EmailService emailService;
 
     private User authenticatedUser(String email) {
         return userRepo.findByEmail(email)
@@ -76,6 +77,8 @@ public class OrganizationInvitationService {
         OrganizationInvitation saved = invitationRepo.save(invitation);
         auditLogRepo.save(new AuditLog(executor, "ORGANIZATION_INVITATION_SENT",
                 "OrgId: " + organizationId + " | Usuário ID: " + recipient.getId()));
+        emailService.sendOrganizationInvitationEmail(recipient.getEmail(), recipient.getName(), organization.getName(),
+                executor.getName(), saved.getExpiresAt());
         return OrganizationInvitationResponseDTO.fromEntity(saved);
     }
 
@@ -94,7 +97,7 @@ public class OrganizationInvitationService {
         String escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_");
         return userRepo.findInviteCandidates(escaped, organizationId, organization.getOwner().getId(),
                         Instant.now().truncatedTo(ChronoUnit.MILLIS), PageRequest.of(0, MAX_SEARCH_RESULTS)).stream()
-                .map(user -> new InviteCandidateDTO(user.getName(), user.getEmail())).toList();
+                .map(user -> new InviteCandidateDTO(user.getId(), user.getName(), user.getEmail())).toList();
     }
 
     @Transactional(readOnly = true)

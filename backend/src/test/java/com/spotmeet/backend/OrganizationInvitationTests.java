@@ -11,6 +11,7 @@ import com.spotmeet.backend.model.OrganizationInvitation.InvitationStatus;
 import com.spotmeet.backend.model.OrganizationMember.OrganizationRole;
 import com.spotmeet.backend.repository.*;
 import com.spotmeet.backend.service.AdminService;
+import com.spotmeet.backend.service.EmailService;
 import com.spotmeet.backend.service.MembershipService;
 import com.spotmeet.backend.service.OrganizationInvitationService;
 import com.spotmeet.backend.service.OrganizationService;
@@ -50,6 +51,7 @@ class OrganizationInvitationTests {
     private AccessRequestRepository requestRepo;
     private AuditLogRepository auditRepo;
     private OrganizationInvitationService service;
+    private EmailService inviteMail;
     private MockMvc mvc;
 
     @BeforeEach void setUp() {
@@ -114,6 +116,8 @@ class OrganizationInvitationTests {
         ReflectionTestUtils.setField(service, "userRepo", userRepo);
         ReflectionTestUtils.setField(service, "accessRequestRepo", requestRepo);
         ReflectionTestUtils.setField(service, "auditLogRepo", auditRepo);
+        inviteMail = mock(EmailService.class);
+        ReflectionTestUtils.setField(service, "emailService", inviteMail);
         OrganizationInvitationController controller = new OrganizationInvitationController();
         ReflectionTestUtils.setField(controller, "invitationService", service);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
@@ -152,10 +156,13 @@ class OrganizationInvitationTests {
         assertEquals(invitation.getCreatedAt().plus(24, ChronoUnit.HOURS), invitation.getExpiresAt());
         assertNull(invitation.getRespondedAt());
         verify(memberRepo, never()).save(any());
+        verify(inviteMail).sendOrganizationInvitationEmail("target@example.com", "Test target", "QA Organization",
+                users.get(sender).getName(), invitation.getExpiresAt());
     }
     @ParameterizedTest @ValueSource(strings = {"subowner", "member", "other", "sysadmin", "admin"})
     void otherRolesCannotInviteOrLookUpTheTargetAccount(String sender) throws Exception {
         send(sender, "{\"email\":\"absent@example.com\"}", 403);
+        verifyNoInteractions(inviteMail);
         verify(userRepo, never()).findByEmail("absent@example.com");
         verify(invitationRepo, never()).save(any());
     }
@@ -367,7 +374,7 @@ class OrganizationInvitationTests {
         return mvc.perform(get("/api/organizations/1/invitations/candidates").param("q", query).principal(identity(sender)))
                 .andExpect(status().is(expectedStatus)).andReturn();
     }
-    @Test void candidateSearchNeedsThreeCharactersAndReturnsOnlyNameAndEmail() throws Exception {
+    @Test void candidateSearchNeedsThreeCharactersAndReturnsOnlyIdNameAndEmail() throws Exception {
         User found = users.get("target");
         when(userRepo.findInviteCandidates(eq("tar"), eq(1L), eq(1L), any(Instant.class), eq(org.springframework.data.domain.PageRequest.of(0, 10))))
                 .thenReturn(List.of(found));
@@ -375,7 +382,7 @@ class OrganizationInvitationTests {
         verify(userRepo, never()).findInviteCandidates(anyString(), anyLong(), anyLong(), any(), any());
         JsonNode rows = mapper.readTree(candidates("vice", " tar ", 200).getResponse().getContentAsString());
         assertEquals(1, rows.size());
-        assertEquals(Set.of("name", "email"), new HashSet<>(rows.get(0).properties().stream().map(Map.Entry::getKey).toList()));
+        assertEquals(Set.of("userId", "name", "email"), new HashSet<>(rows.get(0).properties().stream().map(Map.Entry::getKey).toList()));
         assertEquals("target@example.com", rows.get(0).get("email").asText());
     }
     @Test void candidateSearchEscapesLikeWildcards() throws Exception {
@@ -421,13 +428,18 @@ class OrganizationInvitationTests {
         ReflectionTestUtils.setField(membership, "organizationMemberRepo", memberRepo);
         ReflectionTestUtils.setField(membership, "accessRequestRepo", requestRepo);
         ReflectionTestUtils.setField(membership, "auditLogRepo", auditRepo);
+        EmailService mail = mock(EmailService.class);
+        ReflectionTestUtils.setField(membership, "emailService", mail);
         AccessRequest request = new AccessRequest(); request.setId(3L); request.setOrganization(organization);
         request.setUser(users.get("target")); request.setStatus(AccessRequestStatus.PENDING);
         when(requestRepo.findOrganizationIdById(3L)).thenReturn(Optional.of(1L));
         when(requestRepo.findById(3L)).thenReturn(Optional.of(request));
         assertThrows(SecurityException.class, () -> membership.approveAccess(3L, users.get("other").getEmail()));
         verify(memberRepo, never()).save(any());
+        verifyNoInteractions(mail);
         membership.approveAccess(3L, users.get("vice").getEmail());
+        verify(mail).sendAccessApprovedEmail(eq(users.get("target").getEmail()), eq(users.get("target").getName()),
+                eq(organization.getName()), eq(users.get("vice").getName()));
         assertEquals(AccessRequestStatus.APPROVED, request.getStatus());
         var order = inOrder(organizationRepo, requestRepo);
         order.verify(requestRepo).findOrganizationIdById(3L);

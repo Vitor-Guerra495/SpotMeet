@@ -1,6 +1,7 @@
 package com.spotmeet.backend.service;
 
 import com.spotmeet.backend.dto.AccessRequestResponseDTO;
+import com.spotmeet.backend.dto.ListedOrganizationDTO;
 import com.spotmeet.backend.dto.OrganizationResponseDTO;
 import com.spotmeet.backend.dto.OrganizationLeadershipResponseDTO;
 import com.spotmeet.backend.dto.OrganizationPreviewDTO;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -35,6 +37,7 @@ public class MembershipService {
     @Autowired private OrganizationInvitationRepository invitationRepo;
     @Autowired private CommitteeMemberRepository committeeMemberRepo;
     @Autowired private AuditLogRepository auditLogRepo;
+    @Autowired private EmailService emailService;
 
     // Authorization helpers
 
@@ -107,7 +110,7 @@ public class MembershipService {
                 ));
     }
 
-    // 1. Request access by key (any authenticated user)
+    // Request access by key (any authenticated user)
 
     /** Finds the approved organization behind an access key; the same checks serve the preview and the request. */
     private Organization findApprovedByKey(String accessKey, boolean forUpdate) {
@@ -141,6 +144,20 @@ public class MembershipService {
         Organization org = findApprovedByKey(accessKey, false);
         String owner = org.getOwner() != null ? org.getOwner().getName() : "Não informado";
         return new OrganizationPreviewDTO(org.getName(), org.getAccessKey(), owner);
+    }
+
+    /** Approved and listed organizations, except the ones the user already belongs to. Joining still needs the leaders' approval. */
+    @Transactional(readOnly = true)
+    public List<ListedOrganizationDTO> listListed(String userEmail) {
+        User user = findUserByEmail(userEmail);
+        Set<Long> mine = organizationMemberRepo.findByUserId(user.getId()).stream()
+                .map(m -> m.getOrganization().getId()).collect(Collectors.toSet());
+        return organizationRepo.findByApprovedTrueAndListedTrueOrderByNameAsc().stream()
+                .filter(org -> !mine.contains(org.getId()))
+                .map(org -> new ListedOrganizationDTO(org.getId(), org.getName(), org.getAccessKey(),
+                        org.getOwner() != null ? org.getOwner().getName() : "Não informado",
+                        organizationMemberRepo.countByOrganizationId(org.getId())))
+                .toList();
     }
 
     @Transactional
@@ -186,7 +203,7 @@ public class MembershipService {
         return AccessRequestResponseDTO.fromEntity(saved);
     }
 
-    // 2. Approve request (owner or vice owner)
+    // Approve request (owner or vice owner)
 
     @Transactional
     public AccessRequestResponseDTO approveAccess(Long requestId, String leaderEmail) {
@@ -231,11 +248,13 @@ public class MembershipService {
             "Solicitação #" + requestId + " | Usuário: " + request.getUser().getEmail()
                 + " | Org: " + request.getOrganization().getName()
         ));
+        emailService.sendAccessApprovedEmail(request.getUser().getEmail(), request.getUser().getName(),
+            request.getOrganization().getName(), leader.getName());
 
         return AccessRequestResponseDTO.fromEntity(request);
     }
 
-    // 3. Reject request (owner or vice owner)
+    // Reject request (owner or vice owner)
 
     @Transactional
     public AccessRequestResponseDTO rejectAccess(Long requestId, String leaderEmail) {
@@ -264,11 +283,13 @@ public class MembershipService {
             "Solicitação #" + requestId + " | Usuário: " + request.getUser().getEmail()
                 + " | Org: " + request.getOrganization().getName()
         ));
+        emailService.sendAccessRejectedEmail(request.getUser().getEmail(), request.getUser().getName(),
+            request.getOrganization().getName(), request.getRequestedAt(), leader.getName());
 
         return AccessRequestResponseDTO.fromEntity(request);
     }
 
-    // 4. Role promotion and demotion
+    // Role promotion and demotion
 
     /**
      * Promotes a member in the organization:
@@ -321,7 +342,8 @@ public class MembershipService {
             target.getId(),
             target.getName(),
             target.getEmail(),
-            targetMembership.getRole().name()
+            targetMembership.getRole().name(),
+            target.getAvailabilityStatus()
         );
     }
 
@@ -374,7 +396,8 @@ public class MembershipService {
             target.getId(),
             target.getName(),
             target.getEmail(),
-            targetMembership.getRole().name()
+            targetMembership.getRole().name(),
+            target.getAvailabilityStatus()
         );
     }
 
@@ -421,7 +444,7 @@ public class MembershipService {
                 previousMembership.getRole().name(), target.getRole().name());
     }
 
-    // 5. Revoke an active member
+    // Revoke an active member
 
     @Transactional
     public void revokeAccess(Long memberId, Long organizationId, String executorEmail) {
@@ -496,7 +519,7 @@ public class MembershipService {
         ));
     }
 
-    // 6. Listings
+    // Listings
 
     /**
      * Lists pending join requests of the organization (owner and vice owner only).
@@ -527,7 +550,8 @@ public class MembershipService {
                     m.getUser().getId(),
                     m.getUser().getName(),
                     m.getUser().getEmail(),
-                    m.getRole().name()
+                    m.getRole().name(),
+                    m.getUser().getAvailabilityStatus()
                 ))
                 .collect(Collectors.toList());
     }
