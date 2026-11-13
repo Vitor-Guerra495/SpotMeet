@@ -88,6 +88,9 @@ public class AdminService {
     private SystemMonitoringService monitoringService;
 
     @Autowired
+    private EmailService emailService;
+
+    @Autowired
     private ApplicationContext context;
 
     private volatile LocalDateTime lastNetworkRestart;
@@ -195,6 +198,9 @@ public class AdminService {
         } catch (Exception e) {
             // Audit failure does not block the response
         }
+        if (org.getOwner() != null) {
+            emailService.sendOrganizationApprovedEmail(org.getOwner().getEmail(), org.getOwner().getName(), org.getName());
+        }
 
         return toDTO(saved);
     }
@@ -225,6 +231,9 @@ public class AdminService {
         } catch (Exception e) {
             // Audit failure does not block the response
         }
+        if (org.getOwner() != null) {
+            emailService.sendOrganizationRejectedEmail(org.getOwner().getEmail(), org.getOwner().getName(), org.getName(), cleanReason);
+        }
 
         return toDTO(saved);
     }
@@ -240,6 +249,8 @@ public class AdminService {
                 .orElseThrow(() -> new IllegalArgumentException("Organização não encontrada para o ID: " + orgId));
 
         String cleanReason = approved ? null : validateModerationReason(justification);
+        String previousStatus = org.getStatus();
+        boolean wasApproved = org.isApproved();
         String newStatus = approved ? "APPROVED" : "BLOCKED";
         org.setApproved(approved);
         org.setStatus(newStatus);
@@ -258,8 +269,22 @@ public class AdminService {
         } catch (Exception e) {
             // Audit failure does not block the response
         }
+        notifyStatusChange(org, previousStatus, wasApproved, cleanReason);
 
         return toDTO(saved);
+    }
+
+    /** Blocking always notifies the owner; approval only when the status really changed. */
+    private void notifyStatusChange(Organization org, String previousStatus, boolean wasApproved, String reason) {
+        User owner = org.getOwner();
+        if (owner == null) return;
+        if (!org.isApproved()) {
+            emailService.sendOrganizationBlockedEmail(owner.getEmail(), owner.getName(), org.getName(), reason);
+        } else if ("BLOCKED".equalsIgnoreCase(previousStatus)) {
+            emailService.sendOrganizationReactivatedEmail(owner.getEmail(), owner.getName(), org.getName());
+        } else if (!wasApproved) {
+            emailService.sendOrganizationApprovedEmail(owner.getEmail(), owner.getName(), org.getName());
+        }
     }
 
     private String validateModerationReason(String reason) {
@@ -387,7 +412,9 @@ public class AdminService {
         List<Organization> orgs = organizationRepo.findAll();
         report.setTotalOrganizations(orgs.size());
         report.setApprovedOrganizations(orgs.stream().filter(Organization::isApproved).count());
-        report.setPendingOrganizations(orgs.stream().filter(o -> !o.isApproved()).count());
+        report.setPendingOrganizations(orgs.stream()
+                .filter(o -> !o.isApproved() && (o.getStatus() == null || "PENDING".equalsIgnoreCase(o.getStatus())))
+                .count());
 
         // Committees
         report.setTotalCommittees(committeeRepo.count());
@@ -535,33 +562,33 @@ public class AdminService {
         Long adminId = executor.getId();
         String reason = dto.getReason() != null && !dto.getReason().isBlank() ? dto.getReason().trim() : "Reset Total Administrativo do Sistema";
 
-        // 1. Delete audit logs of other users (preserves the executing SysAdmin logs)
+        // Delete audit logs of other users (preserves the executing SysAdmin logs)
         auditLogRepo.deleteAllExceptAdminLogs(adminId);
 
         invitationRepo.deleteAllInBatch();
 
-        // 2. Delete all organization access requests
+        // Delete all organization access requests
         accessRequestRepo.deleteAllInBatch();
 
-        // 3. Delete all committee memberships
+        // Delete all committee memberships
         committeeMemberRepo.deleteAllInBatch();
 
-        // 4. Delete all committees
+        // Delete all committees
         committeeRepo.deleteAllInBatch();
 
-        // 5. Delete all organization memberships
+        // Delete all organization memberships
         organizationMemberRepo.deleteAllInBatch();
 
-        // 6. Delete all organizations
+        // Delete all organizations
         organizationRepo.deleteAllInBatch();
 
-        // 7. Delete all regular users (preserving only the administrator)
+        // Delete all regular users (preserving only the administrator)
         userRepo.deleteAllExceptAdmin(adminId);
 
         executor.setTokensValidAfter(Instant.now().truncatedTo(ChronoUnit.MILLIS));
         userRepo.save(executor);
 
-        // 8. Immutable audit record of the full reset
+        // Immutable audit record of the full reset
         try {
             auditLogRepo.save(new AuditLog(
                     executor,

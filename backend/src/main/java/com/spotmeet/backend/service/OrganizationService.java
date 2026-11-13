@@ -90,6 +90,7 @@ public class OrganizationService {
         org.setCnpj(cleanCnpj);
         org.setApproved(false); // Pending until SysAdmin approval
         org.setStatus("PENDING");
+        org.setListed(dto.getListed() == null || dto.getListed());
 
         Organization saved = organizationRepo.save(org);
 
@@ -157,9 +158,11 @@ public class OrganizationService {
 
         String previousName = org.getName();
         String previousKey = org.getAccessKey();
+        boolean previousListed = org.isListed();
 
         org.setName(cleanName);
         org.setAccessKey(cleanKey);
+        if (dto.getListed() != null) org.setListed(dto.getListed());
 
         // The CNPJ is optional and is not exposed by OrganizationResponseDTO, so a client that
         // cannot read it must not erase it: null means "unchanged", blank means "clear".
@@ -173,6 +176,7 @@ public class OrganizationService {
             "Organização ID: " + saved.getId()
                 + " | Nome: " + previousName + " -> " + saved.getName()
                 + " | Chave: " + previousKey + " -> " + saved.getAccessKey()
+                + (previousListed == saved.isListed() ? "" : " | Na lista: " + (saved.isListed() ? "sim" : "não"))
         ));
 
         return OrganizationResponseDTO.forViewer(saved, executor);
@@ -288,7 +292,7 @@ public class OrganizationService {
 
         invitationRepo.deleteByOrganizationId(organizationId);
 
-        // 1. Delete committee memberships and committees
+        // Delete committee memberships and committees
         List<Committee> committees = committeeRepo.findByOrganizationIdOrderByNameAsc(organizationId);
         for (Committee c : committees) {
             List<CommitteeMember> members = committeeMemberRepo.findByCommitteeId(c.getId());
@@ -300,22 +304,22 @@ public class OrganizationService {
             committeeRepo.deleteAll(committees);
         }
 
-        // 2. Delete access requests
+        // Delete access requests
         List<AccessRequest> requests = accessRequestRepo.findByOrganizationId(organizationId);
         if (!requests.isEmpty()) {
             accessRequestRepo.deleteAll(requests);
         }
 
-        // 3. Delete organization members
+        // Delete organization members
         List<OrganizationMember> members = organizationMemberRepo.findByOrganizationId(organizationId);
         if (!members.isEmpty()) {
             organizationMemberRepo.deleteAll(members);
         }
 
-        // 4. Delete the organization
+        // Delete the organization
         organizationRepo.delete(org);
 
-        // 5. LGPD audit record
+        // LGPD audit record
         auditLogRepo.save(new AuditLog(
             executor,
             "ORGANIZATION_DELETED",

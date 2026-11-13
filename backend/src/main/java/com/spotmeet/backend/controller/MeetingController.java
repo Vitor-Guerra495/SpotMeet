@@ -1,5 +1,6 @@
 package com.spotmeet.backend.controller;
 
+import com.spotmeet.backend.dto.MeetingCancelDTO;
 import com.spotmeet.backend.dto.MeetingRequestDTO;
 import com.spotmeet.backend.dto.MeetingResponseDTO;
 import com.spotmeet.backend.service.MeetingService;
@@ -11,6 +12,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Scheduling routes: the committee president schedules, edits and cancels.
@@ -54,6 +56,12 @@ public class MeetingController {
         return ResponseEntity.ok(meetingService.listMyMeetings(getEmail(auth)));
     }
 
+    /** GET /api/meetings/invitations/pending: number of unanswered invitations, shown on the Reuniões tab. */
+    @GetMapping("/api/meetings/invitations/pending")
+    public ResponseEntity<Map<String, Long>> countPendingInvitations(Authentication auth) {
+        return ResponseEntity.ok(Map.of("count", meetingService.countPendingInvitations(getEmail(auth))));
+    }
+
     /** GET /api/meetings/{meetingId}: meeting detail with participants. */
     @GetMapping("/api/meetings/{meetingId}")
     public ResponseEntity<MeetingResponseDTO> getMeeting(
@@ -62,7 +70,7 @@ public class MeetingController {
         return ResponseEntity.ok(meetingService.getMeeting(meetingId, getEmail(auth)));
     }
 
-    /** PUT /api/meetings/{meetingId}: edits a meeting that has not started (president only). */
+    /** PUT /api/meetings/{meetingId}: edits a scheduled or in-progress meeting, only this date of a series (president only). */
     @PutMapping("/api/meetings/{meetingId}")
     public ResponseEntity<MeetingResponseDTO> updateMeeting(
             @PathVariable Long meetingId,
@@ -71,11 +79,12 @@ public class MeetingController {
         return ResponseEntity.ok(meetingService.updateMeeting(meetingId, getEmail(auth), dto));
     }
 
-    /** POST /api/meetings/{meetingId}/cancel: cancels a meeting (president only). */
+    /** POST /api/meetings/{meetingId}/cancel: cancels a meeting, with an optional reason for the e-mail (president only). */
     @PostMapping("/api/meetings/{meetingId}/cancel")
     public ResponseEntity<MeetingResponseDTO> cancelMeeting(
             @PathVariable Long meetingId,
+            @Valid @RequestBody(required = false) MeetingCancelDTO body,
             Authentication auth) {
-        return ResponseEntity.ok(meetingService.cancelMeeting(meetingId, getEmail(auth)));
+        return ResponseEntity.ok(meetingService.cancelMeeting(meetingId, getEmail(auth), body == null ? null : body.getReason()));
     }
 }

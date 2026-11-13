@@ -32,6 +32,9 @@ public class OrganizationRequestDTO {
     @Size(max = 255, message = "O CNPJ deve ter até 255 caracteres.")
     private String cnpj;
 
+    /** Appears in the list of the Entrar tab. Null keeps the stored value (true for a new organization). */
+    private Boolean listed;
+
     public OrganizationRequestDTO() {}
 
     public String getName() { return name; }
@@ -39,6 +42,9 @@ public class OrganizationRequestDTO {
 
     public String getAccessKey() { return accessKey; }
     public void setAccessKey(String accessKey) { this.accessKey = ValidationPatterns.normalizeOrganizationValue(accessKey); }
+
+    public Boolean getListed() { return listed; }
+    public void setListed(Boolean listed) { this.listed = listed; }
 
     public String getCnpj() { return cnpj; }
     public void setCnpj(String cnpj) { this.cnpj = ValidationPatterns.normalizeOrganizationValue(cnpj); }

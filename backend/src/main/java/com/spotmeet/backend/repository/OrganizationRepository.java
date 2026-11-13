@@ -69,4 +69,7 @@ public interface OrganizationRepository extends JpaRepository<Organization, Long
     /** Loads all organizations with the owner fetched in the same query (SysAdmin listing). */
     @Query("SELECT o FROM Organization o LEFT JOIN FETCH o.owner")
     List<Organization> findAllWithOwner();
+
+    /** Approved organizations that chose to appear in the list of the Entrar tab. */
+    List<Organization> findByApprovedTrueAndListedTrueOrderByNameAsc();
 }

@@ -1,6 +1,7 @@
 package com.spotmeet.backend.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 
@@ -10,6 +11,8 @@ import java.time.LocalDateTime;
  * Meeting scheduled by the president of a committee.
  *
  * The status is derived from the clock and canceledAt, it is not stored.
+ * An all-day meeting goes from 00:00 of the first day to 23:59:59 of the last one.
+ * Meetings of a series are ordinary meetings linked to the series that created them.
  * Deleting the committee removes its meetings in the database.
  */
 @Entity
@@ -27,6 +30,12 @@ public class Meeting {
         LOW,
         MEDIUM,
         HIGH
+    }
+
+    public enum MeetingModality {
+        IN_PERSON,
+        ONLINE,
+        HYBRID
     }
 
     @Id
@@ -60,8 +69,30 @@ public class Meeting {
     @Column(name = "ends_at", nullable = false)
     private LocalDateTime endsAt;
 
+    @ColumnDefault("false")
+    @Column(name = "all_day", nullable = false)
+    private boolean allDay;
+
+    // Null in meetings created before the modality existed.
+    @Enumerated(EnumType.STRING)
+    @Column(length = 10)
+    private MeetingModality modality;
+
     @Column(name = "canceled_at")
     private LocalDateTime canceledAt;
+
+    @Column(name = "cancel_reason", length = 300)
+    private String cancelReason;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "series_id")
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    private MeetingSeries series;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "attachment_id")
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    private MeetingFile attachment;
 
     @Column(name = "attendance_list_generated_at")
     private LocalDateTime attendanceListGeneratedAt;
@@ -121,6 +152,21 @@ public class Meeting {
 
     public LocalDateTime getEndsAt() { return endsAt; }
     public void setEndsAt(LocalDateTime endsAt) { this.endsAt = endsAt; }
+
+    public boolean isAllDay() { return allDay; }
+    public void setAllDay(boolean allDay) { this.allDay = allDay; }
+
+    public MeetingModality getModality() { return modality; }
+    public void setModality(MeetingModality modality) { this.modality = modality; }
+
+    public String getCancelReason() { return cancelReason; }
+    public void setCancelReason(String cancelReason) { this.cancelReason = cancelReason; }
+
+    public MeetingSeries getSeries() { return series; }
+    public void setSeries(MeetingSeries series) { this.series = series; }
+
+    public MeetingFile getAttachment() { return attachment; }
+    public void setAttachment(MeetingFile attachment) { this.attachment = attachment; }
 
     public LocalDateTime getCanceledAt() { return canceledAt; }
     public void setCanceledAt(LocalDateTime canceledAt) { this.canceledAt = canceledAt; }

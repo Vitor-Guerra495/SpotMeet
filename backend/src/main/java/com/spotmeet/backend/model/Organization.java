@@ -1,6 +1,7 @@
 package com.spotmeet.backend.model;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.ColumnDefault;
 import java.time.LocalDateTime;
 
 /**
@@ -69,6 +70,14 @@ public class Organization {
     @Column(nullable = false)
     private boolean approved = false;
 
+    /**
+     * Shown in the list of the Entrar tab once approved. The owner can hide a private organization,
+     * which is then found only by its key. The default fills the organizations created before the column.
+     */
+    @ColumnDefault("true")
+    @Column(nullable = false)
+    private boolean listed = true;
+
     /** Lifecycle status: PENDING | APPROVED | BLOCKED | REJECTED */
     @Column(name = "status")
     private String status = "PENDING";
@@ -102,6 +111,9 @@ public class Organization {
 
     public boolean isApproved() { return approved; }
     public void setApproved(boolean approved) { this.approved = approved; }
+
+    public boolean isListed() { return listed; }
+    public void setListed(boolean listed) { this.listed = listed; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

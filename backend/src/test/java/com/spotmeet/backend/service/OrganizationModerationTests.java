@@ -31,13 +31,14 @@ class OrganizationModerationTests {
     private AdminService moderation;
     private MembershipService membership;
     private AuditLogRepository audit;
+    private EmailService mail;
     private MockMvc mvc;
 
     @BeforeEach void setUp() {
         owner = user(1, "owner", "USER"); member = user(2, "member", "USER"); admin = user(3, "admin", "SYSADMIN");
         users = mock(UserRepository.class); organizations = mock(OrganizationRepository.class);
         memberships = mock(OrganizationMemberRepository.class); requests = mock(AccessRequestRepository.class);
-        audit = mock(AuditLogRepository.class);
+        audit = mock(AuditLogRepository.class); mail = mock(EmailService.class);
         when(users.findByEmail(anyString())).thenAnswer(call -> List.of(owner, member, admin).stream().filter(user -> user.getEmail().equals(call.getArgument(0))).findFirst());
         when(users.findByEmailForUpdate(anyString())).thenAnswer(call -> users.findByEmail(call.getArgument(0)));
         org = new Organization(); org.setId(7L); org.setName("Equipe QA"); org.setAccessKey("#EquipeQA"); org.setOwner(owner); org.setStatus("PENDING");
@@ -49,6 +50,7 @@ class OrganizationModerationTests {
         for (Object target : List.of(moderation, membership)) {
             ReflectionTestUtils.setField(target, "organizationRepo", organizations); ReflectionTestUtils.setField(target, "userRepo", users);
             ReflectionTestUtils.setField(target, "organizationMemberRepo", memberships); ReflectionTestUtils.setField(target, "auditLogRepo", audit);
+            ReflectionTestUtils.setField(target, "emailService", mail);
         }
         ReflectionTestUtils.setField(moderation, "committeeRepo", mock(CommitteeRepository.class));
         ReflectionTestUtils.setField(membership, "accessRequestRepo", requests);
@@ -86,6 +88,9 @@ class OrganizationModerationTests {
         assertNull(moderation.approveOrganization(7L, admin.getEmail()).getModerationReason());
         moderation.approveOrganization(7L, admin.getEmail());
         assertTrue(org.isApproved()); assertEquals("APPROVED", org.getStatus()); assertNull(org.getModerationReason());
+        verify(mail).sendOrganizationRejectedEmail("owner@example.com", "owner", "Equipe QA", "Cadastro incompleto");
+        verify(mail).sendOrganizationRejectedEmail("owner@example.com", "owner", "Equipe QA", "Dados insuficientes");
+        verify(mail, times(2)).sendOrganizationApprovedEmail("owner@example.com", "owner", "Equipe QA");
     }
     @Test void blockingStoresReasonAndReactivationClearsIt() {
         org.setApproved(true); org.setStatus("APPROVED");
@@ -93,6 +98,15 @@ class OrganizationModerationTests {
         assertEquals("BLOCKED", org.getStatus()); assertEquals("Documentação irregular", org.getModerationReason());
         moderation.updateOrganizationStatus(7L, true, null, admin.getEmail());
         assertNull(org.getModerationReason()); assertTrue(org.isApproved());
+        verify(mail).sendOrganizationBlockedEmail("owner@example.com", "owner", "Equipe QA", "Documentação irregular");
+        verify(mail).sendOrganizationReactivatedEmail("owner@example.com", "owner", "Equipe QA");
+        moderation.updateOrganizationStatus(7L, true, null, admin.getEmail());
+        verifyNoMoreInteractions(mail);
+    }
+    @Test void approvingAPendingOrganizationThroughTheStatusRouteSendsTheApprovalNotice() {
+        moderation.updateOrganizationStatus(7L, true, null, admin.getEmail());
+        verify(mail).sendOrganizationApprovedEmail("owner@example.com", "owner", "Equipe QA");
+        verifyNoMoreInteractions(mail);
     }
     @Test void reasonIsProjectedOnlyForTheCurrentOwnerAndAdministrators() {
         org.setModerationReason("Motivo reservado");
@@ -108,7 +122,7 @@ class OrganizationModerationTests {
         assertThrows(SecurityException.class, () -> moderation.rejectOrganization(7L, "Motivo válido", member.getEmail()));
         assertThrows(SecurityException.class, () -> moderation.approveOrganization(7L, owner.getEmail()));
         assertThrows(SecurityException.class, () -> moderation.updateOrganizationStatus(7L, false, "Motivo válido", member.getEmail()));
-        verify(organizations, never()).save(any());
+        verify(organizations, never()).save(any()); verifyNoInteractions(mail);
     }
     @Test void requestingAndReopeningAccessKeepsOnePendingRequest() {
         org.setApproved(true); org.setStatus("APPROVED");
@@ -134,6 +148,9 @@ class OrganizationModerationTests {
         assertEquals(approve ? AccessRequest.AccessRequestStatus.APPROVED : AccessRequest.AccessRequestStatus.REJECTED, request.getStatus());
         assertThrows(IllegalStateException.class, () -> membership.approveAccess(9L, owner.getEmail()));
         verify(requests).save(request);
+        if (approve) verify(mail).sendAccessApprovedEmail("member@example.com", "member", "Equipe QA", "owner");
+        else verify(mail).sendAccessRejectedEmail("member@example.com", "member", "Equipe QA", request.getRequestedAt(), "owner");
+        verifyNoMoreInteractions(mail);
     }
     @Test void outsiderCannotDecideAnAccessRequest() {
         org.setApproved(true); request(); org.setOwner(user(8, "other", "USER"));

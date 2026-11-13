@@ -129,6 +129,8 @@ export default function AdminOrganizationsScreen({ route }: Props) {
     finally { if (isCurrentScope()) setLoadingMembers(false); }
   }), [token, role, userId, selected?.id, selected?.ownerId, transfer, memberRequest]);
   useEffect(() => { if (transfer) void loadMembers(); }, [transfer, loadMembers]);
+  // The back button of the phone leaves the transfer list back to the details.
+  const leaveTransfer = () => { if (operation.isCurrent() && !operation.blocked()) { setTransfer(false); operation.clearError(); } };
   const startTransfer = () => { if (mayTransfer && operation.isCurrent() && !operation.blocked()) { setMembers([]); setMemberSearch(''); setTransfer(true); operation.clearError(); } };
   const transferTo = (member: AdminMember) => {
     if (!selected || !mayTransfer || member.userId === selected.ownerId) return;
@@ -155,7 +157,7 @@ export default function AdminOrganizationsScreen({ route }: Props) {
     </View>
     {loading && !loaded ? <View style={styles.loading}><ActivityIndicator color={colors.primary} /><Text style={styles.caption}>Carregando organizações...</Text></View> : <FlatList data={visible} keyExtractor={item => String(item.id)} contentContainerStyle={styles.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} enabled={!paused} tintColor={colors.primary} colors={[colors.primary]} />}
-      ListEmptyComponent={loaded && !loadError ? <AdminEmpty text={search.trim() ? 'Nenhuma organização corresponde à busca.' : pendingMode ? 'Nenhuma organização aguardando aprovação.' : 'Nenhuma organização corresponde ao filtro.'} /> : null}
+      ListEmptyComponent={loaded && !loadError ? <AdminEmpty text={search.trim() ? 'Nenhuma organização corresponde à busca.' : pendingMode ? 'Nenhuma organização aguardando aprovação.' : 'Nenhuma organização corresponde ao filtro.'} /> : undefined}
       renderItem={({ item }) => <AdminCard><TouchableOpacity accessibilityRole="button" accessibilityLabel={`Detalhes de ${item.name}`} onPress={() => open(item)} disabled={operation.busy || operation.confirming}>
         <View style={styles.row}><View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View><View style={styles.flex}><Text style={styles.cardTitle}>{item.name}</Text>
           <Text style={styles.caption}>{item.accessKey}</Text></View><StatusBadge value={item.status} /></View>
@@ -164,13 +166,13 @@ export default function AdminOrganizationsScreen({ route }: Props) {
           {item.resubmittedAt && <Text style={styles.caption}>Reenvio após recusa. Veja a justificativa nos detalhes.</Text>}</>}
       </TouchableOpacity>{actions(item)}</AdminCard>}
     />}
-    <AdminSheet visible={!!selected || !!moderation} title={moderation ? (moderation.action === 'reject' ? 'Recusar organização' : 'Bloquear organização') : transfer ? 'Transferir liderança' : 'Detalhes da organização'} onClose={moderation ? closeModeration : close} disabled={operation.busy || operation.confirming}>
+    <AdminSheet visible={!!selected || !!moderation} title={moderation ? (moderation.action === 'reject' ? 'Recusar organização' : 'Bloquear organização') : transfer ? 'Transferir liderança' : 'Detalhes da organização'} onClose={moderation ? closeModeration : close} onBack={moderation ? closeModeration : transfer ? leaveTransfer : close} disabled={operation.busy || operation.confirming}>
       {moderation ? <><Text style={styles.cardTitle}>{moderation.org.name}</Text>
         <Text style={styles.caption}>O motivo será apresentado ao responsável pela organização e aos administradores.</Text>
         <Controller control={reasonForm.control} name="reason" rules={{ validate: validateModerationReason }}
           render={({ field: { value, onChange, onBlur }, fieldState: { error } }) => <FormField label="Motivo" required
             placeholder="Explique o motivo" value={value} onChangeText={text => { if (operation.isCurrent() && !operation.blocked()) onChange(text); }}
-            onBlur={onBlur} error={error?.message} multiline maxLength={500} editable={!operation.busy && !operation.confirming} />} />
+            onBlur={onBlur} error={error?.message} multiline maxLength={500} showCount editable={!operation.busy && !operation.confirming} />} />
         <Text style={styles.caption}>De 3 a 500 caracteres.</Text><AdminError message={operation.error} />
         <AdminAction label={moderation.action === 'reject' ? 'Confirmar recusa' : 'Confirmar bloqueio'} onPress={() => void submitModeration()}
           disabled={operation.busy || operation.confirming} danger icon="checkmark-outline" />

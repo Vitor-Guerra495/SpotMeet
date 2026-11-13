@@ -1,6 +1,7 @@
 package com.spotmeet.backend.dto;
 
 import com.spotmeet.backend.model.Organization;
+import com.spotmeet.backend.model.User;
 import java.time.LocalDateTime;
 
 /**
@@ -21,9 +22,11 @@ public class OrganizationResponseDTO {
     private String status;
     private String moderationReason;
     private boolean resubmitted;
+    private boolean listed;
 
     public String getModerationReason() { return moderationReason; }
     public boolean isResubmitted() { return resubmitted; }
+    public boolean isListed() { return listed; }
 
     public static OrganizationResponseDTO forViewer(Organization org, com.spotmeet.backend.model.User viewer) {
         OrganizationResponseDTO dto = fromEntity(org);
@@ -47,6 +50,7 @@ public class OrganizationResponseDTO {
         dto.approved = org.isApproved();
         dto.status = org.getStatus() != null ? org.getStatus() : (org.isApproved() ? "APPROVED" : "PENDING");
         dto.resubmitted = org.getResubmittedAt() != null;
+        dto.listed = org.isListed();
         return dto;
     }
 
@@ -72,17 +76,20 @@ public class OrganizationResponseDTO {
         private final String name;
         private final String email;
         private final String role;
+        private final String availabilityStatus;
 
-        public MemberDTO(Long userId, String name, String email, String role) {
+        public MemberDTO(Long userId, String name, String email, String role, User.AvailabilityStatus availabilityStatus) {
             this.userId = userId;
             this.name = name;
             this.email = email;
             this.role = role;
+            this.availabilityStatus = availabilityStatus != null ? availabilityStatus.name() : User.AvailabilityStatus.PRESENT.name();
         }
 
         public Long getUserId() { return userId; }
         public String getName() { return name; }
         public String getEmail() { return email; }
         public String getRole() { return role; }
+        public String getAvailabilityStatus() { return availabilityStatus; }
     }
 }
