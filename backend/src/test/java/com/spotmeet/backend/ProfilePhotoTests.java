@@ -112,6 +112,17 @@ class ProfilePhotoTests {
         mvc.perform(delete("/api/users/me/photo").param("userId", "1").principal(principal(bob))).andExpect(status().isNoContent());
         assertNotNull(service.get(alice.getEmail()).imageBase64()); assertEquals("USER", alice.getRole());
     }
+    @Test void anotherUserSeesThePhotoButCannotChangeIt() throws Exception {
+        service.save(alice.getEmail(), file("jpeg", 8));
+        mvc.perform(get("/api/users/1/photo").principal(principal(bob)))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.userId").value(1)).andExpect(jsonPath("$.imageBase64").isNotEmpty());
+        mvc.perform(get("/api/users/2/photo").principal(principal(alice)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.userId").value(2)).andExpect(jsonPath("$.imageBase64").isEmpty());
+        mvc.perform(get("/api/users/1/photo")).andExpect(status().isUnauthorized());
+        mvc.perform(delete("/api/users/1/photo").principal(principal(bob))).andExpect(status().isMethodNotAllowed());
+        assertNotNull(service.get(alice.getEmail()).imageBase64());
+    }
     @Test void transportAndSerializationDoNotExposeMetadataOrAppendedText() throws Exception {
         byte[] valid = image("jpeg", 8, 8), suffix = "<script>private-metadata</script>".getBytes(StandardCharsets.UTF_8);
         byte[] withSuffix = Arrays.copyOf(valid, valid.length + suffix.length); System.arraycopy(suffix, 0, withSuffix, valid.length, suffix.length);

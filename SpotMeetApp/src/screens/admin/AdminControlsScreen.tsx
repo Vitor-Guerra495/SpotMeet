@@ -89,7 +89,7 @@ export default function AdminControlsScreen({ navigation }: Props) {
   />;
   const logout = () => operation.confirm('Encerrar sessão', 'Deseja encerrar a sessão administrativa?', () => { void endSession(); }, 'Sair', true);
   const reasonField = (form: typeof restartForm) => <Controller control={form.control} name="reason" rules={{ maxLength: { value: 500, message: 'Use até 500 caracteres no motivo.' } }}
-    render={({ field, fieldState }) => <FormField label="Motivo (opcional)" placeholder="Descreva o motivo da ação" value={field.value} error={fieldState.error?.message} maxLength={500} multiline
+    render={({ field, fieldState }) => <FormField label="Motivo (opcional)" placeholder="Descreva o motivo da ação" value={field.value} error={fieldState.error?.message} maxLength={500} showCount multiline
       editable={!disabled} onBlur={field.onBlur} onChangeText={value => { if (operation.isCurrent() && !operation.blocked()) field.onChange(value); }} />}
   />;
   if (!isAdmin) return <View style={styles.container}><AdminHeader title="Controles" subtitle="Área administrativa" /><AdminEmpty text="Acesso restrito a administradores." /></View>;

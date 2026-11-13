@@ -22,7 +22,8 @@ interface BiometricState {
 interface BiometricContextType extends BiometricState {
   enable: () => Promise<void>;
   disable: () => Promise<void>;
-  unlock: () => Promise<void>;
+  unlock: (devicePassword?: boolean) => Promise<void>;
+  unlockOnOpen: () => Promise<void>;
   dismissOffer: () => void;
   setDelay: (delay: number) => Promise<void>;
   returnToLogin: () => Promise<void>;
@@ -34,6 +35,10 @@ interface Operation { epoch: number; session: SessionSnapshot; apiBaseUrl: strin
 
 // Gallery, camera and crop screens send the app to the background; leaving through them only locks after this long.
 const EXTERNAL_SCREEN_GRACE_MS = 300000;
+// Android cancels a prompt opened while the app is still starting. That answer comes in under this time,
+// before anyone could tap "Cancelar", so the automatic prompt is asked once more instead of showing an error.
+const SYSTEM_CANCEL_MS = 1000;
+const OPEN_RETRY_MS = 700;
 
 const INITIAL_STATE: BiometricState = {
   ready: false, enabled: false, locked: false, covered: false,
@@ -57,6 +62,7 @@ export function BiometricProvider({ children }: { children: React.ReactNode }) {
   const externalScreens = useRef(0);
   const awayInExternalScreen = useRef(false);
   const rearmPending = useRef(false);
+  const openRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   authRef.current = auth;
 
   const isRenderedSession = () => {
@@ -220,6 +226,7 @@ export function BiometricProvider({ children }: { children: React.ReactNode }) {
     });
     return () => {
       mounted.current = false;
+      if (openRetry.current) clearTimeout(openRetry.current);
       invalidate();
       unsubscribe();
       subscription.remove();
@@ -257,14 +264,18 @@ export function BiometricProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const unlock = async () => {
+  // attempt: 'manual' is a tap on the lock screen; 'open' is the prompt asked when the lock screen appears.
+  const runUnlock = async (attempt: 'manual' | 'open' | 'retry', devicePassword = false) => {
     if (!isRenderedSession() || !stateRef.current.locked || !config.current) return;
     const operation = begin();
     if (!operation) return;
     const storedConfig = config.current;
+    let retry = false;
     try {
       if (storedConfig.apiBaseUrl !== operation.apiBaseUrl) { await auth.signOut(); return; }
-      if (!await authenticateBiometricDevice(false)) {
+      const startedAt = Date.now();
+      if (!await authenticateBiometricDevice(false, devicePassword)) {
+        if (attempt !== 'manual' && Date.now() - startedAt < SYSTEM_CANCEL_MS) { retry = attempt === 'open'; return; }
         if (current(operation)) publish({ error: 'Autenticação cancelada ou não confirmada. O aplicativo continua bloqueado.' });
         return;
       }
@@ -282,9 +293,19 @@ export function BiometricProvider({ children }: { children: React.ReactNode }) {
       } finally { restoring.current = false; }
       if (current(operation)) publish({ locked: false, offered: false, error: '' });
     } catch {
-      if (current(operation)) publish({ error: 'Não foi possível desbloquear e confirmar a sessão. Verifique a conexão e tente novamente, ou entre com e-mail e senha.' });
-    } finally { finish(operation); }
+      if (current(operation)) publish({ error: 'Não foi possível desbloquear e confirmar a sessão. Verifique a conexão e tente novamente.' });
+    } finally {
+      finish(operation);
+      if (retry && current(operation)) {
+        openRetry.current = setTimeout(() => {
+          openRetry.current = null;
+          if (AppState.currentState === 'active') void runUnlock('retry');
+        }, OPEN_RETRY_MS);
+      }
+    }
   };
+  const unlock = (devicePassword = false) => runUnlock('manual', devicePassword);
+  const unlockOnOpen = () => runUnlock('open');
 
   const disable = async () => {
     if (!isRenderedSession() || !auth.getSession().token || stateRef.current.locked || !stateRef.current.enabled) return;
@@ -359,7 +380,7 @@ export function BiometricProvider({ children }: { children: React.ReactNode }) {
     });
   }, [state]);
 
-  return <BiometricContext.Provider value={{ ...state, enable, disable, unlock, setDelay, dismissOffer, returnToLogin,
+  return <BiometricContext.Provider value={{ ...state, enable, disable, unlock, unlockOnOpen, setDelay, dismissOffer, returnToLogin,
     allowExternalScreen, keepForPasswordChange, confirmIdentity }}>
     {children}
   </BiometricContext.Provider>;

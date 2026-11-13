@@ -87,6 +87,7 @@ class BackendApplicationTests {
 		User updated = userService.completeEmailChange(sourceEmail, completeDto);
 
 		Assertions.assertEquals(targetEmail, updated.getEmail(), "O e-mail do usuário deve ter sido atualizado para o novo endereço");
+		verify(emailService).sendEmailChangedEmail(sourceEmail, "Usuario Troca Email", targetEmail);
 		Assertions.assertTrue(userRepo.existsByEmail(targetEmail), "O novo e-mail deve constar no banco");
 		Assertions.assertFalse(userRepo.existsByEmail(sourceEmail), "O e-mail antigo não deve mais pertencer ao usuário");
 	}
@@ -97,7 +98,7 @@ class BackendApplicationTests {
 		String ownerEmail = "dono.org." + ts + "@spotmeet.com";
 		String memberEmail = "membro.org." + ts + "@spotmeet.com";
 
-		// 1. Register owner and member
+		// Register owner and member
 		RegisterRequestDTO registerOwner = new RegisterRequestDTO();
 		registerOwner.setName("Dono Org");
 		registerOwner.setEmail(ownerEmail);
@@ -119,24 +120,24 @@ class BackendApplicationTests {
 		member.setEmailVerified(true);
 		userRepo.save(member);
 
-		// 2. Owner creates the organization
+		// Owner creates the organization
 		OrganizationRequestDTO createDto = new OrganizationRequestDTO();
 		createDto.setName("Org Teste " + ts);
 		createDto.setAccessKey("#CHV" + ts);
 		createDto.setCnpj("12.345.678/0001-99");
 		OrganizationResponseDTO org = organizationService.createOrganization(ownerEmail, createDto);
 
-		// 3. Member requests access by key
+		// Member requests access by key
 		AccessRequestResponseDTO request = membershipService.requestAccess(memberEmail, org.getAccessKey());
 		Assertions.assertEquals(AccessRequestStatus.PENDING, request.getStatus());
 
-		// 4. Owner approves access
+		// Owner approves access
 		membershipService.approveAccess(request.getId(), ownerEmail);
 
-		// 5. Owner removes (revokes) the member
+		// Owner removes (revokes) the member
 		membershipService.revokeAccess(member.getId(), org.getId(), ownerEmail);
 
-		// 6. Member requests access again after removal (reported bug scenario)
+		// Member requests access again after removal (reported bug scenario)
 		AccessRequestResponseDTO newRequest = membershipService.requestAccess(memberEmail, org.getAccessKey());
 		Assertions.assertNotNull(newRequest, "A solicitação de re-ingresso deve ser criada com sucesso sem erro de duplicidade de chave");
 		Assertions.assertEquals(AccessRequestStatus.PENDING, newRequest.getStatus());

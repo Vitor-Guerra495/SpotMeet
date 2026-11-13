@@ -2,6 +2,7 @@ package com.spotmeet.backend.controller;
 
 import com.spotmeet.backend.dto.AuthResponseDTO;
 import com.spotmeet.backend.dto.CodeDeliveryResultDTO;
+import com.spotmeet.backend.dto.GoogleSignInDTO;
 import com.spotmeet.backend.dto.ForgotPasswordDTO;
 import com.spotmeet.backend.dto.LoginRequestDTO;
 import com.spotmeet.backend.dto.RegisterRequestDTO;
@@ -12,6 +13,7 @@ import com.spotmeet.backend.dto.VerifyEmailDTO;
 import com.spotmeet.backend.model.User;
 import com.spotmeet.backend.security.JwtUtil;
 import com.spotmeet.backend.security.AuthenticationAttempts;
+import com.spotmeet.backend.service.GoogleSignInService;
 import com.spotmeet.backend.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +53,9 @@ public class AuthController {
 
     @Autowired
     private AuthenticationAttempts attempts;
+
+    @Autowired
+    private GoogleSignInService googleSignIn;
 
     /**
      * POST /api/auth/register
@@ -139,6 +144,39 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
         }
     }
+
+    /**
+     * GET /api/auth/google/status
+     * Tells the app whether this server has Google sign-in configured and which client to use.
+     */
+    @GetMapping("/google/status")
+    public Map<String, Object> googleStatus() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("enabled", googleSignIn.isEnabled());
+        response.put("clientId", googleSignIn.isEnabled() ? googleSignIn.getClientId() : null);
+        return response;
+    }
+
+    /**
+     * POST /api/auth/google
+     * Receives the ID token from the Google account chooser on the device and starts a session.
+     */
+    @PostMapping("/google")
+    public ResponseEntity<?> googleSignIn(@Valid @RequestBody GoogleSignInDTO dto) {
+        Instant issuedAt = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+        Map<String, Object> error = new HashMap<>();
+        error.put("success", false);
+        try {
+            return ResponseEntity.ok(createSession(googleSignIn.signIn(dto.getIdToken()), issuedAt));
+        } catch (IllegalStateException e) {
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(error);
+        } catch (IllegalArgumentException e) {
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+        }
+    }
+
 
     private AuthResponseDTO createSession(User user, Instant issuedAt) {
         if (user.getTokensValidAfter() != null && !issuedAt.isAfter(user.getTokensValidAfter())) {

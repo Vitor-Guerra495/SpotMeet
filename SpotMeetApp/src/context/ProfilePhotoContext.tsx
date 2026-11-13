@@ -7,6 +7,7 @@ import { API_BASE_URL } from '../config/api';
 import { parseProfilePhoto, type ProfilePhotoData } from '../utils/profilePhotoData';
 import { pickProfilePhoto, releaseDraftPhoto, PhotoSelectionError, type DraftPhoto, type PhotoSource } from '../utils/profilePhotoPicker';
 import { showAlert } from '../utils/alerts';
+import { forgetUserPhoto } from '../components/profile/UserAvatar';
 
 interface Scope { token: string; version: number; userId: number; role: string | null; api: string; }
 interface Operation { scope: Scope; kind: 'load' | 'select' | 'save' | 'remove'; }
@@ -123,7 +124,7 @@ export function ProfilePhotoProvider({ children }: { children: React.ReactNode }
       form.append('photo', new File(draft.uri));
       const photo = await call(operation, 'PUT', form);
       if (photo && current(operation)) {
-        publish({ photo, draft: null, loaded: true }); releaseDraftPhoto(draft);
+        publish({ photo, draft: null, loaded: true }); releaseDraftPhoto(draft); forgetUserPhoto(operation.scope.userId);
         if (!options?.quiet) showAlert('Sucesso', 'Foto de perfil salva com sucesso.');
         return true;
       }
@@ -137,7 +138,7 @@ export function ProfilePhotoProvider({ children }: { children: React.ReactNode }
     try {
       const photo = await call(operation, 'DELETE');
       if (photo && current(operation)) {
-        releaseDraftPhoto(stateRef.current.draft); publish({ photo, draft: null, loaded: true });
+        releaseDraftPhoto(stateRef.current.draft); publish({ photo, draft: null, loaded: true }); forgetUserPhoto(operation.scope.userId);
         showAlert('Sucesso', 'Foto de perfil removida.');
       }
     } catch { if (current(operation)) publish({ error: 'Não foi possível remover a foto. Tente novamente.' }); }

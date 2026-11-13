@@ -3,6 +3,13 @@ package com.spotmeet.backend;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import jakarta.mail.Address;
+import jakarta.mail.BodyPart;
+import jakarta.mail.Message;
+import jakarta.mail.Multipart;
+import jakarta.mail.Session;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
 import com.spotmeet.backend.config.EmailAsyncConfig;
 import com.spotmeet.backend.controller.AuthController;
 import com.spotmeet.backend.dto.*;
@@ -25,7 +32,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mail.MailSendException;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -39,6 +45,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -62,7 +69,7 @@ class EmailAsyncTests {
     private final Map<String, User> accounts = new HashMap<>();
     private final CountDownLatch smtpStarted = new CountDownLatch(1);
     private final CountDownLatch releaseSmtp = new CountDownLatch(1);
-    private final AtomicReference<SimpleMailMessage> message = new AtomicReference<>();
+    private final AtomicReference<Sent> message = new AtomicReference<>();
     private final AtomicReference<String> deliveryThread = new AtomicReference<>();
     private final AtomicBoolean transactionCommitted = new AtomicBoolean();
     private final AtomicBoolean workerHasTransaction = new AtomicBoolean();
@@ -98,14 +105,15 @@ class EmailAsyncTests {
         when(users.save(any(User.class))).thenAnswer(call -> call.getArgument(0));
         when(encoder.encode(anyString())).thenReturn(HASH);
         when(encoder.matches(anyString(), anyString())).thenAnswer(call -> CODE.equals(call.getArgument(0)) && HASH.equals(call.getArgument(1)));
+        when(smtp.createMimeMessage()).thenAnswer(call -> new MimeMessage((Session) null));
         doAnswer(call -> {
-            message.set(new SimpleMailMessage(call.getArgument(0, SimpleMailMessage.class)));
+            message.set(read(call.getArgument(0, MimeMessage.class)));
             deliveryThread.set(Thread.currentThread().getName());
             workerHasTransaction.set(TransactionSynchronizationManager.isActualTransactionActive());
             smtpStarted.countDown();
             if (!releaseSmtp.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("Test sender was not released");
             return null;
-        }).when(smtp).send(any(SimpleMailMessage.class));
+        }).when(smtp).send(any(MimeMessage.class));
         context = new AnnotationConfigApplicationContext();
         context.getEnvironment().getPropertySources().addFirst(new org.springframework.core.env.MapPropertySource("test-mail",
                 Map.of("spring.mail.username", "sender@example.com", "spring.mail.password", "test-only")));
@@ -164,8 +172,8 @@ class EmailAsyncTests {
         assertTrue(deliveryThread.get().startsWith("spotmeet-mail-"));
         assertFalse(workerHasTransaction.get());
         String destination = flow == Flow.CONFIRM_NEW_EMAIL || flow == Flow.RESEND_NEW_EMAIL ? NEW_EMAIL : EMAIL;
-        assertArrayEquals(new String[]{destination}, message.get().getTo());
-        assertTrue(message.get().getText().contains("100001"));
+        assertArrayEquals(new String[]{destination}, message.get().to());
+        assertTrue(message.get().text().contains("100001"));
         verify(audit).save(argThat(entry -> !entry.getDetails().contains("Entregue") && !entry.getDetails().contains("100001")));
     }
 
@@ -237,7 +245,7 @@ class EmailAsyncTests {
             String sensitiveDetail = EMAIL + " Test User " + CODE + " test-only";
             if (unexpectedError) throw new AssertionError(sensitiveDetail);
             throw new MailSendException(sensitiveDetail);
-        }).when(smtp).send(any(SimpleMailMessage.class));
+        }).when(smtp).send(any(MimeMessage.class));
         ResponseEntity<?> response = caller.submit(() -> transaction.execute(status -> auth.forgotPassword(new ForgotPasswordDTO(EMAIL)))).get(3, TimeUnit.SECONDS);
         drain();
         assertEquals(200, response.getStatusCode().value());
@@ -266,7 +274,7 @@ class EmailAsyncTests {
                 .until(() -> !expiresAt.isAfter(LocalDateTime.now()));
         releaseSmtp.countDown();
         drain();
-        verify(smtp, times(1)).send(any(SimpleMailMessage.class));
+        verify(smtp, times(1)).send(any(MimeMessage.class));
         assertTrue(logMessages().contains("código expirado"));
     }
 
@@ -287,11 +295,13 @@ class EmailAsyncTests {
         releaseSmtp.countDown();
         email.sendVerificationEmail(EMAIL, name, CODE, LocalDateTime.now().plusMinutes(5));
         drain();
-        assertArrayEquals(new String[]{EMAIL}, message.get().getTo());
-        assertNull(message.get().getBcc());
-        assertTrue(message.get().getText().contains(name));
-        assertFalse(message.get().getSubject().contains(name));
-        verify(smtp).send(any(SimpleMailMessage.class));
+        assertArrayEquals(new String[]{EMAIL}, message.get().to());
+        assertNull(message.get().bcc());
+        assertTrue(message.get().text().contains(name));
+        assertFalse(message.get().html().contains("<script>"));
+        assertTrue(message.get().html().contains("&lt;script&gt;"));
+        assertFalse(message.get().subject().contains(name));
+        verify(smtp).send(any(MimeMessage.class));
     }
 
     @Test
@@ -364,10 +374,11 @@ class EmailAsyncTests {
         assertEquals(1, releaseSmtp.getCount());
         assertTrue(deliveryThread.get().startsWith("spotmeet-mail-"));
         assertFalse(workerHasTransaction.get());
-        assertArrayEquals(new String[]{EMAIL}, message.get().getTo());
-        assertEquals("SpotMeet - Senha alterada", message.get().getSubject());
-        assertTrue(message.get().getText().contains("recuperação de senha no aplicativo"));
-        for (String secret : new String[]{"OldPassword1", "NewPassword2", CODE, HASH}) assertFalse(message.get().getText().contains(secret));
+        assertArrayEquals(new String[]{EMAIL}, message.get().to());
+        assertEquals("SpotMeet - Sua senha foi alterada", message.get().subject());
+        assertTrue(message.get().text().contains("Esqueci minha senha"));
+        assertTrue(message.get().html().contains("Esqueci minha senha"));
+        for (String secret : new String[]{"OldPassword1", "NewPassword2", CODE, HASH}) assertFalse(message.get().text().contains(secret));
         assertSanitizedLogs();
     }
 
@@ -402,7 +413,7 @@ class EmailAsyncTests {
     }
 
     @Test void failedSmtpDoesNotChangePasswordSuccessOrExposeCredentials() throws Exception {
-        doThrow(new MailSendException(EMAIL + " OldPassword1 NewPassword2")).when(smtp).send(any(SimpleMailMessage.class));
+        doThrow(new MailSendException(EMAIL + " OldPassword1 NewPassword2")).when(smtp).send(any(MimeMessage.class));
         assertTrue(transaction.execute(status -> changePassword(false)).contains("sucesso"));
         drain();
         assertTrue(transactionCommitted.get());
@@ -421,6 +432,30 @@ class EmailAsyncTests {
         assertTrue(logMessages().contains("SMTP não configurado"));
         assertFalse(logMessages().contains("Código local de QA"));
         assertSanitizedLogs();
+    }
+
+    private record Sent(String[] to, String[] bcc, String subject, String text, String html) {}
+
+    private static Sent read(MimeMessage mime) throws Exception {
+        String[] parts = new String[2];
+        collect(mime.getContent(), parts);
+        return new Sent(addresses(mime.getRecipients(Message.RecipientType.TO)), addresses(mime.getRecipients(Message.RecipientType.BCC)),
+                mime.getSubject(), parts[0], parts[1]);
+    }
+
+    private static void collect(Object content, String[] parts) throws Exception {
+        if (!(content instanceof Multipart multipart)) return;
+        for (int i = 0; i < multipart.getCount(); i++) {
+            BodyPart part = multipart.getBodyPart(i);
+            String type = part.getDataHandler().getContentType();
+            if (type.startsWith("text/plain")) parts[0] = (String) part.getContent();
+            else if (type.startsWith("text/html")) parts[1] = (String) part.getContent();
+            else collect(part.getContent(), parts);
+        }
+    }
+
+    private static String[] addresses(Address[] list) {
+        return list == null ? null : Arrays.stream(list).map(address -> ((InternetAddress) address).getAddress()).toArray(String[]::new);
     }
 
     private void drain() throws Exception {

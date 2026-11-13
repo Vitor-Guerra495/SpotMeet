@@ -323,7 +323,7 @@ public class UserService {
         user.setRecoveryTokenExpiresAt(null);
         user.setEmailVerified(true);
         userRepo.save(user);
-        emailService.sendPasswordChangedEmail(user.getEmail());
+        emailService.sendPasswordChangedEmail(user.getEmail(), user.getName(), EmailService.PasswordOrigin.RECOVERY);
 
         try {
             auditLogRepo.save(new AuditLog(user, "PASSWORD_RESET", "Senha redefinida com sucesso para: " + user.getEmail()));
@@ -356,7 +356,7 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
         user.setTokensValidAfter(Instant.now().truncatedTo(ChronoUnit.MILLIS));
         userRepo.save(user);
-        emailService.sendPasswordChangedEmail(user.getEmail());
+        emailService.sendPasswordChangedEmail(user.getEmail(), user.getName(), EmailService.PasswordOrigin.APP);
 
         try {
             auditLogRepo.save(new AuditLog(user, "PASSWORD_CHANGED", "Senha alterada pelo próprio usuário: " + user.getEmail()));
@@ -519,6 +519,7 @@ public class UserService {
         user.setNewEmailTokenExpiresAt(null);
 
         User updated = userRepo.save(user);
+        emailService.sendEmailChangedEmail(oldEmail, updated.getName(), newEmail);
 
         // Strict LGPD audit record
         try {

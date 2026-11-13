@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Modal, BackHandler } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Modal, BackHandler, Animated } from 'react-native';
 import { Ionicons } from '@react-native-vector-icons/ionicons';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,9 +24,13 @@ import OtpInput from '../components/forms/OtpInput';
 import FormScrollView from '../components/forms/FormScrollView';
 import BiometricSettings from '../components/auth/BiometricSettings';
 import ProfilePhotoEditor from '../components/profile/ProfilePhotoEditor';
+import UserAvatar from '../components/profile/UserAvatar';
+import AttendanceReport from '../components/settings/AttendanceReport';
+import HelpCenter from '../components/settings/HelpCenter';
+import type { HelpProfile } from '../utils/helpTopics';
 
 type PresenceStatus = 'PRESENT' | 'AWAY' | 'BUSY';
-type SettingsSection = 'profile' | 'security' | 'preferences';
+type SettingsSection = 'menu' | 'profile' | 'security' | 'report' | 'help';
 interface ProfileValues { name: string; bio: string; }
 interface PreferenceValues { status: PresenceStatus; theme: ThemeType; }
 interface PasswordValues { currentPassword: string; newPassword: string; confirmPassword: string; }
@@ -34,7 +38,12 @@ interface EmailValues { currentCode: string; newEmail: string; newEmailCode: str
 
 const EMPTY_PASSWORDS: PasswordValues = { currentPassword: '', newPassword: '', confirmPassword: '' };
 const EMPTY_EMAIL: EmailValues = { currentCode: '', newEmail: '', newEmailCode: '' };
-const SECTIONS: [SettingsSection, string][] = [['profile', 'Perfil'], ['security', 'Segurança'], ['preferences', 'Preferências']];
+// Ajustes opens on a menu; each item opens one page with a back arrow.
+const SECTION_TITLES: Record<SettingsSection, [string, string]> = {
+  menu: ['Ajustes', 'Perfil e preferências.'], profile: ['Perfil', 'Foto, nome, e-mail e tema.'],
+  security: ['Segurança', 'Senha e biometria'],
+  report: ['Meu Relatório', 'Reuniões em que você registrou entrada.'], help: ['Ajuda', 'Manual de utilização do SpotMeet.'],
+};
 const STATUS_OPTIONS: [PresenceStatus, string][] = [['PRESENT', 'Presente'], ['AWAY', 'Ausente'], ['BUSY', 'Ocupado']];
 
 function errorMessage(error: unknown, fallback: string) {
@@ -52,15 +61,19 @@ async function readResponse(response: Response, fallback: string): Promise<Recor
   return data as Record<string, unknown>;
 }
 
-export default function SettingsScreen({ navigation }: any) {
+export default function SettingsScreen({ navigation, route }: any) {
   const insets = useSafeAreaInsets();
   const { token, signOut, updateSession, userId, getSession } = useAuth();
   const profilePhoto = useProfilePhoto();
   const biometric = useBiometric();
   const renderedSessionVersion = getSession().version;
   const { theme, setTheme, colors } = useTheme();
-  const [section, setSection] = useState<SettingsSection>('profile');
-  const sectionRef = useRef<SettingsSection>('profile');
+  const [section, setSection] = useState<SettingsSection>('menu');
+  const sectionRef = useRef<SettingsSection>('menu');
+  const [helpTopic, setHelpTopic] = useState<string | null>(null);
+  const [helpQuery, setHelpQuery] = useState('');
+  const [helpProfile, setHelpProfile] = useState<HelpProfile | null>('all');
+  const profileScroll = useRef(new Animated.Value(0)).current;
 
   const profileForm = useForm<ProfileValues>({ defaultValues: { name: '', bio: '' }, mode: 'onBlur' });
   const profile = useWatch({ control: profileForm.control });
@@ -98,7 +111,7 @@ export default function SettingsScreen({ navigation }: any) {
   const [preferencesError, setPreferencesError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [emailRequestError, setEmailRequestError] = useState('');
-  const [savingSection, setSavingSection] = useState<SettingsSection | null>(null);
+  const [savingSection, setSavingSection] = useState<SettingsSection | 'status' | null>(null);
   const [changingPassword, setChangingPassword] = useState(false);
   const profileRequestPending = useRef(false);
   const passwordRequestPending = useRef(false);
@@ -120,10 +133,11 @@ export default function SettingsScreen({ navigation }: any) {
   const isCurrentScreen = () => screenActive.current && getSession().version === renderedSessionVersion;
 
   // Read on every render so react-hook-form keeps the dirty state up to date.
-  const profileUnsaved = Object.keys(profileForm.formState.dirtyFields).length > 0 || !!profilePhoto.draft;
-  const preferencesUnsaved = Object.keys(preferencesForm.formState.dirtyFields).length > 0;
-  const unsavedRef = useRef({ profile: false, preferences: false });
-  unsavedRef.current = { profile: profileUnsaved, preferences: preferencesUnsaved };
+  // The theme is chosen in Perfil and the presence status on the menu, both saved in the same user record.
+  const themeUnsaved = !!preferencesForm.formState.dirtyFields.theme;
+  const profileUnsaved = Object.keys(profileForm.formState.dirtyFields).length > 0 || !!profilePhoto.draft || themeUnsaved;
+  const unsavedRef = useRef({ profile: false });
+  unsavedRef.current = { profile: profileUnsaved };
 
   const cancelThemePreview = () => {
     if (themePreviewTimer.current !== null) clearTimeout(themePreviewTimer.current);
@@ -132,7 +146,7 @@ export default function SettingsScreen({ navigation }: any) {
   };
 
   const previewTheme = (value: ThemeType) => {
-    if (!isCurrentScreen() || sectionRef.current !== 'preferences' || profileRequestPending.current) return;
+    if (!isCurrentScreen() || sectionRef.current !== 'profile' || profileRequestPending.current) return;
     if (preferencesForm.getValues('theme') === value) return;
     preferencesForm.setValue('theme', value, { shouldDirty: true });
     setPreferencesError('');
@@ -144,11 +158,14 @@ export default function SettingsScreen({ navigation }: any) {
       themePreviewTimer.current = null;
       const next = pendingTheme.current;
       pendingTheme.current = null;
-      if (next && next !== value && isCurrentScreen() && sectionRef.current === 'preferences') {
+      if (next && next !== value && isCurrentScreen() && sectionRef.current === 'profile') {
         void setTheme(next, false);
       }
     }, 150);
   };
+
+  // Each section opens a new scroll at the top, so the photo starts at full size again.
+  useEffect(() => { profileScroll.setValue(0); }, [section, loadingProfile, profileScroll]);
 
   useEffect(() => {
     screenActive.current = true;
@@ -217,10 +234,8 @@ export default function SettingsScreen({ navigation }: any) {
       profileForm.reset();
       setProfileError('');
       profilePhoto.discard();
-    } else if (target === 'preferences') {
       cancelThemePreview();
-      preferencesForm.reset();
-      setPreferencesError('');
+      preferencesForm.reset({ status: preferencesForm.getValues('status'), theme: savedThemeRef.current });
       void setTheme(savedThemeRef.current, false);
     }
   };
@@ -228,16 +243,14 @@ export default function SettingsScreen({ navigation }: any) {
   // Returns true when the user must decide first; `proceed` runs after saving or discarding.
   const askUnsaved = (proceed: () => void) => {
     const current = sectionRef.current;
-    if (!isCurrentScreen() || current === 'security' || !unsavedRef.current[current]) return false;
+    if (!isCurrentScreen() || current !== 'profile' || !unsavedRef.current.profile) return false;
     if (profileRequestPending.current || passwordRequestPending.current) return true;
     requestConfirmation({
       title: 'Alterações não salvas',
-      message: current === 'profile'
-        ? 'Você alterou o perfil e ainda não salvou. Deseja salvar antes de sair?'
-        : 'Você alterou as preferências e ainda não salvou. Deseja salvar antes de sair?',
+      message: 'Você alterou o perfil e ainda não salvou. Deseja salvar antes de sair?',
       confirmText: 'Salvar', cancelText: 'Continuar editando', extraText: 'Descartar', destructive: false,
       onConfirm: async () => {
-        const saved = current === 'profile' ? await handleSaveProfile() : await handleSavePreferences();
+        const saved = await handleSaveProfile();
         if (saved && isCurrentScreen()) proceed();
       },
       onExtra: () => {
@@ -250,35 +263,56 @@ export default function SettingsScreen({ navigation }: any) {
   };
   const askUnsavedRef = useRef(askUnsaved);
   askUnsavedRef.current = askUnsaved;
+  const changeSectionRef = useRef<(next: SettingsSection) => void>(() => undefined);
+  const helpTopicRef = useRef<string | null>(null);
+  helpTopicRef.current = helpTopic;
 
-  // Leaving Ajustes asks about unsaved changes, drops an unsaved photo preview and reopens on Perfil.
+  // Leaving Ajustes asks about unsaved changes, drops an unsaved photo preview and reopens on the menu.
   const discardPhoto = profilePhoto.discard;
   useFocusEffect(useCallback(() => {
     const removeGuard = setLeaveGuard(proceed => askUnsavedRef.current(proceed));
-    const back = BackHandler.addEventListener('hardwareBackPress', () => askUnsavedRef.current(() => navigation.goBack()));
+    // The back button of the phone leaves a page to the menu before leaving Ajustes.
+    const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (sectionRef.current === 'help' && helpTopicRef.current) { setHelpTopic(null); return true; }
+      if (sectionRef.current !== 'menu') { changeSectionRef.current('menu'); return true; }
+      return askUnsavedRef.current(() => navigation.goBack());
+    });
     return () => {
       removeGuard();
       back.remove();
       discardPhoto();
-      sectionRef.current = 'profile';
-      setSection('profile');
+      sectionRef.current = 'menu';
+      setSection('menu');
+      setHelpTopic(null);
     };
   }, [navigation, discardPhoto]));
+
+  // "Meu Relatório" on the Reuniões tab opens Ajustes straight on the report.
+  const openParam = route?.params?.open;
+  useFocusEffect(useCallback(() => {
+    if (openParam === 'report' || openParam === 'help') {
+      navigation.setParams({ open: undefined });
+      sectionRef.current = openParam;
+      setSection(openParam);
+    }
+  }, [openParam, navigation]));
 
   const changeSection = (next: SettingsSection) => {
     if (!isCurrentScreen() || passwordRequestPending.current) return;
     if (next !== sectionRef.current && askUnsaved(() => switchSection(next))) return;
     switchSection(next);
   };
+  changeSectionRef.current = changeSection;
 
   const switchSection = (next: SettingsSection) => {
     if (!isCurrentScreen()) return;
-    if (next !== 'preferences' && pendingTheme.current) {
+    if (next !== 'profile' && pendingTheme.current) {
       const nextTheme = pendingTheme.current;
       cancelThemePreview();
       void setTheme(nextTheme, false);
     }
     if (next !== 'security') clearPasswords();
+    if (next !== 'help') { setHelpTopic(null); setHelpQuery(''); setHelpProfile('all'); }
     sectionRef.current = next;
     setSection(next);
   };
@@ -309,12 +343,15 @@ export default function SettingsScreen({ navigation }: any) {
       profileForm.setError('bio', { type: 'validate', message: 'A biografia pode ter no máximo 500 caracteres.' });
       return false;
     }
+    const themeChanged = !!preferencesForm.formState.dirtyFields.theme;
+    const chosenTheme = preferencesForm.getValues('theme');
+    if (themeChanged) cancelThemePreview();
     profileRequestPending.current = true;
     setSavingSection('profile');
     try {
       const response = await fetch(`${API_BASE_URL}/users/me`, {
         method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cleanName, bio: bio.trim() }),
+        body: JSON.stringify({ name: cleanName, bio: bio.trim(), ...(themeChanged ? { preferredTheme: chosenTheme } : {}) }),
       });
       const data: unknown = await response.json().catch(() => null);
       if (!isCurrentScreen()) return false;
@@ -327,13 +364,19 @@ export default function SettingsScreen({ navigation }: any) {
         throw new Error('Não foi possível confirmar a atualização do perfil.');
       }
       profileForm.reset({ name: data.name, bio: 'bio' in data && typeof data.bio === 'string' ? data.bio : '' });
+      if (themeChanged) {
+        const savedTheme = 'preferredTheme' in data && (data.preferredTheme === 'LIGHT' || data.preferredTheme === 'DARK') ? data.preferredTheme : chosenTheme;
+        preferencesForm.reset({ status: preferencesForm.getValues('status'), theme: savedTheme });
+        savedThemeRef.current = savedTheme;
+        await setTheme(savedTheme, false);
+      }
       updateSession({ name: data.name });
       notifySync('PROFILE_MUTATED', { userId });
       // A photo still in preview is saved with the profile; its error, if any, stays below the photo.
       const photoSaved = profilePhoto.draft ? await profilePhoto.save({ quiet: true }) : null;
       if (!isCurrentScreen()) return false;
       if (photoSaved === false) showAlert('Perfil salvo', 'Os dados do perfil foram salvos, mas a foto não. Veja o aviso abaixo da foto.');
-      else showAlert('Sucesso', photoSaved ? 'Perfil e foto salvos com sucesso.' : 'Perfil salvo com sucesso.');
+      else showAlert('Perfil atualizado', photoSaved ? 'Suas alterações e a foto foram salvas.' : 'Suas alterações foram salvas.');
       return photoSaved !== false;
     } catch (error) {
       if (isCurrentScreen()) setProfileError(errorMessage(error, 'Não foi possível salvar o perfil. Tente novamente.'));
@@ -344,37 +387,31 @@ export default function SettingsScreen({ navigation }: any) {
     }
   };
 
-  const handleSavePreferences = async (): Promise<boolean> => {
-    if (!isCurrentScreen() || sectionRef.current !== 'preferences' || profileRequestPending.current || passwordRequestPending.current) return false;
-    const preferenceValues = preferencesForm.getValues();
-    cancelThemePreview();
-    void setTheme(preferenceValues.theme, false);
+  // The status is saved as soon as an option is tapped on the menu; the saved theme is sent unchanged.
+  const handleSaveStatus = async (value: PresenceStatus) => {
+    if (!isCurrentScreen() || sectionRef.current !== 'menu' || value === status
+        || profileRequestPending.current || passwordRequestPending.current) return;
     profileRequestPending.current = true;
-    setSavingSection('preferences');
+    setSavingSection('status');
     setPreferencesError('');
     try {
       const response = await fetch(`${API_BASE_URL}/users/me`, {
         method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ availabilityStatus: preferenceValues.status, preferredTheme: preferenceValues.theme }),
+        body: JSON.stringify({ availabilityStatus: value, preferredTheme: savedThemeRef.current }),
       });
-      const data = await readResponse(response, 'Não foi possível salvar as preferências. Tente novamente.');
-      if (!isCurrentScreen()) return false;
+      const data = await readResponse(response, 'Não foi possível salvar o status. Tente novamente.');
+      if (!isCurrentScreen()) return;
       if ((typeof data.id === 'number' && userId != null && data.id !== userId)
           || (data.preferredTheme !== 'LIGHT' && data.preferredTheme !== 'DARK')
           || !['PRESENT', 'AWAY', 'BUSY', 'ONLINE'].includes(data.availabilityStatus as string)) {
-        throw new Error('Não foi possível confirmar a atualização das preferências.');
+        throw new Error('Não foi possível confirmar a atualização do status.');
       }
       const savedStatus = data.availabilityStatus === 'AWAY' || data.availabilityStatus === 'BUSY' ? data.availabilityStatus : 'PRESENT';
-      preferencesForm.reset({ status: savedStatus, theme: data.preferredTheme });
-      savedThemeRef.current = data.preferredTheme;
-      await setTheme(data.preferredTheme, false);
-      if (!isCurrentScreen()) return false;
+      preferencesForm.setValue('status', savedStatus);
       notifySync('PROFILE_MUTATED', { userId });
-      showAlert('Sucesso', 'Preferências salvas com sucesso.');
-      return true;
+      showAlert('Sucesso', 'Status de presença salvo.');
     } catch (error) {
-      if (isCurrentScreen()) setPreferencesError(errorMessage(error, 'Não foi possível salvar as preferências. Tente novamente.'));
-      return false;
+      if (isCurrentScreen()) setPreferencesError(errorMessage(error, 'Não foi possível salvar o status. Tente novamente.'));
     } finally {
       profileRequestPending.current = false;
       if (isCurrentScreen()) setSavingSection(null);
@@ -788,7 +825,7 @@ export default function SettingsScreen({ navigation }: any) {
 
   const renderProfile = () => (
     <>
-      <ProfilePhotoEditor name={name} disabled={savingSection !== null || changingPassword} />
+      <ProfilePhotoEditor name={name} disabled={savingSection !== null || changingPassword} scrollY={profileScroll} />
       <Controller control={profileForm.control} name="name"
         rules={{ required: 'Campo obrigatório.', validate: value => isValidName(value) || 'O nome deve ter entre 2 e 100 caracteres.' }}
         render={({ field }) => (
@@ -804,62 +841,19 @@ export default function SettingsScreen({ navigation }: any) {
         rules={{ maxLength: { value: 500, message: 'A biografia pode ter no máximo 500 caracteres.' } }}
         render={({ field }) => (
           <FormField ref={field.ref} label="Biografia (opcional)" placeholder="Conte um pouco sobre você"
-            value={field.value} editable={!busyProfile} multiline maxLength={500} textAlignVertical="top"
+            value={field.value} editable={!busyProfile} multiline maxLength={500} showCount textAlignVertical="top"
             style={{ minHeight: 100 }} onBlur={field.onBlur} error={profileForm.formState.errors.bio?.message}
             onChangeText={value => {
               if (!isCurrentScreen() || sectionRef.current !== 'profile' || profileRequestPending.current) return;
               field.onChange(value); profileForm.clearErrors('bio'); setProfileError('');
             }} />
         )} />
-      <Text style={[styles.counter, { color: colors.subtext }]}>{bio.length} / 500</Text>
       <FormField label="E-mail" value={email} editable={false} icon="mail-outline"
         trailing={<TouchableOpacity accessibilityRole="button" accessibilityLabel="Alterar e-mail"
           disabled={savingSection !== null || changingPassword} onPress={openEmailChangeModal} style={styles.emailAction}>
           <Text style={[styles.emailActionText, { color: accent }]}>Alterar</Text>
         </TouchableOpacity>} />
-      {feedback(profileError)}
-    </>
-  );
-
-  const renderSecurity = () => (
-    <>
-      <View style={styles.sectionIntro}>
-        <Ionicons name="shield-checkmark-outline" size={25} color={accent} />
-        <View style={styles.introText}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Altere sua senha</Text>
-          <Text style={[styles.description, { color: colors.subtext }]}>Após salvar, entre novamente com a nova senha.</Text>
-        </View>
-      </View>
-      {renderPassword('currentPassword', 'Senha atual', 'Digite sua senha atual')}
-      {renderPassword('newPassword', 'Nova senha', 'Digite a nova senha')}
-      {renderPassword('confirmPassword', 'Confirmar nova senha', 'Repita a nova senha')}
-      <View style={[styles.rules, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <PasswordRules password={newPassword} confirmation={confirmPassword} />
-      </View>
-      {feedback(passwordError)}
-      <BiometricSettings disabled={changingPassword || savingSection !== null} />
-    </>
-  );
-
-  const renderPreferences = () => (
-    <>
-      <Text style={[styles.label, { color: colors.subtext }]}>DISPONIBILIDADE</Text>
-      <View accessibilityRole="radiogroup" style={styles.optionsRow}>
-        {STATUS_OPTIONS.map(([value, label]) => (
-          <TouchableOpacity key={value} accessibilityRole="radio" accessibilityLabel={label}
-            accessibilityState={{ checked: status === value, disabled: savingSection !== null }}
-            disabled={savingSection !== null}
-            style={[styles.statusOption, { backgroundColor: colors.card, borderColor: status === value ? colors.primary : colors.border }]}
-            onPress={() => {
-              if (!isCurrentScreen() || sectionRef.current !== 'preferences' || profileRequestPending.current) return;
-              preferencesForm.setValue('status', value, { shouldDirty: true }); setPreferencesError('');
-            }}>
-            <View style={[styles.statusDot, { backgroundColor: value === 'PRESENT' ? colors.success : value === 'AWAY' ? colors.warning : colors.danger }]} />
-            <Text style={[styles.optionLabel, { color: colors.text }]}>{label}</Text>
-            {status === value ? <Ionicons name="checkmark-circle" size={16} color={accent} /> : null}
-          </TouchableOpacity>
-        ))}
-      </View>
+      <Text style={[styles.description, { color: colors.subtext, marginTop: -4, marginBottom: 12 }]}>Para trocar, confirmamos com um código no e-mail atual e outro no novo.</Text>
       <Text style={[styles.label, { color: colors.subtext }]}>TEMA</Text>
       <View accessibilityRole="radiogroup" style={styles.optionsRow}>
         {(['LIGHT', 'DARK'] as const).map(value => (
@@ -883,8 +877,55 @@ export default function SettingsScreen({ navigation }: any) {
         ))}
       </View>
       <Text style={[styles.description, { color: colors.subtext, marginVertical: 12 }]}>
-        O tema muda na prévia. Salve as preferências para manter a escolha; sair de Ajustes desfaz a prévia não salva.
+        O tema muda na prévia. Salve as alterações para manter a escolha; sair do Perfil sem salvar desfaz a prévia.
       </Text>
+      {feedback(profileError)}
+    </>
+  );
+
+  const menuItem = (target: SettingsSection, icon: React.ComponentProps<typeof Ionicons>['name'], title: string, subtitle: string) => (
+    <TouchableOpacity key={target} accessibilityRole="button" accessibilityLabel={title} onPress={() => changeSection(target)}
+      style={[styles.menuItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View style={[styles.menuIcon, { backgroundColor: colors.inputBg }]}><Ionicons name={icon} size={22} color={accent} /></View>
+      <View style={styles.introText}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>{title}</Text>
+        <Text style={[styles.description, { color: colors.subtext }]}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color={colors.subtext} />
+    </TouchableOpacity>
+  );
+
+  const renderMenu = () => (
+    <>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Abrir o Perfil" onPress={() => changeSection('profile')}
+        style={[styles.menuItem, { backgroundColor: colors.card, borderColor: colors.border, paddingVertical: 16 }]}>
+        <UserAvatar userId={userId} name={name} style={[styles.menuAvatar, { backgroundColor: colors.inputBg }]} textStyle={[styles.menuAvatarText, { color: accent }]} />
+        <View style={styles.introText}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]} numberOfLines={1}>{name}</Text>
+          <Text style={[styles.description, { color: colors.subtext }]} numberOfLines={1}>{email}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={colors.subtext} />
+      </TouchableOpacity>
+      <Text style={[styles.label, { color: colors.subtext, marginTop: 14 }]}>REUNIÕES E AJUDA</Text>
+      {menuItem('report', 'bar-chart-outline', 'Meu Relatório de Reuniões', 'Suas presenças por período e comissão.')}
+      {menuItem('help', 'help-circle-outline', 'Ajuda', 'Manual de utilização do SpotMeet.')}
+      <Text style={[styles.label, { color: colors.subtext, marginTop: 14 }]}>CONTA</Text>
+      {menuItem('security', 'shield-checkmark-outline', 'Segurança', 'Senha e biometria')}
+      <Text style={[styles.label, { color: colors.subtext, marginTop: 14 }]}>STATUS DE PRESENÇA</Text>
+      <View accessibilityRole="radiogroup" style={styles.optionsRow}>
+        {STATUS_OPTIONS.map(([value, label]) => (
+          <TouchableOpacity key={value} accessibilityRole="radio" accessibilityLabel={`Status ${label}`}
+            accessibilityState={{ checked: status === value, disabled: savingSection !== null }}
+            disabled={savingSection !== null}
+            style={[styles.statusOption, { backgroundColor: colors.card, borderColor: status === value ? colors.primary : colors.border }]}
+            onPress={() => { void handleSaveStatus(value); }}>
+            <View style={[styles.statusDot, { backgroundColor: value === 'PRESENT' ? colors.success : value === 'AWAY' ? colors.warning : colors.danger }]} />
+            <Text style={[styles.optionLabel, { color: colors.text }]}>{label}</Text>
+            {status === value ? <Ionicons name="checkmark-circle" size={16} color={accent} /> : null}
+          </TouchableOpacity>
+        ))}
+      </View>
+      {savingSection === 'status' ? <ActivityIndicator color={colors.primary} accessibilityLabel="Salvando status" /> : null}
       {feedback(preferencesError)}
       <TouchableOpacity accessibilityRole="button" onPress={handleLogout}
         style={[styles.logout, { borderColor: colors.danger }]}>
@@ -894,20 +935,38 @@ export default function SettingsScreen({ navigation }: any) {
     </>
   );
 
+  const renderSecurity = () => (
+    <>
+      <View style={styles.sectionIntro}>
+        <Ionicons name="shield-checkmark-outline" size={25} color={accent} />
+        <View style={styles.introText}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Altere sua senha</Text>
+          <Text style={[styles.description, { color: colors.subtext }]}>Após salvar, entre novamente com a nova senha.</Text>
+        </View>
+      </View>
+      {renderPassword('currentPassword', 'Senha atual', 'Digite sua senha atual')}
+      {renderPassword('newPassword', 'Nova senha', 'Digite a nova senha')}
+      {renderPassword('confirmPassword', 'Confirmar nova senha', 'Repita a nova senha')}
+      <View style={[styles.rules, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <PasswordRules password={newPassword} confirmation={confirmPassword} />
+      </View>
+      {feedback(passwordError)}
+      <BiometricSettings disabled={changingPassword || savingSection !== null} />
+    </>
+  );
+
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <Text style={[styles.title, { color: colors.text }]}>Ajustes</Text>
-        <Text style={[styles.description, { color: colors.subtext }]}>Perfil, segurança e preferências</Text>
-        <View style={[styles.tabs, { backgroundColor: colors.inputBg }]}>
-          {SECTIONS.map(([value, label]) => (
-            <TouchableOpacity key={value} accessibilityRole="tab"
-              accessibilityState={{ selected: section === value, disabled: changingPassword }}
-              disabled={changingPassword} onPress={() => changeSection(value)}
-              style={[styles.tab, section === value && { backgroundColor: colors.card }]}>
-              <Text style={[styles.tabLabel, { color: section === value ? accent : colors.subtext }]}>{label}</Text>
-            </TouchableOpacity>
-          ))}
+        <View style={styles.headerRow}>
+          {section !== 'menu' && <TouchableOpacity accessibilityRole="button" accessibilityLabel={section === 'help' && helpTopic ? 'Voltar à Ajuda' : 'Voltar a Ajustes'}
+            disabled={changingPassword} onPress={() => (section === 'help' && helpTopic ? setHelpTopic(null) : changeSection('menu'))} style={styles.back}>
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </TouchableOpacity>}
+          <View style={styles.introText}>
+            <Text style={[styles.title, { color: colors.text, marginBottom: 0 }]}>{SECTION_TITLES[section][0]}</Text>
+            <Text style={[styles.description, { color: colors.subtext }]}>{SECTION_TITLES[section][1]}</Text>
+          </View>
         </View>
       </View>
       {loadingProfile ? <View style={styles.loading}><ActivityIndicator color={colors.primary} />
@@ -915,20 +974,21 @@ export default function SettingsScreen({ navigation }: any) {
       : loadError ? <View style={styles.loading}>{feedback(loadError)}
         <FormButton label="Tentar novamente" icon="refresh-outline" onPress={loadProfile} /></View>
       : <>
-        <FormScrollView key={section} contentContainerStyle={styles.content} footer={
+        <FormScrollView key={`${section}:${helpTopic ?? ''}`} contentContainerStyle={styles.content} scrollEventThrottle={16}
+          onScroll={section === 'profile' ? Animated.event([{ nativeEvent: { contentOffset: { y: profileScroll } } }], { useNativeDriver: false }) : undefined}
+          footer={section === 'menu' || section === 'report' || section === 'help' ? undefined :
           <View style={[styles.footer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
-          {(section === 'profile' && profileUnsaved) || (section === 'preferences' && preferencesUnsaved)
+          {section === 'profile' && profileUnsaved
             ? <Text style={[styles.description, { color: colors.subtext }]}>Alterações não salvas</Text> : null}
           {section === 'profile'
             ? <FormButton label="Salvar Alterações" icon="save-outline" onPress={() => { void handleSaveProfile(); }}
                 loading={savingSection === 'profile'} disabled={savingSection !== null || changingPassword || !profileUnsaved} />
-            : section === 'security'
-              ? <FormButton label="Alterar Senha" icon="shield-checkmark-outline" onPress={handleChangePassword} loading={changingPassword} />
-              : <FormButton label="Salvar preferências" icon="save-outline" onPress={() => { void handleSavePreferences(); }}
-                  loading={savingSection === 'preferences'} disabled={savingSection !== null || changingPassword || !preferencesUnsaved} />}
+            : <FormButton label="Alterar Senha" icon="shield-checkmark-outline" onPress={handleChangePassword} loading={changingPassword} />}
           </View>
         }>
-          {section === 'profile' ? renderProfile() : section === 'security' ? renderSecurity() : renderPreferences()}
+          {section === 'menu' ? renderMenu() : section === 'profile' ? renderProfile() : section === 'security' ? renderSecurity()
+            : section === 'report' ? <AttendanceReport token={token} /> : <HelpCenter topicId={helpTopic} onOpenTopic={setHelpTopic}
+              query={helpQuery} onQuery={setHelpQuery} openProfile={helpProfile} onOpenProfile={setHelpProfile} />}
         </FormScrollView>
       </>}
       <Modal visible={emailModalVisible} transparent animationType="slide" onRequestClose={closeEmailChangeModal}>
@@ -1003,9 +1063,12 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingBottom: 12, width: '100%', maxWidth: 480, alignSelf: 'center' },
   title: { fontSize: 26, fontWeight: '700', marginBottom: 5 },
   description: { fontSize: 13, lineHeight: 19 },
-  tabs: { flexDirection: 'row', borderRadius: 14, padding: 4, marginTop: 14, gap: 3 },
-  tab: { flex: 1, minHeight: 48, borderRadius: 10, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 3 },
-  tabLabel: { fontSize: 12, lineHeight: 17, fontWeight: '600', textAlign: 'center' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  back: { minWidth: 44, minHeight: 48, justifyContent: 'center', alignItems: 'flex-start' },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 10, minHeight: 64 },
+  menuIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  menuAvatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  menuAvatarText: { fontSize: 18, fontWeight: '700' },
   content: { flexGrow: 1, padding: 16, width: '100%', maxWidth: 480, alignSelf: 'center' },
   counter: { fontSize: 12, textAlign: 'right', marginBottom: 12, marginTop: -5 },
   emailAction: { minHeight: 48, paddingHorizontal: 12, justifyContent: 'center' },
@@ -1020,7 +1083,7 @@ const styles = StyleSheet.create({
   future: { flexDirection: 'row', gap: 12, borderWidth: 1, borderRadius: 14, padding: 14, alignItems: 'center', marginTop: 8 },
   label: { fontSize: 11, fontWeight: '700', marginBottom: 10, marginTop: 6 },
   optionsRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
-  statusOption: { flex: 1, borderWidth: 2, borderRadius: 14, minHeight: 88, padding: 10, alignItems: 'center', justifyContent: 'center', gap: 7 },
+  statusOption: { flex: 1, borderWidth: 2, borderRadius: 14, minHeight: 72, padding: 10, alignItems: 'center', justifyContent: 'center', gap: 7 },
   statusDot: { width: 10, height: 10, borderRadius: 5 },
   optionLabel: { fontSize: 12, lineHeight: 17, fontWeight: '600', textAlign: 'center' },
   themeOption: { flex: 1, borderWidth: 2, borderRadius: 14, padding: 8 },
@@ -1039,5 +1102,5 @@ const styles = StyleSheet.create({
   progress: { flexDirection: 'row', gap: 6, marginBottom: 16 },
   progressStep: { flex: 1, height: 4, borderRadius: 2 },
   link: { minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
-  linkText: { fontSize: 13, lineHeight: 18, fontWeight: '600', textAlign: 'center' },
+  linkText: { alignSelf: 'stretch', fontSize: 13, lineHeight: 18, fontWeight: '600', textAlign: 'center' },
 });

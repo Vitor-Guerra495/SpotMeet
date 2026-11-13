@@ -47,9 +47,9 @@ export function AdminMetric({ label, value }: { label: string; value: string }) 
 export function AdminEmpty({ text }: { text: string }) {
   const { colors } = useTheme(); return <View style={styles.empty}><Ionicons name="folder-open-outline" size={28} color={colors.subtext} /><Text style={[styles.subtitle, { color: colors.subtext }]}>{text}</Text></View>;
 }
-export function AdminSheet({ title, visible, onClose, disabled, children, footer }: { title: string; visible: boolean; onClose: () => void; disabled?: boolean; children: React.ReactNode; footer?: React.ReactNode }) {
+export function AdminSheet({ title, visible, onClose, onBack, disabled, children, footer }: { title: string; visible: boolean; onClose: () => void; onBack?: () => void; disabled?: boolean; children: React.ReactNode; footer?: React.ReactNode }) {
   const { colors } = useTheme(); const insets = useSafeAreaInsets();
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={[styles.overlay, { paddingTop: Math.max(insets.top + 8, 16) }]}>
+  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onBack ?? onClose}><View style={[styles.overlay, { paddingTop: Math.max(insets.top + 8, 16) }]}>
     <View style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: insets.bottom, borderColor: colors.border }]}>
       <View style={[styles.handle, { backgroundColor: colors.border }]} /><View style={styles.sheetHeader}>
         <Text style={[styles.cardTitle, styles.flex, { color: colors.text }]}>{title}</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Fechar janela" disabled={disabled} style={styles.iconButton} onPress={onClose}>

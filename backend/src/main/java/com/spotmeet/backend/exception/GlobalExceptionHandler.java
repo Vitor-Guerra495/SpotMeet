@@ -44,13 +44,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Map<String, String>> handleUploadSize(MaxUploadSizeExceededException exception) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).header("Cache-Control", "no-store")
-                .body(Map.of("message", "A foto deve ter no máximo 1 MB."));
+                .body(Map.of("message", "O arquivo enviado passa do tamanho permitido."));
     }
 
     @ExceptionHandler(MultipartException.class)
     public ResponseEntity<Map<String, String>> handleMultipart(MultipartException exception) {
         return ResponseEntity.badRequest().header("Cache-Control", "no-store")
-                .body(Map.of("message", "Não foi possível ler a foto enviada."));
+                .body(Map.of("message", "Não foi possível ler o arquivo enviado."));
     }
 
     @ExceptionHandler(TooManyAttemptsException.class)

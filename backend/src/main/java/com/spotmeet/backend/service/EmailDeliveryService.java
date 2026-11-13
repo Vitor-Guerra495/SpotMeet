@@ -1,11 +1,12 @@
 package com.spotmeet.backend.service;
 
+import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -26,7 +27,7 @@ public class EmailDeliveryService {
     private String smtpPassword;
 
     @Async("emailExecutor")
-    public void sendEmail(String recipient, String subject, String content, String code, LocalDateTime expiresAt) {
+    public void sendEmail(String recipient, EmailTemplate.Email email, String code, LocalDateTime expiresAt) {
         if (expiresAt == null || !expiresAt.isAfter(LocalDateTime.now())) {
             log.info("Envio de e-mail descartado: código expirado.");
             return;
@@ -34,34 +35,36 @@ public class EmailDeliveryService {
 
         if (sender == null || sender.isBlank() || smtpPassword == null || smtpPassword.isBlank()) {
             // Local QA fallback, only when SMTP is not configured.
-            log.info("[SpotMeet-Email] Código local de QA: >>> {} <<< | Assunto: {}", code, subject);
+            log.info("[SpotMeet-Email] Código local de QA: >>> {} <<< | Assunto: {}", code, email.subject());
             return;
         }
 
-        sendMessage(recipient, subject, content);
+        sendMessage(recipient, email);
     }
 
+    /** Notices without a code (password changed, access approved, invitation and so on). */
     @Async("emailExecutor")
-    public void sendPasswordChangedEmail(String recipient, String subject, String content) {
+    public void sendNotice(String recipient, EmailTemplate.Email email) {
         if (sender == null || sender.isBlank() || smtpPassword == null || smtpPassword.isBlank()) {
-            log.info("Aviso de alteração de senha não enviado: SMTP não configurado.");
+            log.info("Aviso por e-mail não enviado: SMTP não configurado. Assunto: {}", email.subject());
             return;
         }
-        sendMessage(recipient, subject, content);
+        sendMessage(recipient, email);
     }
 
-    private void sendMessage(String recipient, String subject, String content) {
+    private void sendMessage(String recipient, EmailTemplate.Email email) {
         if (mailSender == null) {
             log.warn("Serviço SMTP indisponível para o envio de e-mail.");
             return;
         }
 
         try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(sender);
-            message.setTo(recipient);
-            message.setSubject(subject);
-            message.setText(content);
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(sender);
+            helper.setTo(recipient);
+            helper.setSubject(email.subject());
+            helper.setText(email.text(), email.html());
             mailSender.send(message);
             log.info("E-mail encaminhado ao servidor SMTP.");
         } catch (Exception exception) {

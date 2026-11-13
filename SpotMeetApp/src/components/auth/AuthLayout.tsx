@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Image, KeyboardAvoidingView,
-  Keyboard, TouchableOpacity, useWindowDimensions,
+  Keyboard, TouchableOpacity, useWindowDimensions, type ScrollViewInstance,
 } from 'react-native';
 import { Ionicons } from '@react-native-vector-icons/ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,7 +30,7 @@ export default function AuthLayout({
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [viewportHeight, setViewportHeight] = useState(0);
   const [contentHeight, setContentHeight] = useState(0);
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const focusedTarget = useRef<number | null>(null);
   const focusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backgroundColor = colors.isDark ? '#4C51C6' : '#5C6BC0';

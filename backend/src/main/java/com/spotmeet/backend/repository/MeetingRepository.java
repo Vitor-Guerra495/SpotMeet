@@ -10,4 +10,8 @@ import java.util.List;
 public interface MeetingRepository extends JpaRepository<Meeting, Long> {
 
     List<Meeting> findByCommitteeIdOrderByStartsAtDesc(Long committeeId);
+
+    List<Meeting> findBySeriesIdOrderByStartsAtAsc(Long seriesId);
+
+    boolean existsByAttachmentId(Long fileId);
 }

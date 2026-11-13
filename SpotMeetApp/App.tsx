@@ -14,6 +14,8 @@ import SessionNavigation from './src/components/auth/SessionNavigation';
 import { BiometricProvider } from './src/context/BiometricContext';
 import { ProfilePhotoProvider } from './src/context/ProfilePhotoContext';
 import { interceptLeave } from './src/utils/leaveGuard';
+import { startMeetingLinks } from './src/utils/meetingLinks';
+import { usePendingInvitations } from './src/hooks/usePendingInvitations';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
@@ -105,6 +107,7 @@ function AdminTabs() {
 function UserTabs() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const pendingInvitations = usePendingInvitations();
 
   return (
     <Tab.Navigator
@@ -142,14 +145,18 @@ function UserTabs() {
       })}
     >
       <Tab.Screen
+        name="Meetings"
+        component={MeetingsScreen}
+        options={{
+          tabBarLabel: 'Reuniões', title: 'Reuniões',
+          tabBarBadge: pendingInvitations > 0 ? (pendingInvitations > 99 ? '99+' : pendingInvitations) : undefined,
+          tabBarBadgeStyle: { backgroundColor: colors.danger, color: '#FFFFFF', fontSize: 11 },
+        }}
+      />
+      <Tab.Screen
         name="Organization"
         component={OrganizationScreen}
         options={{ tabBarLabel: 'Organização', title: 'Organização' }}
-      />
-      <Tab.Screen
-        name="Meetings"
-        component={MeetingsScreen}
-        options={{ tabBarLabel: 'Reuniões', title: 'Reuniões' }}
       />
       <Tab.Screen
         name="Settings"
@@ -168,6 +175,17 @@ function AppTabs() {
   const isAdmin = role === 'ADMIN' || role === 'SYSADMIN';
 
   return isAdmin ? <AdminTabs /> : <UserTabs />;
+}
+
+// Links of the meeting e-mails (spotmeet://reunioes/{id}) open the Reuniões tab; the screen opens the meeting.
+function MeetingLinkHandler() {
+  const { isAuthenticated, role } = useAuth();
+  useEffect(() => startMeetingLinks(() => {
+    if (isAuthenticated && role !== 'ADMIN' && role !== 'SYSADMIN' && navigationRef.isReady()) {
+      (navigationRef.navigate as (name: string, params: object) => void)('Main', { screen: 'Meetings' });
+    }
+  }), [isAuthenticated, role]);
+  return null;
 }
 
 function AppNavigation() {
@@ -223,6 +241,7 @@ export default function App() {
             <SessionGuard navigationRef={navigationRef} />
             <SessionNavigation navigationRef={navigationRef}>
               <AppNavigation />
+              <MeetingLinkHandler />
               <ToastHost />
               <ConfirmationHost />
             </SessionNavigation>

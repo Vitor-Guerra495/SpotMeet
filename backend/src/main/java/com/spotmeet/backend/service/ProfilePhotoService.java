@@ -40,7 +40,13 @@ public class ProfilePhotoService {
     @Transactional(readOnly = true)
     public ProfilePhotoResponseDTO get(String email) {
         User user = currentUser(email, false);
-        return response(user, photos.findByUserId(user.getId()).orElse(null));
+        return response(user.getId(), photos.findByUserId(user.getId()).orElse(null));
+    }
+
+    @Transactional(readOnly = true)
+    public ProfilePhotoResponseDTO getOf(String viewerEmail, Long userId) {
+        currentUser(viewerEmail, false);
+        return response(userId, photos.findByUserId(userId).orElse(null));
     }
 
     @Transactional
@@ -51,7 +57,7 @@ public class ProfilePhotoService {
         photo.setUser(user); photo.setImageData(image); photo.setVersion(UUID.randomUUID().toString());
         photos.save(photo);
         audit.save(new AuditLog(user, "PROFILE_PHOTO_UPDATED", "Foto de perfil alterada."));
-        return response(user, photo);
+        return response(user.getId(), photo);
     }
 
     @Transactional
@@ -70,8 +76,8 @@ public class ProfilePhotoService {
         return user;
     }
 
-    private ProfilePhotoResponseDTO response(User user, UserProfilePhoto photo) {
-        return new ProfilePhotoResponseDTO(user.getId(), photo == null ? null : Base64.getEncoder().encodeToString(photo.getImageData()),
+    private ProfilePhotoResponseDTO response(Long userId, UserProfilePhoto photo) {
+        return new ProfilePhotoResponseDTO(userId, photo == null ? null : Base64.getEncoder().encodeToString(photo.getImageData()),
                 photo == null ? null : photo.getVersion());
     }
 

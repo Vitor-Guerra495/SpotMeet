@@ -83,10 +83,12 @@ export async function getBiometricAvailability(): Promise<BiometricAvailability>
   } catch { return unavailable('Não foi possível consultar a biometria do aparelho.'); }
 }
 
-export async function authenticateBiometricDevice(enabling: boolean): Promise<boolean> {
+// devicePassword only changes the text: the same system prompt offers the PIN, pattern or password of the phone.
+export async function authenticateBiometricDevice(enabling: boolean, devicePassword = false): Promise<boolean> {
   const result = await LocalAuthentication.authenticateAsync({
     promptMessage: enabling ? 'Habilitar biometria no SpotMeet' : 'Desbloquear SpotMeet',
-    promptDescription: enabling ? 'Confirme sua biometria para proteger este acesso.' : 'Use sua biometria ou o PIN do aparelho.',
+    promptDescription: enabling ? 'Confirme sua biometria para proteger este acesso.'
+      : devicePassword ? 'Toque na opção de PIN, padrão ou senha para usar a senha do aparelho.' : 'Use sua biometria ou o PIN do aparelho.',
     cancelLabel: 'Cancelar',
     disableDeviceFallback: enabling,
     fallbackLabel: enabling ? '' : 'Usar código do aparelho',

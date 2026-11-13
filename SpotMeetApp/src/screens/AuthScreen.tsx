@@ -20,6 +20,7 @@ import { showAlert, confirmAction } from '../utils/alerts';
 import { PASSWORD_REGEX, isValidEmail, normalizeEmail, isValidOtp, normalizeOtp, isValidName, normalizeName } from '../utils/validators';
 import AuthLayout from '../components/auth/AuthLayout';
 import ServerSettings from '../components/auth/ServerSettings';
+import { signInWithGoogle } from '../utils/googleSignIn';
 
 export type AuthMode = 'login' | 'register' | 'verify' | 'forgot' | 'otp' | 'reset';
 
@@ -191,6 +192,28 @@ export default function AuthScreen({ route, navigation }: any) {
     signIn(session);
     goTo('login');
     navigation.reset({ index: 0, routes: [{ name: 'Main', params: { role: session.role } }] });
+  };
+
+  const handleGoogle = async () => {
+    if (!formActive.current || requestPending.current) return;
+    setFormError('');
+    const version = formVersion.current;
+    requestPending.current = true;
+    setLoading(true);
+    try {
+      const result = await signInWithGoogle();
+      if (version !== formVersion.current) return;
+      if (result.status === 'success') {
+        enterSession(result.session);
+      } else if (result.status !== 'cancelled') {
+        setFormError(result.message);
+      }
+    } finally {
+      if (version === formVersion.current) {
+        requestPending.current = false;
+        setLoading(false);
+      }
+    }
   };
 
   const handleLogin = async () => {
@@ -710,11 +733,10 @@ export default function AuthScreen({ route, navigation }: any) {
       {link('Esqueci minha senha', () => goTo('forgot'))}
       <FormButton label="Entrar no SpotMeet" icon="log-in-outline" onPress={handleLogin} loading={loading} />
       <View style={styles.google}>
-        <TouchableOpacity disabled accessibilityRole="button" accessibilityState={{ disabled: true }}
-          accessibilityLabel="Continuar com Google, em breve" style={[styles.googleButton, { borderColor: colors.border }]}>
-          <Ionicons name="logo-google" size={20} color={colors.subtext} />
-          <Text style={[styles.googleText, { color: colors.subtext }]}>Continuar com Google</Text>
-          <Text style={[styles.badge, { color: colors.subtext, backgroundColor: colors.inputBg }]}>EM BREVE</Text>
+        <TouchableOpacity onPress={handleGoogle} disabled={loading} accessibilityRole="button"
+          accessibilityLabel="Continuar com Google" style={[styles.googleButton, { borderColor: colors.border }]}>
+          <Ionicons name="logo-google" size={20} color={colors.text} />
+          <Text style={[styles.googleText, { color: colors.text }]}>Continuar com Google</Text>
         </TouchableOpacity>
       </View>
       {link('Não tem uma conta? Cadastre-se', openRegister)}
@@ -824,7 +846,7 @@ export default function AuthScreen({ route, navigation }: any) {
 const styles = StyleSheet.create({
   actions: { flexGrow: 1, justifyContent: 'flex-end', paddingTop: 14 },
   link: { minHeight: 48, justifyContent: 'center', alignItems: 'center', paddingVertical: 8 },
-  linkText: { fontSize: 13, lineHeight: 18, fontWeight: '600', textAlign: 'center' },
+  linkText: { alignSelf: 'stretch', fontSize: 13, lineHeight: 18, fontWeight: '600', textAlign: 'center' },
   error: { fontSize: 13, lineHeight: 18, marginBottom: 8 },
   hint: { fontSize: 14, lineHeight: 20, textAlign: 'center' },
   info: { padding: 14, borderRadius: 12, fontSize: 13, lineHeight: 19, marginTop: 8 },

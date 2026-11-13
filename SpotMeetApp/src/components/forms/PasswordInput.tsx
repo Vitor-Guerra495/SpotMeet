@@ -1,5 +1,5 @@
 import React, { forwardRef } from 'react';
-import { TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { TouchableOpacity, StyleSheet, type TextInputInstance } from 'react-native';
 import { Ionicons } from '@react-native-vector-icons/ionicons';
 import { useTheme } from '../../context/ThemeContext';
 import FormField, { FormFieldProps } from './FormField';
@@ -9,7 +9,7 @@ interface PasswordInputProps extends Omit<FormFieldProps, 'secureTextEntry' | 't
   onToggleVisibility: () => void;
 }
 
-const PasswordInput = forwardRef<TextInput, PasswordInputProps>(function PasswordInput(
+const PasswordInput = forwardRef<TextInputInstance, PasswordInputProps>(function PasswordInput(
   { visible, onToggleVisibility, ...props }, ref,
 ) {
   const { colors } = useTheme();

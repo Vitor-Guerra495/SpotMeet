@@ -15,23 +15,29 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 @RestController
-@RequestMapping("/api/users/me/photo")
+@RequestMapping("/api/users")
 public class ProfilePhotoController {
     private final ProfilePhotoService photos;
 
     public ProfilePhotoController(ProfilePhotoService photos) { this.photos = photos; }
 
-    @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
+    @GetMapping(value = "/me/photo", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> get(Authentication authentication) {
         return respond(authentication, () -> ResponseEntity.ok(photos.get(authentication.getName())));
     }
 
-    @PutMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    // Photo of another user, shown in member lists instead of the initial.
+    @GetMapping(value = "/{userId}/photo", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> getOf(@PathVariable Long userId, Authentication authentication) {
+        return respond(authentication, () -> ResponseEntity.ok(photos.getOf(authentication.getName(), userId)));
+    }
+
+    @PutMapping(value = "/me/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> save(@RequestPart("photo") MultipartFile photo, Authentication authentication) {
         return respond(authentication, () -> ResponseEntity.ok(photos.save(authentication.getName(), photo)));
     }
 
-    @DeleteMapping
+    @DeleteMapping("/me/photo")
     public ResponseEntity<?> remove(Authentication authentication) {
         return respond(authentication, () -> { photos.remove(authentication.getName()); return ResponseEntity.noContent().build(); });
     }

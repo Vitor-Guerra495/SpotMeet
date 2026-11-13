@@ -209,7 +209,8 @@ class AccountSecurityTests {
                 .contentType(MediaType.APPLICATION_JSON).content(JSON.writeValueAsBytes(body))).andReturn();
         assertEquals(200, result.getResponse().getStatus());
         verify(encoder).encode(password);
-        verify(mail).sendPasswordChangedEmail(EMAIL);
+        verify(mail).sendPasswordChangedEmail(eq(EMAIL), any(),
+                eq(flow == Flow.PASSWORD ? EmailService.PasswordOrigin.APP : EmailService.PasswordOrigin.RECOVERY));
         assertNotNull(user.getTokensValidAfter());
     }
 }

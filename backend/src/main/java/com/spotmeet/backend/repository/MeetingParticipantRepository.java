@@ -34,4 +34,17 @@ public interface MeetingParticipantRepository extends JpaRepository<MeetingParti
          + "ORDER BY m.startsAt DESC")
     List<MeetingParticipant> findActiveByUser(@Param("userId") Long userId,
                                               @Param("status") CommitteeMembershipStatus status);
+
+    /** Meetings where the user registered an entry, newest first (individual report). */
+    @Query("SELECT p FROM MeetingParticipant p JOIN FETCH p.meeting m JOIN FETCH m.committee c "
+         + "WHERE p.user.id = :userId AND p.enteredAt IS NOT NULL ORDER BY m.startsAt DESC")
+    List<MeetingParticipant> findEnteredByUser(@Param("userId") Long userId);
+
+    /** Unanswered invitations to meetings that were not canceled and have not ended. */
+    @Query("SELECT COUNT(p) FROM MeetingParticipant p JOIN p.meeting m "
+         + "WHERE p.user.id = :userId AND p.response = :pending AND m.canceledAt IS NULL AND m.endsAt > :now "
+         + "AND EXISTS (SELECT cm.id FROM CommitteeMember cm "
+         + "WHERE cm.user.id = :userId AND cm.committee.id = m.committee.id AND cm.status = :status)")
+    long countPending(@Param("userId") Long userId, @Param("pending") MeetingParticipant.InvitationResponse pending,
+                      @Param("now") java.time.LocalDateTime now, @Param("status") CommitteeMembershipStatus status);
 }

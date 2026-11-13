@@ -60,6 +60,8 @@ public class SecurityConfig {
                 // Public routes
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/app/android-release").permitAll()
+                // Page opened from the meeting e-mails; it only redirects to the app.
+                .requestMatchers(HttpMethod.GET, "/abrir/reuniao/*").permitAll()
                 .requestMatchers("/error").permitAll()
                 .dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.FORWARD).permitAll()
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
@@ -99,8 +101,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        // Any origin allowed (development). In production restrict the domain:
-        // config.setAllowedOrigins(List.of("https://yourdomain.com"));
+        // Any origin: the app reaches the server by the address of the local network, which changes from place to place.
         config.setAllowedOriginPatterns(List.of("*"));
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
