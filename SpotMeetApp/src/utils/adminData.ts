@@ -121,6 +121,16 @@ export const AUDIT_LABELS: Record<string, string> = {
   COMMITTEE_JOIN_APPROVED: 'Ingresso em comissão aprovado', COMMITTEE_JOIN_REJECTED: 'Ingresso em comissão recusado', COMMITTEE_MEMBER_REMOVED: 'Integrante removido da comissão',
   ADMIN_ORGANIZATION_APPROVED: 'Organização aprovada', ADMIN_ORGANIZATION_REJECTED: 'Organização recusada', ADMIN_ORGANIZATION_STATUS_CHANGED: 'Estado da organização alterado',
   ADMIN_SYSTEM_RESTART: 'Reinício de subsistema solicitado', ADMIN_SYSTEM_FULL_RESET: 'Reset total executado',
+  USER_REGISTERED_GOOGLE: 'Usuário cadastrado pelo Google', PROFILE_PHOTO_UPDATED: 'Foto de perfil alterada', PROFILE_PHOTO_REMOVED: 'Foto de perfil removida',
+  COMMITTEE_PRESIDENT_ASSIGNED: 'Presidente da comissão definido',
+  MEETING_CREATED: 'Reunião agendada', MEETING_UPDATED: 'Reunião alterada', MEETING_CANCELED: 'Reunião cancelada', MEETING_INVITATION_ANSWERED: 'Convite de reunião respondido',
+  MEETING_ENTRY_REGISTERED: 'Entrada registrada na reunião', MEETING_EXIT_REGISTERED: 'Saída registrada na reunião',
+  MEETING_ENTRIES_REGISTERED_BULK: 'Entrada de todos registrada', MEETING_EXITS_REGISTERED_BULK: 'Saída de todos registrada',
+  MEETING_ATTENDANCE_RESET: 'Presença corrigida', MEETING_ATTENDANCE_LIST_GENERATED: 'Lista de presença gerada',
+  MEETING_MINUTES_DRAFT_SAVED: 'Rascunho da ata salvo', MEETING_MINUTES_SUBMITTED: 'Ata enviada para aprovação', MEETING_MINUTES_RESUBMITTED: 'Ata reenviada para aprovação',
+  MEETING_MINUTES_APPROVED_BY_MEMBER: 'Ata aprovada por integrante', MEETING_MINUTES_REJECTED_BY_MEMBER: 'Ata reprovada por integrante',
+  MEETING_MINUTES_APPROVED: 'Ata aprovada', MEETING_MINUTES_REJECTED: 'Ata reprovada',
+  MEETING_POLL_OPENED: 'Votação aberta', MEETING_POLL_VOTED: 'Voto registrado', MEETING_POLL_CLOSED: 'Votação encerrada',
   ADMIN_ORGANIZATIONS_LISTED: 'Organizações consultadas', ADMIN_PENDING_ORGANIZATIONS_LISTED: 'Pendências consultadas', ADMIN_REPORTS_VIEWED: 'Relatórios consultados',
 };
 export function auditLabel(action: string): string { return Object.prototype.hasOwnProperty.call(AUDIT_LABELS, action) ? AUDIT_LABELS[action] : 'Operação registrada'; }

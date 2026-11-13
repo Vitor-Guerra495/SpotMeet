@@ -1,5 +1,5 @@
 import React, { forwardRef, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TextInputProps } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TextInputProps, type TextInputInstance } from 'react-native';
 import { Ionicons, type IoniconsIconName } from '@react-native-vector-icons/ionicons';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuthInputFocus, useAuthCompactLayout } from '../auth/AuthInputFocus';
@@ -11,16 +11,20 @@ export interface FormFieldProps extends TextInputProps {
   icon?: IoniconsIconName;
   prefix?: string;
   trailing?: React.ReactNode;
+  /** Shows "used/limit" under the field; needs maxLength. */
+  showCount?: boolean;
 }
 
-const FormField = forwardRef<TextInput, FormFieldProps>(function FormField(
-  { label, required, error, icon, prefix, trailing, style, onFocus, onBlur, ...props }, ref,
+const FormField = forwardRef<TextInputInstance, FormFieldProps>(function FormField(
+  { label, required, error, icon, prefix, trailing, showCount, style, onFocus, onBlur, ...props }, ref,
 ) {
   const { colors } = useTheme();
   const revealInput = useAuthInputFocus();
   const compact = useAuthCompactLayout();
   const [focused, setFocused] = useState(false);
   const borderColor = error ? colors.danger : focused ? colors.primary : colors.border;
+  const used = (props.value ?? '').length;
+  const limit = showCount ? props.maxLength : undefined;
   return (
     <View style={[styles.field, { marginBottom: compact ? 8 : 12 }]}>
       <Text style={[styles.label, { color: colors.subtext, marginBottom: compact ? 4 : 5 }]}>
@@ -45,10 +49,14 @@ const FormField = forwardRef<TextInput, FormFieldProps>(function FormField(
         />
         {trailing}
       </View>
-      {error ? (
-        <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
-          style={[styles.error, { color: colors.danger }]}>{error}</Text>
-      ) : null}
+      {error || limit ? <View style={styles.below}>
+        {error ? (
+          <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+            style={[styles.error, { color: colors.danger }]}>{error}</Text>
+        ) : <View style={styles.flex} />}
+        {limit ? <Text accessibilityLabel={`${used} de ${limit} caracteres`}
+          style={[styles.count, { color: used >= limit ? colors.danger : colors.subtext }]}>{used}/{limit}</Text> : null}
+      </View> : null}
     </View>
   );
 });
@@ -59,5 +67,8 @@ const styles = StyleSheet.create({
   label: { fontSize: 11, lineHeight: 16, fontWeight: '700', marginBottom: 5, letterSpacing: 0.5 },
   frame: { minHeight: 50, borderWidth: 1, borderRadius: 14, paddingLeft: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
   input: { flex: 1, minWidth: 0, paddingVertical: 12, paddingRight: 12, fontSize: 16 },
-  error: { fontSize: 13, lineHeight: 18, marginTop: 5 },
+  error: { flex: 1, fontSize: 13, lineHeight: 18, marginTop: 5 },
+  below: { flexDirection: 'row', gap: 8 },
+  flex: { flex: 1 },
+  count: { fontSize: 12, lineHeight: 18, marginTop: 5 },
 });

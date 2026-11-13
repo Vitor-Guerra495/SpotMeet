@@ -12,15 +12,15 @@ export interface ToastPayload {
 
 type ToastHandler = (toast: ToastPayload) => void;
 
-const hosts = new Map<ToastHandler, (id: number) => void>();
+const hosts = new Set<ToastHandler>();
 let nextId = 1;
 
 /**
  * The ToastHost registers itself here so that plain functions (outside React
  * components) can raise a notification without needing a hook.
  */
-export function registerToastHost(show: ToastHandler, dismiss: (id: number) => void): () => void {
-  hosts.set(show, dismiss);
+export function registerToastHost(show: ToastHandler): () => void {
+  hosts.add(show);
   return () => { hosts.delete(show); };
 }
 
@@ -50,10 +50,6 @@ export function inferVariant(title: string): ToastVariant {
 export function showToast(title: string, message: string, variant?: ToastVariant): boolean {
   if (!hosts.size) return false;
   const toast = { id: nextId++, title, message, variant: variant || inferVariant(title) };
-  [...hosts.keys()].forEach(show => show(toast));
+  [...hosts].forEach(show => show(toast));
   return true;
-}
-
-export function dismissToast(id: number): void {
-  [...hosts.values()].forEach(dismiss => dismiss(id));
 }

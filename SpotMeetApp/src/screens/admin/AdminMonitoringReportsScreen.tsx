@@ -116,7 +116,7 @@ export default function AdminMonitoringReportsScreen() {
     <AdminSheet title={selected ? `Detalhes: ${TITLES[selected]}` : 'Detalhes'} visible={!!selected} onClose={close}>
       <AdminError message={detailsError} />{detailsLoading && <ActivityIndicator color={colors.primary} />}
       {selected === 'NETWORK' ? <AdminCard><StatusBadge value={status?.network.status} /><Text style={styles.caption}>{status?.network.details ?? 'Leitura indisponível.'}</Text>
-        <Text style={styles.caption}>A Rede representa o conector HTTP da API. O reinício fecha e reabre esse conector. Ele não reinicia o Wi-Fi nem a rede do aparelho.</Text>
+        <Text style={styles.caption}>A Rede representa o conector HTTP da API. Este painel consulta o estado do conector e a disponibilidade da porta. Os Controles oferecem reinício do Banco de dados e dos Recursos, sem alterar o Wi-Fi ou a rede do aparelho.</Text>
         <Text style={styles.caption}>Última leitura: {formatTimestamp(status?.timestamp)}</Text>
       </AdminCard> : <><Text style={styles.caption}>Detalhes consultados sob demanda. Leitura de {formatTimestamp(details?.timestamp)}</Text>
         <AdminAction label="Atualizar detalhes" onPress={loadDetails} disabled={detailsLoading} icon="refresh-outline" />
@@ -127,7 +127,7 @@ export default function AdminMonitoringReportsScreen() {
           {([['active', 'Ativas'], ['idle', 'Livres'], ['waiting', 'Em espera'], ['total', 'Total'], ['maximum', 'Limite']] as const).map(([key, label]) => <AdminMetric key={key} label={label} value={formatNumber(pool[key])} />)}
         </AdminCard><AdminCard><Text style={styles.cardTitle}>Linhas por tabela</Text>{Object.entries(TABLES).map(([key, label]) => <AdminMetric key={key} label={label} value={formatNumber(tableRows[key])} />)}</AdminCard></>}
         {details && selected === 'RESOURCES' && <><ResourceDetails resources={details.resources} />
-          <Text style={styles.caption}>O heap é a memória usada pelo servidor Java. Ele sobe a cada requisição, inclusive as consultas deste painel, e cai quando a JVM faz a coleta de memória, sozinha ou pelo botão de coleta. Esse sobe e desce é normal.</Text></>}
+          <Text style={styles.caption}>O heap é a memória usada pelo servidor Java. Ele sobe a cada requisição, inclusive as consultas deste painel, e cai quando a JVM faz a coleta de memória. Em Controles, escolha Reiniciar subsistema e depois Recursos para solicitar essa coleta. A JVM decide quando executá-la. Esse sobe e desce é normal.</Text></>}
         {details && selected === 'API' && <><AdminCard><Text style={styles.cardTitle}>Execução e requisições</Text><AdminMetric label="Versão" value={textValue(api.version) ?? 'Indisponível'} /><AdminMetric label="Tempo em execução" value={formatUptime(api.uptimeSeconds)} />
           <Text style={styles.caption}>Contadores desde {formatTimestamp(api.countersSince)}. Reiniciam com o processo do servidor. A leitura pode variar durante requisições em andamento.</Text>
           {!requestMetrics && <Text style={styles.caption}>Métricas de requisições indisponíveis.</Text>}

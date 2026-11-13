@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { Ionicons, type IoniconsIconName } from '@react-native-vector-icons/ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
-import { registerToastHost, dismissToast, ToastPayload, ToastVariant } from '../../utils/toast';
+import { registerToastHost, ToastPayload, ToastVariant } from '../../utils/toast';
 
 /** How long a notification stays on screen before sliding out. */
 const VISIBLE_MS = 3500;
@@ -15,7 +15,10 @@ const ICONS: Record<ToastVariant, IoniconsIconName> = {
   info: 'information-circle',
 };
 
-/** Top notification layer for the root screen or a visible native modal. */
+/**
+ * Top notification layer for the root screen or a visible native modal.
+ * Touches pass through it, so the buttons behind it (like the back arrow) keep working while it shows.
+ */
 export default function ToastHost({ active = true }: { active?: boolean }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -24,7 +27,6 @@ export default function ToastHost({ active = true }: { active?: boolean }) {
   const opacity = useRef(new Animated.Value(0)).current;
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastVersion = useRef(0);
-  const currentId = useRef<number | null>(null);
 
   const hide = useCallback(() => {
     const version = toastVersion.current;
@@ -41,12 +43,11 @@ export default function ToastHost({ active = true }: { active?: boolean }) {
   }, [opacity, translateY]);
 
   useEffect(() => {
-    if (!active) { setToast(null); currentId.current = null; return; }
+    if (!active) { setToast(null); return; }
     const unregister = registerToastHost((next) => {
       toastVersion.current += 1;
       if (hideTimer.current) clearTimeout(hideTimer.current);
       setToast(next);
-      currentId.current = next.id;
       translateY.setValue(-160);
       opacity.setValue(0);
       Animated.parallel([
@@ -54,11 +55,10 @@ export default function ToastHost({ active = true }: { active?: boolean }) {
         Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
       ]).start();
       hideTimer.current = setTimeout(() => hide(), VISIBLE_MS);
-    }, id => { if (currentId.current === id) hide(); });
+    });
 
     return () => {
       toastVersion.current += 1;
-      currentId.current = null;
       unregister();
       if (hideTimer.current) clearTimeout(hideTimer.current);
     };
@@ -74,7 +74,7 @@ export default function ToastHost({ active = true }: { active?: boolean }) {
 
   return (
     <Animated.View
-      pointerEvents="box-none"
+      pointerEvents="none"
       style={[
         styles.wrapper,
         { top: insets.top + 12, opacity, transform: [{ translateY }] },
@@ -95,10 +95,6 @@ export default function ToastHost({ active = true }: { active?: boolean }) {
             </Text>
           ) : null}
         </View>
-
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Fechar aviso" onPress={() => dismissToast(toast.id)} style={styles.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <Ionicons name="close" size={16} color={colors.subtext} />
-        </TouchableOpacity>
       </View>
     </Animated.View>
   );
@@ -119,7 +115,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     paddingVertical: 12,
-    paddingRight: 10,
+    paddingRight: 14,
     overflow: 'hidden',
     maxWidth: 700,
     width: '100%',
@@ -149,13 +145,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     marginTop: 2,
-  },
-  closeBtn: {
-    minWidth: 48,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 6,
-    marginLeft: 6,
   },
 });

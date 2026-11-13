@@ -43,12 +43,7 @@ public class BackendApplication {
 
                 repo.save(admin);
 
-                System.out.println("╔════════════════════════════════════════════════╗");
-                System.out.println("║         [SpotMeet] SysAdmin Provisionado       ║");
-                System.out.println("║  Email: sysadmin@spotmeet.com                  ║");
-                System.out.println("║  Senha: Admin@123                              ║");
-                System.out.println("║  AVISO: ALTERE A SENHA EM PRODUCAO!           ║");
-                System.out.println("╚════════════════════════════════════════════════╝");
+                System.out.println("[SpotMeet] Conta do administrador criada: " + SYSADMIN_EMAIL + ". Troque a senha padrão na aba Controles.");
             }
         };
     }

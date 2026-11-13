@@ -3,7 +3,9 @@ package com.spotmeet.backend.service;
 import com.spotmeet.backend.dto.MeetingResponseDTO;
 import com.spotmeet.backend.model.*;
 import com.spotmeet.backend.model.Meeting.MeetingStatus;
+import com.spotmeet.backend.model.MeetingMinutes.MinutesStatus;
 import com.spotmeet.backend.model.MeetingParticipant.InvitationResponse;
+import com.spotmeet.backend.repository.MeetingMinutesRepository;
 import com.spotmeet.backend.repository.MeetingParticipantRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -18,13 +20,14 @@ import java.util.List;
  * Rules:
  *   - The person registers their own entry and exit, and the president can register for anyone.
  *   - Records are only accepted while the meeting is in progress.
- *   - One entry and one exit per person; only the president clears a record.
+ *   - One entry and one exit per person; only the president clears a record, until the minutes are sent.
  *   - Each record keeps who made it.
  */
 @Service
 public class MeetingAttendanceService {
 
     @Autowired private MeetingParticipantRepository participantRepo;
+    @Autowired private MeetingMinutesRepository minutesRepo;
     @Autowired private MeetingAccess access;
 
     private void requireInProgress(Meeting meeting, LocalDateTime now) {
@@ -139,6 +142,11 @@ public class MeetingAttendanceService {
         MeetingStatus status = meeting.statusAt(now);
         if (status == MeetingStatus.CANCELED || status == MeetingStatus.SCHEDULED) {
             throw new IllegalStateException("Esta reunião não tem registros de presença para corrigir.");
+        }
+        // Who answers the minutes comes from these records, so they freeze once the minutes are sent.
+        boolean minutesSent = minutesRepo.findByMeetingId(meetingId).filter(m -> m.getStatus() != MinutesStatus.DRAFT).isPresent();
+        if (minutesSent) {
+            throw new IllegalStateException("A presença não pode mais ser corrigida porque a ata já foi enviada.");
         }
         MeetingParticipant participant = participantRepo.findForUpdate(meetingId, targetUserId)
                 .orElseThrow(() -> new IllegalStateException("Este usuário não foi convidado para a reunião."));
