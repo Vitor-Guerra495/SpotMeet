@@ -3,6 +3,7 @@ package com.spotmeet.backend.controller;
 import com.spotmeet.backend.dto.CommitteeMemberResponseDTO;
 import com.spotmeet.backend.dto.CommitteeRequestDTO;
 import com.spotmeet.backend.dto.CommitteeResponseDTO;
+import com.spotmeet.backend.dto.InviteCandidateDTO;
 import com.spotmeet.backend.dto.UserCommitteeLinkDTO;
 import com.spotmeet.backend.service.CommitteeService;
 import jakarta.validation.Valid;
@@ -130,6 +131,17 @@ public class CommitteeController {
         String email = getEmail(auth);
         committeeService.removeUserFromCommittee(committeeId, userId, email);
         return ResponseEntity.ok("Acesso à comissão revogado com sucesso.");
+    }
+
+    /**
+     * GET /api/committees/{committeeId}/invitations/candidates
+     * Organization members who can still be invited to the committee (leader only).
+     */
+    @GetMapping("/api/committees/{committeeId}/invitations/candidates")
+    public ResponseEntity<List<InviteCandidateDTO>> listInviteCandidates(
+            @PathVariable Long committeeId,
+            Authentication auth) {
+        return ResponseEntity.ok(committeeService.listInviteCandidates(committeeId, getEmail(auth)));
     }
 
     /**

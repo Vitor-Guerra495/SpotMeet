@@ -2,27 +2,28 @@
 
 ## 1. Objetivo
 
-Este documento define os padrões de nomenclatura, programação, documentação, versionamento e qualidade que deverão ser seguidos durante o desenvolvimento do SpotMeet.
+Este documento define os padrões de nomenclatura, programação, documentação, versionamento e qualidade seguidos durante o desenvolvimento e a manutenção do SpotMeet.
 
-O objetivo é manter consistência entre os integrantes da equipe, facilitar a manutenção do código e estabelecer uma estratégia comum para execução e documentação dos testes durante os incrementos do projeto.
+O objetivo é manter consistência entre os integrantes da equipe, facilitar a manutenção e a evolução do código-fonte e registrar a estratégia adotada para a implementação, execução e documentação dos testes ao longo dos incrementos do projeto.
 
-Os exemplos de testes apresentados neste documento são ilustrativos. Os casos de teste definitivos deverão ser criados ou atualizados conforme os requisitos funcionais e não funcionais forem definidos em cada incremento.
+Os exemplos apresentados neste documento foram extraídos das classes, telas e pacotes reais implementados no sistema (`SpotMeetApp/src/` e `backend/src/main/java/com/spotmeet/backend/`). Os casos de teste acompanham os requisitos funcionais (RF01 a RF48, dos Incrementos 1 a 3) e os requisitos não funcionais (RNF01 a RNF14).
 
 ## 2. Idioma e Convenções Gerais
 
-Para manter consistência entre código, documentação e interface, serão adotadas as seguintes regras:
+Para manter consistência entre código-fonte, banco de dados, documentação e interface, são adotadas as seguintes regras de idioma:
 
 | Área | Idioma |
 |---|---|
-| Código-fonte | Inglês |
-| Nomes de classes, funções e variáveis | Inglês |
-| Banco de dados | Inglês |
-| Endpoints da API | Inglês |
-| Documentação do projeto | Português |
-| Interface apresentada ao usuário | Português |
-| Branches e mensagens de commit | Português |
+| Código-fonte (backend Java e aplicativo React Native) | Inglês |
+| Nomes de classes, interfaces, métodos, funções e variáveis | Inglês |
+| Comentários de código | Inglês |
+| Banco de dados (tabelas, colunas, chaves e restrições) | Inglês |
+| Endpoints e rotas da API REST | Inglês |
+| Documentação técnica do projeto (`Doc/`) | Português |
+| Interface apresentada ao usuário (telas, botões, modais e mensagens) | Português |
+| Branches e mensagens de commit do Git | Português |
 
-Não deverão ser misturados idiomas em um mesmo identificador.
+Não devem ser misturados idiomas em um mesmo identificador.
 
 Exemplo inadequado:
 
@@ -30,6 +31,7 @@ Exemplo inadequado:
 MeetingService
 criarMeeting()
 usuarioAtual
+reuniaoRepository
 ```
 
 Exemplo adequado:
@@ -38,6 +40,7 @@ Exemplo adequado:
 MeetingService
 createMeeting()
 currentUser
+meetingRepository
 ```
 
 ## 3. Padrões de Nomenclatura
@@ -46,615 +49,627 @@ currentUser
 
 #### Componentes e Telas
 
-Componentes React Native, telas, interfaces e tipos deverão utilizar `PascalCase`.
+Componentes React Native, telas, interfaces e tipos TypeScript utilizam `PascalCase`.
 
-Exemplos:
+Exemplos extraídos do código real (`SpotMeetApp/src/`):
 
 ```text
-MeetingCard.tsx
-MeetingDetailsScreen.tsx
-CreateMeetingScreen.tsx
-ParticipantList.tsx
+MeetingsScreen.tsx
+MeetingForm.tsx
+MeetingAttendancePanel.tsx
+AttendanceListView.tsx
+MeetingInvitationActions.tsx
+PresidentSheet.tsx
+MinutesSection.tsx
+MeetingPolls.tsx
+AttendanceReport.tsx
+HelpCenter.tsx
+AuthScreen.tsx
+OrganizationScreen.tsx
+SettingsScreen.tsx
 ```
 
 #### Variáveis e Funções
 
-Variáveis, funções e métodos deverão utilizar `camelCase`.
+Variáveis, funções, métodos e propriedades de objetos utilizam `camelCase`.
 
-Exemplos:
+Exemplos extraídos do código real (`SpotMeetApp/src/screens/MeetingsScreen.tsx` e `SpotMeetApp/src/utils/meetings.ts`):
 
 ```text
-currentUser
-selectedMeeting
-meetingDate
+meetings
+presided
+detail
+attendanceList
+presidedIds
 
-createMeeting()
-loadMeetings()
+load()
+loadDetail()
+submitForm()
 cancelMeeting()
+readMeetings()
+readMeeting()
+readAttendanceList()
+formatDateTime()
 ```
 
 #### Constantes
 
-Constantes globais deverão utilizar `UPPER_SNAKE_CASE`.
+Constantes, mapas imutáveis de rótulos e chaves de configuração no aplicativo utilizam `UPPER_SNAKE_CASE`.
 
-Exemplos:
+Exemplos extraídos do código real (`SpotMeetApp/src/`):
 
 ```text
-MAX_PARTICIPANTS
-DEFAULT_PAGE_SIZE
-TOKEN_EXPIRATION_TIME
+API_BASE_URL
+PRIORITY_LABELS
+STATUS_LABELS
+RESPONSE_LABELS
+GENERIC_ERROR
 ```
 
 #### Hooks
 
-Hooks personalizados deverão utilizar `camelCase` e iniciar com `use`.
+Hooks personalizados do React utilizam `camelCase` e iniciam obrigatoriamente com o prefixo `use`.
 
-Exemplos:
+Exemplos extraídos do código real (`SpotMeetApp/src/hooks/`, `SpotMeetApp/src/context/` e `SpotMeetApp/src/components/meetings/`):
 
 ```text
-useMeetings()
-useAuthentication()
-useTheme()
+useLiveSync()
+useRefreshRequest()
+useMeetingStyles()
+useAuth()
 ```
 
-### 3.2. Backend - Java
+### 3.2. Backend - Java 21 / Spring Boot 3.3.5
 
-#### Classes
+#### Classes e Interfaces
 
-Classes deverão utilizar `PascalCase`.
+Classes, interfaces, enums e records Java utilizam `PascalCase`.
 
-Exemplos:
+Exemplos extraídos do código real (`backend/src/main/java/com/spotmeet/backend/`):
 
 ```text
 MeetingController
+MeetingInvitationController
+MeetingAttendanceController
+AttendanceListController
 MeetingService
+MeetingAccess
 MeetingRepository
-Participant
+MeetingParticipantRepository
+MeetingRequestDTO
+MeetingResponseDTO
+AttendanceListService
+MeetingMinutesController
+MeetingMinutesService
+MeetingPollController
+MeetingPollService
+AttendanceReportService
 ```
 
 #### Métodos e Variáveis
 
-Métodos e variáveis deverão utilizar `camelCase`.
+Métodos e variáveis locais ou de instância utilizam `camelCase`.
 
-Exemplos:
+Exemplos extraídos do código real (`MeetingService.java` e `MeetingController.java`):
 
 ```text
 createMeeting()
-findMeetingById()
+listCommitteeMeetings()
+listMyMeetings()
+getMeeting()
+updateMeeting()
 cancelMeeting()
+resolveInvitees()
+requirePresident()
 
-currentUser
 meetingId
-participantList
+committeeId
+invitees
+president
+startsAt
+endsAt
 ```
 
-#### Constantes
+#### Constantes e Variáveis de Ambiente
 
-Constantes deverão utilizar `UPPER_SNAKE_CASE`.
+Constantes Java (`static final`) e valores de enumerações utilizam `UPPER_SNAKE_CASE`.
 
-Exemplos:
+Exemplos extraídos do código real (`AuthenticationAttempts.java` e `ValidationPatterns.java`):
 
 ```text
-MAX_PARTICIPANTS
-DEFAULT_PAGE_SIZE
+MAX_FAILURES
+WINDOW_MILLIS
+CLEANUP_MILLIS
+EMAIL
+OTP
+ORGANIZATION_ACCESS_KEY
+COMMITTEE_NAME
 ```
+
+Parâmetros de ambiente e propriedades externas lidos pelo Spring (`application.properties` e `backend/.env`) também seguem `UPPER_SNAKE_CASE`, como `JWT_SECRET`, `JWT_EXPIRATION_MS` e `SERVER_PORT`.
 
 #### Pacotes
 
-Pacotes deverão possuir nomes em letras minúsculas.
+Pacotes Java possuem nomes inteiramente em letras minúsculas, organizados conforme a camada da aplicação.
 
-Exemplos:
+Exemplos do código real:
 
 ```text
-controller
-service
-repository
-model
-dto
-security
-config
-exception
+com.spotmeet.backend.controller
+com.spotmeet.backend.service
+com.spotmeet.backend.repository
+com.spotmeet.backend.model
+com.spotmeet.backend.dto
+com.spotmeet.backend.security
+com.spotmeet.backend.config
+com.spotmeet.backend.exception
 ```
 
-### 3.3. Banco de Dados - PostgreSQL
+### 3.3. Banco de Dados - PostgreSQL 18
 
-Tabelas e colunas deverão utilizar `snake_case`.
+Nomes de tabelas e colunas utilizam `snake_case`, com nomes de tabelas no plural.
 
-Exemplos de tabelas:
+Exemplos de tabelas reais:
 
 ```text
 users
+organizations
+organization_members
+organization_invitations
+committees
+committee_members
 meetings
-participants
-meeting_agendas
+meeting_participants
+meeting_series
+meeting_files
 meeting_minutes
+minutes_responses
+meeting_polls
+poll_votes
+user_profile_photos
+audit_logs
+access_requests
 ```
 
-Exemplos de colunas:
+Exemplos de colunas reais (`meetings`, `meeting_participants` e `users`):
 
 ```text
 created_at
 updated_at
-organizer_id
-meeting_id
+starts_at
+ends_at
+created_by_id
+committee_id
 user_id
+meeting_id
+entered_at
+entered_by_id
+left_at
+left_by_id
+response
+response_comment
+responded_at
+tokens_valid_after
+```
+
+Restrições de unicidade reais:
+
+```text
+uq_meeting_participant
+uq_committee_member
+uq_committee_org_name
+uq_minutes_response
+uq_poll_vote
 ```
 
 ### 3.4. API REST
 
-Endpoints deverão utilizar nomes em inglês, minúsculos e no plural.
+Os endpoints da API utilizam termos em inglês, substantivos no plural para coleções, letras minúsculas nos caminhos e parâmetros de rota identificados entre chaves.
 
-Exemplos:
+Exemplos das rotas reais de reuniões, convites, presença, lista de presença, ata, votação e relatório individual (`MeetingController`, `MeetingInvitationController`, `MeetingAttendanceController`, `AttendanceListController`, `MeetingFileController`, `MeetingMinutesController`, `MeetingPollController` e `AttendanceReportController`):
 
 ```text
-GET /meetings
-GET /meetings/{id}
-POST /meetings
-PUT /meetings/{id}
-DELETE /meetings/{id}
+POST   /api/committees/{committeeId}/meetings
+GET    /api/committees/{committeeId}/meetings
+GET    /api/meetings/mine
+GET    /api/meetings/invitations/pending
+GET    /api/meetings/{meetingId}
+PUT    /api/meetings/{meetingId}
+POST   /api/meetings/{meetingId}/cancel
+POST   /api/meetings/{meetingId}/respond
+POST   /api/meetings/{meetingId}/participants/{userId}/entry
+POST   /api/meetings/{meetingId}/participants/{userId}/exit
+POST   /api/meetings/{meetingId}/attendance/entries
+POST   /api/meetings/{meetingId}/attendance/exits
+DELETE /api/meetings/{meetingId}/participants/{userId}/attendance
+POST   /api/meetings/{meetingId}/attendance-list
+GET    /api/meetings/{meetingId}/attendance-list
+POST   /api/committees/{committeeId}/meeting-files
+GET    /api/meetings/{meetingId}/attachment
+GET    /api/meetings/{meetingId}/minutes
+PUT    /api/meetings/{meetingId}/minutes
+POST   /api/meetings/{meetingId}/minutes/submit
+POST   /api/meetings/{meetingId}/minutes/answer
+POST   /api/meetings/{meetingId}/minutes/close
+GET    /api/meetings/{meetingId}/polls
+POST   /api/meetings/{meetingId}/polls
+POST   /api/meetings/{meetingId}/polls/{pollId}/vote
+POST   /api/meetings/{meetingId}/polls/{pollId}/close
+GET    /api/users/me/report
 ```
 
 ## 4. Organização do Código
 
-### 4.1. Aplicativo Mobile
+O sistema segue a arquitetura cliente-servidor, separando o aplicativo móvel (`SpotMeetApp/`) do servidor REST (`backend/`).
 
-Estrutura inicial proposta:
+### 4.1. Aplicativo Mobile (`SpotMeetApp/src/`)
+
+Estrutura de diretórios implementada:
 
 ```text
-mobile/
+SpotMeetApp/
 `-- src/
     |-- components/
-    |-- screens/
-    |-- navigation/
-    |-- services/
+    |   |-- admin/
+    |   |-- auth/
+    |   |-- forms/
+    |   |-- meetings/
+    |   |-- profile/
+    |   |-- settings/
+    |   `-- ui/
+    |-- config/
+    |-- context/
     |-- hooks/
-    |-- types/
-    |-- utils/
-    `-- constants/
+    |-- screens/
+    |   `-- admin/
+    `-- utils/
 ```
 
-Responsabilidades:
+Responsabilidades de cada diretório:
 
-- `components`: componentes reutilizáveis da interface;
-- `screens`: telas completas do aplicativo;
-- `navigation`: configuração da navegação;
-- `services`: comunicação com a API e serviços externos permitidos;
-- `hooks`: hooks reutilizáveis;
-- `types`: tipos e interfaces TypeScript;
-- `utils`: funções utilitárias;
-- `constants`: constantes utilizadas na aplicação.
+* `components/`: componentes reutilizáveis da interface, separados por área (`MeetingForm`, `MeetingAttendancePanel`, `AttendanceListView`, `MeetingInvitationActions`, `PresidentSheet`, `MinutesSection`, `MeetingPolls`, `ProfilePhotoEditor`, `ToastHost`), as páginas Meu Relatório e Ajuda de Ajustes (`settings/AttendanceReport` e `settings/HelpCenter`) e estilos compartilhados das reuniões (`useMeetingStyles`);
+* `config/`: configurações do aplicativo e descoberta/definição do endereço do servidor (`API_BASE_URL`);
+* `context/`: contextos globais do React (`AuthContext`, `ThemeContext`, `BiometricContext`, `ProfilePhotoContext`);
+* `hooks/`: hooks personalizados (`useLiveSync`, `useRefreshRequest`, `usePendingInvitations`, `useAppUpdate`, `useAdminOperation`);
+* `screens/`: telas principais da aplicação (`AuthScreen`, `OrganizationScreen`, `MeetingsScreen`, `SettingsScreen` e as telas administrativas em `screens/admin/`);
+* `utils/`: funções auxiliares de leitura da API (`meetings.ts`, `minutes.ts`, `polls.ts` e `report.ts`), tópicos do manual de uso (`helpTopics.ts`), formatação de data e hora (`formatDateTime`) e validação de formulários (`validators.ts`).
 
-### 4.2. Backend
+### 4.2. Backend (`backend/src/main/java/`)
 
-Estrutura inicial proposta:
+Estrutura de pacotes em Spring Boot 3.3.5 e Java 21:
 
 ```text
 backend/
 `-- src/
-    `-- main/
+    |-- main/
+    |   |-- java/
+    |   |   `-- com/spotmeet/backend/
+    |   |       |-- config/
+    |   |       |-- controller/
+    |   |       |-- dto/
+    |   |       |-- exception/
+    |   |       |-- model/
+    |   |       |-- repository/
+    |   |       |-- security/
+    |   |       `-- service/
+    |   `-- resources/
+    `-- test/
         `-- java/
-            `-- .../
-                |-- controller/
-                |-- service/
-                |-- repository/
-                |-- model/
-                |-- dto/
-                |-- security/
-                |-- config/
-                `-- exception/
+            `-- com/spotmeet/backend/
 ```
 
-Responsabilidades principais:
+Responsabilidades de cada pacote:
 
-- `controller`: recebe e responde requisições HTTP;
-- `service`: concentra regras de negócio;
-- `repository`: realiza acesso e persistência de dados;
-- `model`: representa entidades e modelos do domínio;
-- `dto`: define dados aceitos e retornados pela API;
-- `security`: autenticação e autorização;
-- `config`: configurações da aplicação;
-- `exception`: tratamento padronizado de erros.
+* `controller`: recebe as requisições HTTP (`@RestController`), aciona a validação dos DTOs (`@Valid`), obtém o e-mail do usuário autenticado via `Authentication` e delega a execução para a camada `service`;
+* `service`: concentra as regras de negócio, validações de domínio, controle de permissões (`MeetingAccess`) e transações (`@Transactional`);
+* `repository`: interfaces Spring Data JPA para consultas ao PostgreSQL e bloqueios de linha (`findForUpdate`, `findByIdForUpdate`, `findByEmailForUpdate`);
+* `model`: entidades JPA que mapeiam as tabelas do banco de dados (`User`, `Organization`, `Committee`, `Meeting`, `MeetingParticipant`, `AuditLog`, etc.);
+* `dto`: objetos de entrada e saída das rotas HTTP, validados com Bean Validation, e as expressões regulares compartilhadas (`ValidationPatterns`);
+* `security`: filtro de autenticação JWT (`JwtAuthFilter`), geração e leitura de tokens (`JwtUtil`), controle de tentativas (`AuthenticationAttempts`) e mascaramento de dados (`LgpdMaskUtil`);
+* `config`: configurações de segurança (`SecurityConfig`), execução assíncrona de e-mails (`EmailAsyncConfig`), tarefas agendadas (`SchedulingConfig`) e criação do banco na inicialização (`DatabaseCreator`). A conta inicial do administrador é criada pela classe principal `BackendApplication`;
+* `exception`: tratamento centralizado de exceções (`GlobalExceptionHandler`), convertendo erros em respostas JSON padronizadas.
 
-Regras obrigatórias:
+#### Regras de Camadas:
 
-- controllers não deverão concentrar regras de negócio;
-- regras de negócio deverão permanecer na camada de serviço;
-- acesso ao banco de dados deverá ocorrer pela camada de persistência;
-- o aplicativo mobile não deverá decidir autorização de acesso.
+1. Classes `controller` não contêm regras de negócio nem acessam interfaces `repository` diretamente;
+2. Toda verificação de permissão é feita no servidor dentro da camada `service` (`MeetingAccess`, `MeetingService`, `MeetingInvitationService`, `MeetingAttendanceService`, `AttendanceListService`, `MeetingMinutesService`, `MeetingPollService`);
+3. O acesso ao banco de dados ocorre somente por meio dos repositórios JPA;
+4. A interface móvel apenas exibe ou oculta botões conforme o estado da sessão, cabendo sempre à API validar o token e o cargo do usuário em cada chamada.
 
 ## 5. Práticas de Programação
 
-A equipe deverá seguir as seguintes práticas:
+Durante o desenvolvimento e a manutenção do código, a equipe segue as seguintes práticas:
 
-- utilizar nomes claros e descritivos;
-- manter funções, métodos e componentes com responsabilidade definida;
-- evitar duplicação desnecessária de código;
-- evitar métodos e componentes excessivamente grandes;
-- remover código morto ou comentado que não seja necessário;
-- evitar valores mágicos quando uma constante for mais adequada;
-- validar os dados recebidos pelo sistema;
-- tratar erros de forma padronizada;
-- separar interface, regra de negócio e persistência;
-- manter código e documentação coerentes;
-- revisar alterações antes de incorporá-las à branch principal;
-- não inserir emojis, desenhos ou elementos decorativos em comentários e docstrings.
+- Escrever identificadores de classes, métodos e variáveis em inglês e com nomes descritivos;
+- Escrever comentários de código em inglês, apenas quando necessários para explicar regras não óbvias;
+- Manter cada classe, componente e função com uma responsabilidade clara;
+- Evitar duplicação de lógica, extraindo regras compartilhadas de reunião para classes auxiliares como `MeetingAccess`;
+- Remover trechos de código comentados, imports sem uso e chamadas de depuração antes do commit;
+- Declarar constantes em `UPPER_SNAKE_CASE` para limites, janelas de tempo e expressões regulares;
+- Validar todas as entradas no aplicativo (`react-hook-form` e `validators.ts`) e novamente no servidor (Bean Validation e regras de serviço);
+- Tratar erros de forma uniforme pelo `GlobalExceptionHandler`, devolvendo mensagens em português para o aplicativo.
 
 ## 6. Padrões de Segurança
 
-Como o SpotMeet manipulará dados de usuários e informações relacionadas a reuniões, as seguintes práticas deverão ser consideradas durante o desenvolvimento e os testes:
+### 6.1. Senhas e Códigos de Verificação
 
-### 6.1. Senhas
+- As senhas são gravadas na coluna `users.password` apenas como hash **BCrypt com fator de custo 12** (`$2a$12$`);
+- Os códigos temporários de 6 dígitos (confirmação de cadastro, recuperação de conta e troca de e-mail) têm validade de 5 minutos, uso único e também são gravados como hash BCrypt;
+- Nenhuma rota da API retorna hashes de senha ou códigos de verificação.
 
-- senhas nunca poderão ser armazenadas em texto puro;
-- deverá ser utilizada função de hash apropriada para armazenamento de senhas;
-- senhas não deverão aparecer em logs, mensagens de erro ou evidências de teste.
+### 6.2. Autenticação e Sessão
 
-### 6.2. Autenticação e Tokens
+- As rotas privadas exigem token JWT válido no cabeçalho `Authorization: Bearer <token>`;
+- O token JWT expira em 24 horas (`JWT_EXPIRATION_MS=86400000` por padrão);
+- A coluna `users.tokens_valid_after` invalida imediatamente os tokens anteriores quando o usuário altera ou redefine a senha, quando uma conta pendente é confirmada pelo Google e quando o sistema é resetado;
+- Chaves e senhas de infraestrutura (`JWT_SECRET`, banco e SMTP) ficam somente no arquivo local `backend/.env` ou em variáveis de ambiente, fora do controle de versão;
+- Quando o bloqueio biométrico é ativado no aparelho, a sessão é guardada no armazenamento seguro (`expo-secure-store`).
 
-- recursos privados deverão exigir autenticação válida;
-- tokens de acesso e refresh tokens, caso adotados, não deverão ser registrados em logs;
-- secrets e credenciais não poderão ser versionados no Git;
-- o armazenamento de tokens no aplicativo deverá utilizar mecanismo apropriado de armazenamento seguro da plataforma.
+### 6.3. Autorização por Objeto (Prevenção de BOLA / IDOR)
 
-### 6.3. Autorização por Operação e por Objeto
-
-Toda autorização deverá ser validada no backend.
-
-O sistema deverá impedir cenários de BOLA e IDOR, nos quais um usuário autenticado tente acessar, alterar ou excluir um recurso pertencente a outro usuário apenas modificando um identificador.
-
-Exemplo:
+O servidor verifica o vínculo e o cargo do usuário autenticado em cada operação sobre organizações, comissões e reuniões:
 
 ```text
-Usuário A possui acesso à reunião 15.
+Exemplo de verificação de acesso à reunião (BOLA/IDOR):
 
-Usuário B tenta:
-GET /meetings/15
+Usuário A (integrante da Comissão 1) foi convocado para a reunião 15.
 
-Resultado esperado:
-Acesso negado quando o usuário B não possuir autorização para a reunião.
+Usuário B (que não pertence à Comissão 1 nem foi convocado) chama:
+GET /api/meetings/15
+
+Resposta do servidor:
+HTTP 403 Forbidden (o usuário B não é presidente da comissão, líder da organização nem convidado da reunião).
 ```
 
-### 6.4. Validação de Entrada e Mass Assignment
+Somente o presidente ativo da comissão (`COMMITTEE_ADMIN`) pode:
+- Agendar reunião (`POST /api/committees/{committeeId}/meetings`);
+- Editar reunião (`PUT /api/meetings/{meetingId}`);
+- Cancelar reunião (`POST /api/meetings/{meetingId}/cancel`, que retorna HTTP 200 com os dados da reunião cancelada);
+- Registrar ou limpar a presença de outros convidados (`POST /api/meetings/{meetingId}/participants/{userId}/entry`, `/exit`, `/attendance/entries`, `/attendance/exits` e `DELETE /api/meetings/{meetingId}/participants/{userId}/attendance`);
+- Gerar a lista de presença (`POST /api/meetings/{meetingId}/attendance-list`), que depois pode ser consultada pelos integrantes da comissão e pelos líderes da organização (`GET /api/meetings/{meetingId}/attendance-list`);
+- Salvar o rascunho, enviar, reenviar e encerrar a aprovação da ata (`PUT /api/meetings/{meetingId}/minutes`, `POST /api/meetings/{meetingId}/minutes/submit` e `/minutes/close`);
+- Abrir e encerrar votações (`POST /api/meetings/{meetingId}/polls` e `/polls/{pollId}/close`).
 
-- os dados recebidos pela API deverão ser validados;
-- DTOs deverão limitar explicitamente os campos aceitos nas operações;
-- campos sensíveis não deverão ser atualizáveis apenas por serem enviados pelo cliente;
-- a aplicação deverá impedir Mass Assignment.
+Só quem registrou entrada na reunião pode responder à ata, exceto quem a escreveu, e votar (`POST /api/meetings/{meetingId}/minutes/answer` e `/polls/{pollId}/vote`): uma resposta por rodada de aprovação da ata e um voto por votação. Depois do primeiro envio da ata, a presença não pode mais ser corrigida (HTTP 409). O relatório individual (`GET /api/users/me/report`) usa somente o usuário do token e não recebe o identificador de outra pessoa.
 
-### 6.5. SQL Injection
+### 6.4. Validação de Entrada e Prevenção de Mass Assignment
 
-O acesso ao banco de dados deverá utilizar consultas parametrizadas ou mecanismos equivalentes disponibilizados pela camada de persistência.
+- Os dados recebidos pela API são lidos exclusivamente por meio de DTOs de entrada (`MeetingRequestDTO`, etc.);
+- Campos internos como autor da reunião (`created_by_id`), situação, carimbos de data/hora e quem registrou a presença (`entered_by_id`, `left_by_id`) são preenchidos pelo servidor a partir do usuário autenticado e do relógio do servidor.
 
-Não deverão ser construídas consultas SQL concatenando diretamente entradas do usuário.
+### 6.5. Prevenção de SQL Injection
 
-### 6.6. XSS
+- Todas as consultas ao PostgreSQL utilizam métodos derivados ou queries parametrizadas (`@Query` com parâmetros nomeados `:param`) do Spring Data JPA / Hibernate, sem concatenação de strings SQL.
 
-Caso pautas, atas ou outros campos aceitem conteúdo textual exibido posteriormente na interface, os dados deverão ser tratados de forma que conteúdo fornecido pelo usuário não seja executado como código.
+### 6.6. Sanitização de Texto
 
-### 6.7. CORS e CSRF
+- Campos textuais das reuniões (título, pauta, local, link e comentário de recusa), da ata (assuntos, decisões, observações e motivo da reprovação) e da votação (pergunta, descrição e justificativa da abstenção) têm os espaços das pontas removidos, e o texto vazio é gravado como nulo (`MeetingAccess.clean()`); o tamanho é validado nos DTOs antes da gravação.
 
-- CORS deverá ser configurado de forma restritiva para os ambientes previstos;
-- caso a estratégia de autenticação utilize cookies ou outro mecanismo sujeito a CSRF, deverá ser aplicada proteção adequada;
-- a necessidade de CSRF deverá ser reavaliada conforme a estratégia de autenticação adotada.
+### 6.7. Proteção contra Tentativas Repetidas
 
-### 6.8. Logs
+- A classe `AuthenticationAttempts` limita falhas consecutivas de login, senha atual e códigos de verificação a **10 tentativas em 15 minutos** (`MAX_FAILURES = 10`, `WINDOW_MILLIS = 15 * 60 * 1000L`) por conta e finalidade. A 10ª falha já responde HTTP 429 com o cabeçalho `Retry-After`, e as tentativas seguintes continuam bloqueadas por 15 minutos.
 
-Logs não deverão conter:
+### 6.8. Logs de Auditoria e Mascaramento (LGPD)
 
-- senhas;
-- tokens de acesso;
-- refresh tokens;
-- secrets;
-- chaves;
-- payloads sensíveis;
-- informações pessoais além do estritamente necessário para diagnóstico.
+- Os eventos relevantes do sistema são registrados na tabela `audit_logs` sem armazenar senhas, tokens JWT ou códigos de verificação;
+- Nas consultas de relatórios administrativos, e-mails e CNPJs passam pelo mascaramento da classe `LgpdMaskUtil`.
 
 ## 7. Padrões de Documentação
 
-A documentação técnica principal será mantida em arquivos Markdown no repositório GitHub.
-
-Estrutura inicial:
+A documentação do projeto fica concentrada na pasta `Doc/` na raiz do repositório, organizada conforme a estrutura real abaixo:
 
 ```text
-docs/
+Doc/
 |-- 01-analise-mercado-rnf.md
 |-- 02-arquitetura-tecnologias.md
 |-- 03-padroes-qualidade.md
-`-- 04-design.md
+|-- 04-design.md
+|-- 05-documento-requisitos.md
+|-- 06-manual-de-uso.md
+`-- imagens/
+    |-- design/
+    `-- diagramas/
 ```
 
-Regras:
-
-- documentos deverão possuir títulos e seções claras;
-- alterações relevantes no comportamento do sistema deverão atualizar a documentação correspondente;
-- requisitos deverão possuir identificadores únicos quando forem formalizados;
-- casos de teste deverão possuir identificadores únicos;
-- diagramas deverão possuir título e descrição;
-- comentários e docstrings deverão ser objetivos e sem elementos decorativos;
-- a documentação deverá acompanhar a evolução dos incrementos.
+Diretrizes seguidas nos documentos:
+- Os seis blocos documentais (`01` a `06`) são mantidos em Markdown na raiz de `Doc/`, as imagens do design ficam em `Doc/imagens/design/` e os diagramas, com as fontes PlantUML, em `Doc/imagens/diagramas/`;
+- Mudanças em rotas, tabelas, telas ou regras de negócio devem ser atualizadas em conjunto nos documentos correspondentes;
+- Requisitos Funcionais seguem a numeração `RFxx` e Requisitos Não Funcionais seguem `RNFxx` (mantendo a mesma numeração entre o `Doc/01-analise-mercado-rnf.md` e o `Doc/05-documento-requisitos.md`);
+- Casos de teste seguem o padrão `CT-<TIPO>-xxx`.
 
 ## 8. Git e Versionamento
 
-A branch principal do projeto será:
+A branch principal do repositório é:
 
 ```text
 main
 ```
 
-O desenvolvimento deverá ocorrer em branches específicas.
+### 8.1. Nomenclatura de Branches
 
-### 8.1. Padrão de Branches
-
-Serão utilizados nomes em português.
+As branches secundárias são nomeadas em português, com letras minúsculas, sem acentos e palavras separadas por hífen:
 
 ```text
-funcionalidade/criar-reuniao
-funcionalidade/tela-login
+funcionalidade/agendamento-reunioes
+funcionalidade/lista-presenca
+funcionalidade/convite-integrantes
 
 correcao/validar-acesso-reuniao
-correcao/corrigir-calendario
+correcao/ajuste-horario-presenca
 
-documentacao/atualizar-arquitetura
-documentacao/revisar-rnf
+documentacao/atualizar-analise-mercado
+documentacao/revisar-padroes-qualidade
 
 teste/autorizacao-reuniao
-teste/api-reunioes
+teste/desempenho-api-reunioes
 ```
 
-Não deverão ser utilizados espaços, acentos ou caracteres especiais nos nomes das branches.
+### 8.2. Mensagens de Commit
 
-### 8.2. Padrão de Commits
-
-As mensagens de commit serão escritas em português, com descrição objetiva da alteração.
-
-Exemplos:
+As mensagens de commit são escritas em português, descrevendo de forma direta a alteração realizada:
 
 ```text
-Adicionar criação de reunião
-Corrigir validação de acesso à reunião
-Atualizar documentação de arquitetura
-Adicionar testes de autorização
-Refatorar serviço de reuniões
+Adicionar agendamento de reuniões pelo presidente da comissão
+Adicionar lista de presença e registro de entrada e saída
+Adicionar bloqueio de reuniões para organizações não aprovadas
+Corrigir validação de acesso à reunião no backend
+Atualizar pesquisa de mercado e requisitos não funcionais
 ```
 
-Boas práticas:
-
-- um commit deverá representar uma alteração coerente;
-- mensagens como `teste`, `alteração`, `mudanças` ou `final` deverão ser evitadas;
-- arquivos com secrets, credenciais ou dados sensíveis não deverão ser commitados;
-- antes de integrar alterações à `main`, o código deverá compilar e os testes aplicáveis deverão ser executados.
+Regras de versionamento:
+- Cada commit deve reunir alterações relacionadas a uma mesma tarefa;
+- Evitar mensagens vagas como `ajustes`, `fix` ou `teste`;
+- Nunca versionar o arquivo `backend/.env`, chaves privadas ou pastas de build (`target/`, `node_modules/`, `.expo/`);
+- Garantir que o servidor compile e passe nos testes automatizados antes de integrar na `main`.
 
 ## 9. Estratégia de Testes
 
-A estratégia de qualidade utilizará diferentes níveis e tipos de teste conforme os requisitos implementados em cada incremento.
+A verificação de qualidade do SpotMeet combina os testes automatizados do servidor e do aplicativo com testes de API via `curl` e testes funcionais manuais no aplicativo móvel.
 
-### 9.1. Testes Unitários
+### 9.1. Ferramentas de Teste Utilizadas no Projeto
 
-Validarão unidades isoladas de código, como regras de negócio, validações e funções utilitárias.
+| Camada | Ferramenta / Framework | Uso Real no Projeto |
+|---|---|---|
+| Backend | **JUnit 5 (Jupiter)** | Suíte automatizada do servidor em `backend/src/test/java/com/spotmeet/backend/`, com 28 classes de teste, executada com `./mvnw test`. |
+| Backend | **Mockito** | Simulação dos repositórios e de outras dependências nos testes das regras de negócio, de segurança e de e-mail. |
+| Backend | **MockMvc e Spring Boot Test** | Testes das rotas HTTP de autenticação, organizações, comissões, foto de perfil e monitoramento, com os códigos de retorno e o filtro JWT. Duas classes (`OrganizationModerationPostgresTests` e `ProfilePhotoPostgresTests`) usam um PostgreSQL local de teste. |
+| Aplicativo | **Executor de testes do Node (`node:test`)** | 27 arquivos de teste em `SpotMeetApp/tests/`, com 826 testes, executados com `npm test` (o mesmo que `node --test "tests/*.test.mjs"`), para validação de formulários, sessão, biometria, foto de perfil, avisos, sincronização das telas e rascunho da ata. |
+| API | **cURL** | Verificação direta de rotas HTTP, códigos de retorno (200, 201, 400, 401, 403, 429) e medição de tempo de resposta (`RNF07`). |
+| Aplicativo | **Expo Go e APK Android (teste manual)** | Verificação manual dos fluxos de tela, da validação dos formulários, dos temas claro e escuro e das confirmações de ações em aparelhos reais. |
 
-Exemplos ilustrativos:
+### 9.2. Níveis de Teste
 
-- validação de data e horário;
-- regras de criação de reunião;
-- cancelamento de reunião;
-- validação de participantes.
+#### 1. Testes de Regras de Negócio (JUnit 5 + Mockito)
+Verificam as regras dos serviços e as validações do servidor com os repositórios simulados (por exemplo `MeetingRulesTests`, `MeetingRecurrenceTests`, `CommitteeRulesTests`, `OrganizationRulesTests`, `AuthenticationAttemptTests`, `OtpValidationTests`, `EmailValidationTests` e `NameValidationTests`):
+- Agendamento só pelo presidente, início no futuro e reunião de dia inteiro que pode começar no dia atual;
+- Convite dos integrantes ativos escolhidos, resposta até o fim da reunião e comentário mantido na recusa;
+- Entrada e saída dentro do horário da reunião, registro por outra pessoa só pelo presidente e ações em massa só com a reunião em andamento;
+- Lista de presença gerada pelo presidente e consultada por integrantes e líderes da organização;
+- Regras de repetição semanal, mensal, anual e diária e conferência do tipo do anexo pelo conteúdo;
+- Limite de 10 falhas em 15 minutos em `AuthenticationAttempts` e expressões regulares de senha, e-mail, nome e código de 6 dígitos;
+- Ata escrita depois da reunião e aprovada pelos presentes, votação só para quem registrou entrada e relatório só com as reuniões em que o usuário entrou (`MeetingRulesTests`).
 
-### 9.2. Testes de Integração
+#### 2. Testes de Rotas HTTP e Segurança (JUnit 5 + MockMvc)
+Verificam o mapeamento das rotas, o JSON das respostas, a autenticação JWT e os códigos HTTP (por exemplo `AccountSecurityTests`, `JwtSessionTests`, `SessionRevocationTests`, `SecurityReviewTests`, `GoogleSignInTests`, `OrganizationRulesTests` e `ProfilePhotoTests`):
+- Cadastro, confirmação do código e login, com HTTP 401 para token ausente ou inválido;
+- Encerramento das sessões antigas depois da troca ou redefinição de senha;
+- HTTP 403 quando o usuário não tem o perfil ou o vínculo exigido na organização ou na comissão;
+- HTTP 429 depois de tentativas repetidas e ausência de campos sensíveis nas respostas JSON.
 
-Validarão a interação entre diferentes camadas do sistema.
+#### 3. Testes Funcionais (No Aplicativo e Banco PostgreSQL)
+Verificam os fluxos de ponta a ponta com o servidor conectado ao PostgreSQL 18:
+- Cadastrar conta, confirmar código de 6 dígitos por e-mail (`POST /api/auth/verify-email`) e iniciar sessão;
+- Agendar, editar e cancelar reunião como presidente da comissão;
+- Aceitar ou recusar convite com justificativa, registrar entrada e saída durante a reunião e gerar a lista de presença;
+- Escrever, enviar e aprovar a ata, abrir uma votação e votar, e consultar o relatório individual.
 
-Exemplo de fluxo:
+#### 4. Testes de Segurança
+Verificam o cumprimento dos requisitos `RNF02` a `RNF06`:
+- Tentativa de acesso a reunião de outra comissão por alteração de `{meetingId}` na URL, confirmando bloqueio com HTTP 403;
+- Conferência dos hashes `$2a$12$` na tabela `users` e ausência de campos sensíveis nas respostas JSON;
+- Envio de 10 tentativas incorretas seguidas em `/api/auth/verify-email` ou `/api/auth/login`, confirmando a resposta HTTP 429 já na 10ª falha e durante os 15 minutos seguintes.
 
-```text
-Controller
-    v
-Service
-    v
-Repository
-    v
-PostgreSQL
-```
-
-### 9.3. Testes de API
-
-Validarão endpoints, dados de entrada, respostas e controle de acesso.
-
-Exemplos ilustrativos:
-
-```text
-POST /meetings
-GET /meetings
-GET /meetings/{id}
-PUT /meetings/{id}
-DELETE /meetings/{id}
-```
-
-Deverão ser considerados cenários como:
-
-- sucesso;
-- entrada inválida;
-- usuário não autenticado;
-- usuário sem autorização;
-- recurso inexistente;
-- conflito de dados, quando aplicável.
-
-### 9.4. Testes Funcionais
-
-Validarão o comportamento do sistema do ponto de vista do usuário.
-
-Exemplos ilustrativos:
-
-- autenticar usuário;
-- criar reunião;
-- consultar reuniões;
-- editar reunião;
-- cancelar reunião;
-- consultar agenda;
-- criar pauta;
-- registrar ata.
-
-Os testes funcionais definitivos deverão acompanhar os requisitos definidos pelo professor em cada incremento.
-
-### 9.5. Testes de Segurança
-
-Deverão verificar, conforme aplicável:
-
-- autenticação;
-- autorização;
-- BOLA;
-- IDOR;
-- Mass Assignment;
-- SQL Injection;
-- XSS;
-- validação de entrada;
-- proteção de dados sensíveis;
-- exposição indevida em logs.
-
-### 9.6. Testes de Usabilidade
-
-Deverão avaliar se os fluxos principais são claros e simples para o usuário.
-
-Exemplos:
-
-- localizar uma reunião;
-- iniciar a criação de uma reunião ou pauta;
-- consultar o calendário;
-- identificar o status de uma reunião;
-- navegar entre as principais áreas do aplicativo.
-
-### 9.7. Testes de Compatibilidade
-
-Deverão considerar:
-
-- Android;
-- iOS;
-- diferentes tamanhos de tela;
-- modo claro;
-- modo escuro;
-- comportamento responsivo dos componentes.
-
-As versões mínimas efetivamente suportadas deverão acompanhar a definição final da stack e os requisitos do projeto.
+#### 5. Testes de Usabilidade, Desempenho e Compatibilidade
+Verificam os requisitos `RNF01`, `RNF07` e `RNF09`:
+- Submissão de formulários vazios ou com formato inválido no aplicativo, confirmando exibição dos avisos em português junto aos campos sem envio de requisição à API;
+- Aferição de tempo de resposta local com `curl` e medição com cronômetro em 10 testes de abertura da aba "Reuniões" em rede móvel;
+- Execução do aplicativo em Android (7.0+) e iOS (16.4+) nos temas Claro e Escuro.
 
 ## 10. Identificação dos Casos de Teste
 
-Os casos de teste deverão possuir identificadores únicos de acordo com a categoria.
+Os casos de teste utilizam identificadores sequenciais de acordo com a categoria:
 
-| Categoria | Padrão |
+| Categoria | Padrão de Identificador |
 |---|---|
-| Unitário | `CT-UNIT-001` |
-| Integração | `CT-INT-001` |
-| API | `CT-API-001` |
-| Funcional | `CT-FUNC-001` |
-| Segurança | `CT-SEC-001` |
-| Usabilidade | `CT-UI-001` |
-| Compatibilidade | `CT-COMP-001` |
-
-A numeração deverá ser sequencial dentro de cada categoria.
+| Unitário | `CT-UNIT-xxx` |
+| Integração | `CT-INT-xxx` |
+| API | `CT-API-xxx` |
+| Funcional | `CT-FUNC-xxx` |
+| Segurança | `CT-SEC-xxx` |
+| Usabilidade | `CT-UI-xxx` |
+| Desempenho | `CT-PERF-xxx` |
+| Compatibilidade | `CT-COMP-xxx` |
 
 ## 11. Modelo de Caso de Teste
 
-Cada caso de teste deverá conter, no mínimo:
+Os casos de teste manuais e de aceitação seguem o modelo em branco abaixo, cujos campos de execução (`Resultado Obtido`, `Status`, `Evidências`, `Responsável` e `Data da Execução`) são preenchidos somente no momento em que a bateria de testes é executada:
 
 ```text
 ID:
 CT-FUNC-001
 
 Título:
-Criar reunião com dados válidos
+Agendar reunião com dados válidos pelo presidente da comissão
 
 Tipo:
 Funcional
 
-Requisito relacionado:
-RF-XXX / RNF-XXX
+Requisito Relacionado:
+RF25 / RNF09
 
 Pré-condições:
-Usuário autenticado.
+1. Usuário autenticado com cargo ativo de presidente da comissão (COMMITTEE_ADMIN).
+2. Organização aprovada pelo administrador do sistema.
+3. Existência de integrantes ativos vinculados à comissão.
 
-Dados de teste:
-Informar os dados necessários para execução.
+Dados de Teste:
+Título: "Reunião de Alinhamento"
+Início: <data/hora futura no formato YYYY-MM-DDTHH:mm:ss>
+Término: <data/hora posterior ao início>
+Pauta: "Definição das tarefas da comissão"
+Prioridade: HIGH
+Convidados: Integrantes ativos selecionados
 
-Passos:
-1. ...
-2. ...
-3. ...
+Passos de Execução:
+1. Acessar a aba "Reuniões" no aplicativo SpotMeet.
+2. Abrir o formulário de criação de reunião da comissão presidida.
+3. Preencher os campos obrigatórios com os dados de teste.
+4. Confirmar o salvamento da reunião.
 
-Resultado esperado:
-Descrever o comportamento esperado.
+Resultado Esperado:
+A reunião é gravada no servidor (HTTP 201), os convites são criados para os integrantes selecionados com resposta inicial PENDING, o presidente fica com resposta ACCEPTED e a reunião passa a aparecer na listagem da comissão.
 
-Resultado obtido:
-Preenchido durante a execução.
+Resultado Obtido:
+[A preencher na execução]
 
 Status:
-PENDENTE / APROVADO / REPROVADO / BLOQUEADO
+PENDENTE
 
 Evidências:
-Print, log ou outro registro quando necessário.
+[A preencher na execução]
 
 Responsável:
-Nome do integrante.
+[A preencher na execução]
 
-Data:
-Data da execução.
+Data da Execução:
+[A preencher na execução]
 ```
 
-## 12. Registro dos Resultados
+## 12. Registro dos Resultados de Teste
 
-Os resultados deverão ser documentados durante cada incremento.
+Os resultados dos testes automatizados do servidor são obtidos diretamente pela execução do Maven (`./mvnw test`, que gera os relatórios do JUnit 5 em `backend/target/surefire-reports/`), enquanto as formas de conferir os requisitos não funcionais ficam nas Seções 3 e 5 do Documento de Requisitos (`Doc/05-documento-requisitos.md`) e os testes executados, com as verificações de API, na Seção 10.2.
 
-Estrutura proposta:
-
-```text
-docs/
-`-- testing/
-    |-- templates/
-    |   `-- modelo-caso-teste.md
-    `-- resultados/
-        |-- incremento-1/
-        |-- incremento-2/
-        `-- incremento-3/
-```
-
-Os resultados poderão ser armazenados individualmente por caso de teste ou consolidados em um relatório do incremento, desde que mantenham rastreabilidade entre requisito, teste e resultado.
-
-Evidências não deverão conter senhas, tokens, secrets ou informações pessoais desnecessárias.
+Nenhuma evidência ou relatório de teste deve expor senhas em texto, tokens JWT válidos ou dados pessoais sem mascaramento.
 
 ## 13. Status dos Testes
 
-Serão utilizados os seguintes status:
+* **PENDENTE:** Caso de teste especificado, aguardando execução;
+* **APROVADO:** O resultado obtido na execução corresponde ao resultado esperado;
+* **REPROVADO:** O comportamento observado divergiu do esperado, exigindo correção antes da entrega;
+* **BLOQUEADO:** O teste não pôde ser executado por impedimento de ambiente ou dependência pendente.
 
-### PENDENTE
+## 14. Critérios de Aceite para Merge na Branch Main
 
-O teste ainda não foi executado.
+Antes de integrar qualquer branch na `main`, devem ser conferidos os seguintes itens:
 
-### APROVADO
+- [ ] Servidor compilando sem erros (`./mvnw clean compile`) e suíte JUnit 5 aprovada (`./mvnw test`);
+- [ ] Aplicativo móvel sem erros de tipagem TypeScript (`npx tsc --noEmit`);
+- [ ] Ausência de arquivos `.env`, senhas ou tokens nos arquivos versionados;
+- [ ] Verificação de permissão implementada no servidor para todas as rotas novas ou alteradas;
+- [ ] Documentação na pasta `Doc/` atualizada de acordo com o código;
+- [ ] Ausência de código comentado ou imports não utilizados;
+- [ ] Revisão das alterações por outro integrante da equipe.
 
-O resultado obtido corresponde ao resultado esperado.
+## 15. Evolução Contínua da Qualidade
 
-### REPROVADO
-
-O resultado obtido diverge do resultado esperado.
-
-### BLOQUEADO
-
-O teste não pôde ser executado devido a uma dependência, indisponibilidade do ambiente ou defeito anterior que impede sua execução.
-
-## 14. Critérios Mínimos antes de Integrar Alterações
-
-Antes de uma alteração ser incorporada à branch `main`, deverá ser verificado, quando aplicável:
-
-- código compilando sem erros;
-- testes relacionados executados;
-- ausência de secrets ou credenciais nos arquivos alterados;
-- autorização validada no backend para recursos protegidos;
-- documentação atualizada quando houver alteração relevante;
-- ausência de código morto ou artefatos temporários;
-- revisão das alterações realizadas.
-
-## 15. Evolução da Estratégia de Qualidade
-
-Este documento define a estratégia inicial de qualidade do SpotMeet.
-
-Como os requisitos do projeto serão definidos progressivamente ao longo dos incrementos, os casos de teste, critérios de aceite e matrizes de rastreabilidade deverão ser atualizados conforme novos requisitos forem apresentados.
-
-A estrutura de nomenclatura, registro de evidências, segurança e documentação deverá permanecer consistente durante todo o projeto.
+As convenções de código, nomenclatura, rotas REST, segurança e verificação descritas neste documento devem ser mantidas alinhadas ao código-fonte e ao Documento de Requisitos (`Doc/05-documento-requisitos.md`) em todos os incrementos do SpotMeet.

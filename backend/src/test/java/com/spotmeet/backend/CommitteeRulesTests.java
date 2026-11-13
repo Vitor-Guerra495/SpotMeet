@@ -2,12 +2,14 @@ package com.spotmeet.backend;
 
 import com.spotmeet.backend.controller.CommitteeController;
 import com.spotmeet.backend.dto.CommitteeRequestDTO;
+import com.spotmeet.backend.dto.InviteCandidateDTO;
 import com.spotmeet.backend.dto.ValidationPatterns;
 import com.spotmeet.backend.exception.GlobalExceptionHandler;
 import com.spotmeet.backend.model.*;
 import com.spotmeet.backend.model.OrganizationMember.OrganizationRole;
 import com.spotmeet.backend.repository.*;
 import com.spotmeet.backend.service.CommitteeService;
+import com.spotmeet.backend.service.EmailService;
 import jakarta.validation.Validation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,13 +37,19 @@ class CommitteeRulesTests {
     private Organization first;
     private Committee existing;
     private MockMvc mvc;
+    private CommitteeService service;
+    private UserRepository users;
+    private CommitteeMemberRepository committeeMembers;
+    private EmailService mail;
 
     @BeforeEach
     void setUp() {
         committees = mock(CommitteeRepository.class);
         organizations = mock(OrganizationRepository.class);
         memberships = mock(OrganizationMemberRepository.class);
-        UserRepository users = mock(UserRepository.class);
+        users = mock(UserRepository.class);
+        committeeMembers = mock(CommitteeMemberRepository.class);
+        mail = mock(EmailService.class);
         leader = new User(); leader.setId(1L); leader.setEmail("leader@example.com"); leader.setName("Líder"); leader.setRole("USER");
         first = new Organization(); first.setId(1L); first.setName("Equipe"); first.setOwner(leader); first.setApproved(true);
         Organization second = new Organization(); second.setId(2L); second.setName("Outra equipe"); second.setOwner(leader); second.setApproved(true);
@@ -54,13 +62,14 @@ class CommitteeRulesTests {
             .thenAnswer(call -> call.getArgument(0).equals(1L) && !Objects.equals(call.getArgument(3), 10L)
                 && ValidationPatterns.normalizeOrganizationName(call.getArgument(1)).equalsIgnoreCase("RH"));
         when(committees.save(any())).thenAnswer(call -> { Committee value = call.getArgument(0); if (value.getId() == null) value.setId(20L); return value; });
-        CommitteeService service = new CommitteeService();
+        service = new CommitteeService();
         ReflectionTestUtils.setField(service, "committeeRepo", committees);
         ReflectionTestUtils.setField(service, "organizationRepo", organizations);
         ReflectionTestUtils.setField(service, "organizationMemberRepo", memberships);
         ReflectionTestUtils.setField(service, "userRepo", users);
-        ReflectionTestUtils.setField(service, "committeeMemberRepo", mock(CommitteeMemberRepository.class));
+        ReflectionTestUtils.setField(service, "committeeMemberRepo", committeeMembers);
         ReflectionTestUtils.setField(service, "auditLogRepo", mock(AuditLogRepository.class));
+        ReflectionTestUtils.setField(service, "emailService", mail);
         CommitteeController controller = new CommitteeController(); ReflectionTestUtils.setField(controller, "committeeService", service);
         mvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
     }
@@ -86,6 +95,49 @@ class CommitteeRulesTests {
         String body = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of("name", name));
         mvc.perform(post("/api/organizations/1/committees").principal(principal()).contentType("application/json").content(body)).andExpect(status().isBadRequest());
         verify(committees, never()).save(any());
+    }
+
+    @Test
+    void inviteCandidatesAreTheMembersWithoutALinkOrWithARefusal() {
+        User active = new User(); active.setId(5L); active.setName("Bruno"); active.setEmail("b@example.com");
+        User invited = new User(); invited.setId(6L); invited.setName("carla"); invited.setEmail("c@example.com");
+        User declined = new User(); declined.setId(7L); declined.setName("Davi"); declined.setEmail("d@example.com");
+        User free = new User(); free.setId(8L); free.setName("Ana"); free.setEmail("a@example.com");
+        List<OrganizationMember> organizationRows = new java.util.ArrayList<>();
+        for (User person : List.of(leader, active, invited, declined, free)) {
+            OrganizationMember row = new OrganizationMember(); row.setUser(person); row.setOrganization(first);
+            row.setRole(person == leader ? OrganizationMember.OrganizationRole.ORG_OWNER : OrganizationMember.OrganizationRole.MEMBER);
+            organizationRows.add(row);
+        }
+        when(memberships.findByOrganizationId(1L)).thenReturn(organizationRows);
+        when(committeeMembers.findByCommitteeId(10L)).thenReturn(List.of(
+            new CommitteeMember(active, existing, CommitteeMember.CommitteeMembershipStatus.ACTIVE, CommitteeMember.CommitteeRole.MEMBER, null),
+            new CommitteeMember(invited, existing, CommitteeMember.CommitteeMembershipStatus.PENDING_USER_ACCEPTANCE, CommitteeMember.CommitteeRole.MEMBER, leader),
+            new CommitteeMember(declined, existing, CommitteeMember.CommitteeMembershipStatus.DECLINED, CommitteeMember.CommitteeRole.MEMBER, leader)));
+
+        List<String> names = service.listInviteCandidates(10L, leader.getEmail()).stream().map(InviteCandidateDTO::name).toList();
+        assertEquals(List.of("Ana", "Davi", "Líder"), names);
+
+        User member = new User(); member.setId(9L); member.setEmail("m@example.com"); member.setRole("USER");
+        when(users.findByEmail("m@example.com")).thenReturn(Optional.of(member));
+        assertThrows(SecurityException.class, () -> service.listInviteCandidates(10L, "m@example.com"));
+    }
+
+    @Test
+    void invitingSendsTheEmailOnlyWhenTheUserStillHasToAccept() {
+        User target = new User(); target.setId(5L); target.setEmail("target@example.com"); target.setName("Convidada");
+        when(users.findById(5L)).thenReturn(Optional.of(target));
+        when(memberships.existsByUserIdAndOrganizationId(5L, 1L)).thenReturn(true);
+        when(committeeMembers.save(any())).thenAnswer(call -> call.getArgument(0));
+        service.addUserToCommittee(10L, 5L, leader.getEmail());
+        verify(mail).sendCommitteeInvitationEmail("target@example.com", "Convidada", "Equipe", "RH", "Líder");
+
+        CommitteeMember requested = new CommitteeMember(); requested.setUser(target); requested.setCommittee(existing);
+        requested.setStatus(CommitteeMember.CommitteeMembershipStatus.PENDING_LEADER_APPROVAL);
+        when(committeeMembers.findByUserIdAndCommitteeId(5L, 10L)).thenReturn(Optional.of(requested));
+        service.addUserToCommittee(10L, 5L, leader.getEmail());
+        assertEquals(CommitteeMember.CommitteeMembershipStatus.ACTIVE, requested.getStatus());
+        verifyNoMoreInteractions(mail);
     }
 
     @Test

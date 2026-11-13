@@ -3,6 +3,7 @@ package com.spotmeet.backend.service;
 import com.spotmeet.backend.dto.CommitteeMemberResponseDTO;
 import com.spotmeet.backend.dto.CommitteeRequestDTO;
 import com.spotmeet.backend.dto.CommitteeResponseDTO;
+import com.spotmeet.backend.dto.InviteCandidateDTO;
 import com.spotmeet.backend.dto.UserCommitteeLinkDTO;
 import com.spotmeet.backend.dto.ValidationPatterns;
 import com.spotmeet.backend.model.*;
@@ -17,8 +18,10 @@ import org.springframework.transaction.annotation.Isolation;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -41,6 +44,7 @@ public class CommitteeService {
     @Autowired private OrganizationMemberRepository organizationMemberRepo;
     @Autowired private UserRepository userRepo;
     @Autowired private AuditLogRepository auditLogRepo;
+    @Autowired private EmailService emailService;
 
     // Authorization helpers
 
@@ -73,7 +77,7 @@ public class CommitteeService {
                 ));
     }
 
-    // 1. Create committee (leader only)
+    // Create committee (leader only)
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public CommitteeResponseDTO createCommittee(Long organizationId, String leaderEmail, CommitteeRequestDTO dto) {
@@ -105,7 +109,7 @@ public class CommitteeService {
         return CommitteeResponseDTO.fromEntity(saved, 0, 0);
     }
 
-    // 2. List committees of the organization
+    // List committees of the organization
 
     @Transactional(readOnly = true)
     public List<CommitteeResponseDTO> listCommittees(Long organizationId, String userEmail) {
@@ -130,7 +134,7 @@ public class CommitteeService {
         }).collect(Collectors.toList());
     }
 
-    // 3. Update committee (leader only)
+    // Update committee (leader only)
 
     /**
      * Updates the name and description of a committee.
@@ -188,7 +192,7 @@ public class CommitteeService {
         }
     }
 
-    // 4. Delete committee (leader only)
+    // Delete committee (leader only)
 
     @Transactional
     public void deleteCommittee(Long committeeId, String leaderEmail) {
@@ -210,7 +214,7 @@ public class CommitteeService {
         ));
     }
 
-    // 5. List committee links of a member in the organization (for the modal)
+    // List committee links of a member in the organization (for the modal)
 
     @Transactional(readOnly = true)
     public List<UserCommitteeLinkDTO> listUserCommitteeLinks(Long organizationId, Long targetUserId, String executorEmail) {
@@ -261,7 +265,7 @@ public class CommitteeService {
         return result;
     }
 
-    // 6. Leader adds a member to the committee (creates a pending invitation for the user)
+    // Leader adds a member to the committee (creates a pending invitation for the user)
 
     @Transactional
     public CommitteeMemberResponseDTO addUserToCommittee(Long committeeId, Long targetUserId, String leaderEmail) {
@@ -317,11 +321,15 @@ public class CommitteeService {
             "COMMITTEE_INVITATION_SENT",
             "Usuário: " + target.getEmail() + " convidado para comissão: " + committee.getName()
         ));
+        if (saved.getStatus() == CommitteeMembershipStatus.PENDING_USER_ACCEPTANCE) {
+            emailService.sendCommitteeInvitationEmail(target.getEmail(), target.getName(),
+                committee.getOrganization().getName(), committee.getName(), leader.getName());
+        }
 
         return CommitteeMemberResponseDTO.fromEntity(saved);
     }
 
-    // 7. Leader removes a member from the committee
+    // Leader removes a member from the committee
 
     @Transactional
     public void removeUserFromCommittee(Long committeeId, Long targetUserId, String leaderEmail) {
@@ -343,7 +351,28 @@ public class CommitteeService {
         ));
     }
 
-    // 7.1 Active members of the committee, with the president marked by the role
+    // Organization members the leader can invite: no link with the committee, or the last answer was a refusal
+
+    @Transactional(readOnly = true)
+    public List<InviteCandidateDTO> listInviteCandidates(Long committeeId, String leaderEmail) {
+        Committee committee = committeeRepo.findById(committeeId)
+                .orElseThrow(() -> new IllegalArgumentException("Comissão não encontrada."));
+        User leader = findUserByEmail(leaderEmail);
+        requireOrganizationLeader(leader, committee.getOrganization().getId());
+
+        Set<Long> linked = committeeMemberRepo.findByCommitteeId(committeeId).stream()
+                .filter(cm -> cm.getStatus() != CommitteeMembershipStatus.DECLINED)
+                .map(cm -> cm.getUser().getId())
+                .collect(Collectors.toSet());
+        return organizationMemberRepo.findByOrganizationId(committee.getOrganization().getId()).stream()
+                .map(OrganizationMember::getUser)
+                .filter(user -> !linked.contains(user.getId()))
+                .sorted(Comparator.comparing(User::getName, String.CASE_INSENSITIVE_ORDER))
+                .map(user -> new InviteCandidateDTO(user.getId(), user.getName(), user.getEmail()))
+                .toList();
+    }
+
+    // Active members of the committee, with the president marked by the role
 
     @Transactional(readOnly = true)
     public List<CommitteeMemberResponseDTO> listActiveMembers(Long committeeId, String userEmail) {
@@ -362,7 +391,7 @@ public class CommitteeService {
                 .toList();
     }
 
-    // 7.3 Committees where the user is the active president
+    // Committees where the user is the active president
 
     @Transactional(readOnly = true)
     public List<CommitteeMemberResponseDTO> listPresidedCommittees(String userEmail) {
@@ -374,7 +403,7 @@ public class CommitteeService {
                 .toList();
     }
 
-    // 7.2 Leader designates the committee president (one per committee)
+    // Leader designates the committee president (one per committee)
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public CommitteeMemberResponseDTO assignPresident(Long committeeId, Long targetUserId, String leaderEmail) {
@@ -409,7 +438,7 @@ public class CommitteeService {
         return CommitteeMemberResponseDTO.fromEntity(saved);
     }
 
-    // 8. Pending invitations of the user (accept/decline)
+    // Pending invitations of the user (accept/decline)
 
     @Transactional(readOnly = true)
     public List<CommitteeMemberResponseDTO> listMyInvitations(String userEmail) {
@@ -454,7 +483,7 @@ public class CommitteeService {
         return CommitteeMemberResponseDTO.fromEntity(saved);
     }
 
-    // 9. Join requests by the user and leader approval
+    // Join requests by the user and leader approval
 
     @Transactional
     public CommitteeMemberResponseDTO requestToJoin(Long committeeId, String userEmail) {
