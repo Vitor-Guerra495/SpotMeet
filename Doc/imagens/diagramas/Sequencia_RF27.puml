@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(presidente da comissão)" as U
@@ -17,43 +18,55 @@ participant ":JwtAuthFilter" as Filtro
 participant ":MeetingController" as Ctrl
 participant ":MeetingService" as Svc
 participant ":MeetingAccess" as Acc
-participant ":CommitteeMemberRepository" as CmRepo
+participant ":Meeting" as Meeting
 participant ":MeetingRepository" as MeetRepo
-participant ":AuditLogRepository" as AuditRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":EmailService" as Mail
 participant ":GlobalExceptionHandler" as Handler
 end box
 
 U -> Tela : abrir a reunião agendada ou em andamento e tocar em "Cancelar reunião"
-Tela --> U : confirmação "Cancelar reunião" (Cancelar "<título>"? Os convidados verão a reunião como cancelada.)
-U -> Tela : confirmar com "Cancelar reunião"
-Tela -> Filtro : POST /api/meetings/{meetingId}/cancel
-Filtro -> Ctrl : cancelMeeting(meetingId, auth)
-Ctrl -> Svc : cancelMeeting(meetingId, email)
+Tela --> U : tela "Cancelar reunião" (aviso de série, campo "Motivo (opcional)")
+U -> Tela : informar o motivo e tocar em "Cancelar reunião"
+Tela -> Filtro : POST /api/meetings/{meetingId}/cancel (MeetingCancelDTO)
+alt corpo inválido (motivo acima de 300 caracteres)
+  note over Ctrl, Handler : @Valid no Spring MVC recusa antes de chamar o controller.
+  Handler --> Tela : 400 {message, errors}
+  Tela --> U : exibe a mensagem e mantém o formulário
+else corpo válido
+Filtro -> Ctrl : cancelMeeting(meetingId, body, auth)
+Ctrl -> Svc : cancelMeeting(meetingId, email, reason)
 activate Svc
 Svc -> Acc : findMeeting(meetingId)
 Acc --> Svc : Meeting
 Svc -> Acc : findUser(email)
-Acc --> Svc : User
-Svc -> Acc : requirePresident(user, committee)
-Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
-CmRepo --> Acc : CommitteeMember
-Acc --> Svc : void
-Svc -> Svc : statusAt(now)
+Acc --> Svc : User president
+Svc -> Acc : requirePresident(president, meeting.getCommittee())
+Svc -> Meeting : statusAt(now)
+Meeting --> Svc : MeetingStatus
 alt presidente e reunião não cancelada nem encerrada
-  Svc -> MeetRepo : save(Meeting com canceledAt = agora)
+  note right of Svc : meeting recebe canceledAt atual e cancelReason limpo
+  Svc -> MeetRepo : save(meeting)
   Svc -> Acc : audit(president, "MEETING_CANCELED", meeting, "")
-  Acc -> AuditRepo : save(AuditLog)
+  Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+  PartRepo --> Svc : List<MeetingParticipant>
+  loop cada convidado guest, exceto o presidente
+    Svc -> Mail : sendMeetingCanceledEmail(guest.getEmail(), guest.getName(), mail, president.getName(), meeting.getCancelReason())
+  end
+  note right of Mail : mail é MeetingText.Mail; envio assíncrono, depois do commit
   Svc -> Acc : detail(meeting, president, now)
   Acc --> Svc : MeetingResponseDTO
   Svc --> Ctrl : MeetingResponseDTO
   Ctrl --> Tela : 200 MeetingResponseDTO
-  Tela --> U : aviso "Reunião cancelada." e detalhe com a situação "Cancelada"
-  Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+  Tela --> U : aviso "Reunião cancelada. Os convidados recebem um e-mail." e detalhe com a situação "Cancelada" e o motivo
+  Tela -> Tela : load()
+  note right of Tela : notifica a sincronização de reuniões e recarrega a lista
 else não é presidente, ou a reunião já foi cancelada ou encerrada
-  Svc --> Ctrl : SecurityException ou IllegalStateException
+  Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
   Ctrl --> Handler : exceção propagada
   Handler --> Tela : 403 ou 409 {message}
   Tela --> U : exibe a mensagem de erro
 end
 deactivate Svc
+end
 @enduml

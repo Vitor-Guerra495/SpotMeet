@@ -1,0 +1,114 @@
+@startuml Sequencia_RF41
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF41 (Corrigir e Reenviar Ata)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MinutesSection" as Ata
+participant ":apiRequest" as Api
+participant ":minutes" as Min
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingMinutesController" as Ctrl
+participant ":MeetingMinutesService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
+participant ":MeetingMinutesRepository" as MinRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":MinutesResponseRepository" as RespRepo
+participant ":MeetingText" as Txt
+participant ":EmailService" as Mail
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+
+group Abrir a correção
+  U -> Ata : tocar em "Corrigir e Reenviar" no cartão "Ata" (Reprovada) ou na página "Aprovação da ata"
+  Ata -> Ata : open("minutes-write")
+  Ata -> Tela : openPage(page)
+  Tela -> Ata : minutesTitle(page, status)
+  Ata --> Tela : "Corrigir ata"
+  note right of Tela : status é minutesStatus do detalhe (REJECTED)
+  note over Ata, Min : os motivos vêm de answers, que só o presidente recebe em GET /api/meetings/{meetingId}/minutes (RF42);\nos campos recebem o texto enviado na rodada anterior
+  Ata --> U : página "Corrigir ata": "A ata foi reprovada. Motivos:" com "nome: motivo",\n"Ao reenviar, a contagem de aprovações recomeça.", os campos, presentes e ausentes,\n"A ata continua Reprovada até você reenviar." e "Reenviar para Aprovação" (sem "Salvar Rascunho")
+end
+
+group Reenviar para aprovação
+  U -> Ata : corrigir o texto e tocar em "Reenviar para Aprovação"
+  Ata -> Ata : submit()
+  Ata -> Ata : validate()
+  alt "Assuntos tratados" ou "Decisões tomadas" vazio
+    Ata --> U : "Registre os assuntos tratados." ou "Registre as decisões tomadas." abaixo do campo; nada é enviado
+  else campos obrigatórios preenchidos
+    Ata -> Ata : send(path, "POST", body, "Ata enviada para aprovação", "As pessoas presentes foram avisadas por e-mail.")
+    note right of Ata : path é /meetings/{meetingId}/minutes/submit; body contém topics, decisions e notes
+    Ata -> Api : apiRequest(token, path, method, body)
+    Api -> Filtro : POST /api/meetings/{meetingId}/minutes/submit (MinutesRequestDTO)
+    Filtro -> Ctrl : submit(meetingId, dto, auth)
+    Ctrl -> Svc : submit(meetingId, email, dto)
+    activate Svc
+    Svc -> Acc : findMeeting(meetingId)
+    Acc --> Svc : Meeting
+    Svc -> Acc : findUser(email)
+    Acc --> Svc : User president
+    Svc -> Acc : requirePresident(president, meeting.getCommittee())
+    Acc --> Svc : void
+    Svc -> Svc : requireEnded(meeting, now)
+    Svc -> Meeting : statusAt(now)
+    Meeting --> Svc : MeetingStatus
+    Svc -> MinRepo : findForUpdate(meetingId)
+    MinRepo --> Svc : Optional<MeetingMinutes> (linha bloqueada)
+    Svc -> Svc : applyText(minutes, dto)
+    note right of Svc : topics nulo: "Registre os assuntos tratados.";\ndecisions nulo: "Registre as decisões tomadas."
+    Svc -> Svc : presentPeople(meeting)
+    Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+    PartRepo --> Svc : List<MeetingParticipant>
+    note right of Svc : readers são os presentes (com enteredAt) menos o presidente
+    alt presidente, ata com status REJECTED, texto completo e readers não vazio
+      note right of Svc : status REJECTED, então resend é verdadeiro
+      Svc -> RespRepo : deleteByMinutesId(minutes.getId())
+      note right of RespRepo : apaga as respostas da rodada anterior; a contagem recomeça do zero
+      note right of Svc : minutes recebe writtenBy = president, status IN_APPROVAL,\nupdatedAt e submittedAt = now e closedAt nulo
+      Svc -> MinRepo : save(minutes)
+      Svc -> Txt : mail(meeting, MeetingService.appLink(meeting.getId()))
+      Txt --> Svc : MeetingText.Mail
+      loop cada reader
+        Svc -> Mail : sendMinutesForApprovalEmail(reader.getEmail(), reader.getName(), mail, president.getName(), now)
+      end
+      note right of Mail : e-mail "Ata para aprovar: título da reunião";\nenvio assíncrono, depois do commit
+      Svc -> Acc : audit(president, "MEETING_MINUTES_RESUBMITTED", meeting, " | Pessoas avisadas: " + readers.size())
+      Acc -> AuditRepo : save(new AuditLog(user, action, details))
+      Svc -> Svc : view(meeting, president)
+      note right of Svc : monta o MinutesResponseDTO, como no RF42, sem respostas
+      Svc --> Ctrl : MinutesResponseDTO
+      Ctrl --> Api : 200 MinutesResponseDTO
+      Api --> Ata : ApiResult
+      Ata -> Min : readMinutes(data)
+      Min --> Ata : Minutes
+      Ata --> U : aviso "Ata enviada para aprovação" (As pessoas presentes foram avisadas por e-mail.)
+      Ata -> Tela : refreshDetail()
+      Ata -> Tela : openPage(page)
+      note right of Tela : page é 'card': volta ao detalhe da reunião
+      Tela --> U : cartão "Ata" com "Em aprovação" e a contagem zerada;\ncada presente volta a ver o selo "Ata para aprovar"
+    else não é presidente, ata já em aprovação ou aprovada, texto incompleto ou ninguém além do presidente presente
+      Svc --> Ctrl : SecurityException ou IllegalStateException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Api : 403 ou 409 {message}
+      Api --> Ata : ApiResult (mensagem do erro)
+      Ata --> U : exibe a mensagem acima do botão; a ata continua Reprovada
+    end
+    deactivate Svc
+  end
+end
+note over Svc : a ata reprovada não aceita rascunho: saveDraft responde 409 com\n"A ata já foi enviada. As correções são salvas ao reenviar para aprovação."
+@enduml

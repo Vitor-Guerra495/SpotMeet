@@ -24,26 +24,28 @@ participant ":CommitteeRepository" as ComRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom nome e ID da comissão e organização; não é uma variável local.
 
 U -> Tela : tocar no atalho "Comissões" (aba "Gerenciar")
-Tela -> Tela : warnIfNotApproved(): confere selectedOrg.approved
+Tela -> Tela : warnIfNotApproved()
+note right of Tela : confere selectedOrg.approved
 opt organização não aprovada (pendente, recusada ou bloqueada)
   Tela --> U : aviso "Organização não aprovada", sem abrir a página
 end
 U -> Tela : tocar em "Nova comissão"
-note right of Tela : newCommittee() repete a conferência antes de abrir a folha
+note right of Tela : newCommittee repete a conferência antes de abrir a folha
 Tela --> U : abre a folha "Nova comissão" com "Nome da comissão" e "Descrição (opcional)"
 U -> Tela : preencher os campos e tocar em "Criar comissão"
-Tela -> Tela : handleSheetSave(): validateCommitteeName(nome)
+Tela -> Tela : handleSheetSave()
+note right of Tela : valida o nome com validateCommitteeName
 
 alt nome fora de 2 a 50 caracteres ou com símbolo não permitido
   Tela --> U : exibe o erro abaixo do campo "Nome da comissão"
 else campos válidos no aplicativo
-  Tela -> Tela : mutate("/organizations/{organizationId}/committees", "POST", {name, description})
   Tela -> Filtro : POST /api/organizations/{organizationId}/committees (CommitteeRequestDTO)
-
   alt CommitteeRequestDTO inválido (@Valid)
-    Filtro -> Handler : MethodArgumentNotValidException
+    note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+    note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
     Handler --> Tela : 400 {message, errors}
     Tela --> U : exibe a mensagem do campo na folha
   else CommitteeRequestDTO válido
@@ -52,27 +54,29 @@ else campos válidos no aplicativo
     Ctrl -> Svc : createCommittee(organizationId, email, dto)
     activate Svc
     note over Svc : transação READ_COMMITTED
-    Svc -> UserRepo : findByEmail(email)
+    Svc -> UserRepo : findByEmail(leaderEmail)
     UserRepo --> Svc : User
     Svc -> OrgRepo : findByIdForUpdate(organizationId)
     OrgRepo --> Svc : Organization (linha bloqueada)
     Svc -> Svc : requireOrganizationLeader(leader, organizationId)
-    Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+    Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leader.getId(), organizationId)
     OrgMemRepo --> Svc : Optional<OrganizationMember>
-    Svc -> Svc : validateName(name)
-    Svc -> ComRepo : existsByNormalizedName(organizationId, name, espaços, null)
+    Svc -> Svc : validateName(dto.getName())
+    Svc -> Svc : checkNameAvailability(organizationId, cleanName, null)
+    Svc -> ComRepo : existsByNormalizedName(organizationId, name, ValidationPatterns.ORGANIZATION_WHITESPACE, excludedId)
+    note right of Svc : name e excludedId são parâmetros de checkNameAvailability; excludedId é nulo no cadastro
     ComRepo --> Svc : boolean
     Svc -> Org : isApproved()
     Org --> Svc : boolean
-
     alt é dono, vice ou subdono, o nome está livre e a organização está aprovada
-      Svc -> ComRepo : save(Committee com nome, descrição e organização)
+      note right of Svc : committee recebe nome normalizado, descrição e organização
+      Svc -> ComRepo : save(committee)
       ComRepo --> Svc : Committee
-      Svc -> AuditRepo : save(AuditLog COMMITTEE_CREATED)
+      Svc -> AuditRepo : save(new AuditLog(leader, "COMMITTEE_CREATED", details))
       Svc --> Ctrl : CommitteeResponseDTO (totalActiveMembers 0, totalPending 0)
       Ctrl --> Tela : 201 CommitteeResponseDTO
       Tela --> U : fecha a folha e exibe o aviso "Sucesso": "Comissão criada."
-      Tela -> Tela : notifySync(COMMITTEES_MUTATED) e loadDetails(): recarrega a lista de comissões
+      note right of Tela : notifica a sincronização de comissões e recarrega os detalhes da organização
     else alguma regra violada (a primeira que falha interrompe o fluxo)
       Svc --> Ctrl : SecurityException, IllegalArgumentException ou IllegalStateException
       Ctrl --> Handler : exceção propagada
@@ -83,4 +87,6 @@ else campos válidos no aplicativo
     deactivate Ctrl
   end
 end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+note over Svc : requireOrganizationLeader consulta OrganizationRepository.findById\nantes de conferir dono, vice-líder, subdono ou SYSADMIN.
 @enduml

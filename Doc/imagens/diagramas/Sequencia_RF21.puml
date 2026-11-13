@@ -25,14 +25,16 @@ participant ":LgpdMaskUtil" as Lgpd
 end box
 
 A -> Tela : tocar na aba "Monitoramento"
-Live -> Tela : loadData(silent = true) a cada 4 s, em foco
+Tela -> Tela : loadData()
+  note right of Tela : carga inicial pelo useFocusEffect; depois, useLiveSync chama loadData(true).
+note right of Tela : atualização periódica a cada 4 segundos, em foco; argumento silent true.\nO mesmo ciclo envia GET /api/admin/system/status (RF20).
 Tela -> Filtro : GET /api/admin/reports
-note right of Tela : o mesmo ciclo envia GET /api/admin/system/status (RF20)
 Filtro -> Ctrl : getReports(authentication)
 activate Ctrl
 Ctrl -> Svc : getReports(email)
 activate Svc
-Svc -> UserRepo : findByEmail(email)
+Svc -> Svc : validateSysAdmin(executorEmail)
+Svc -> UserRepo : findByEmail(executorEmail)
 UserRepo --> Svc : Optional<User>
 alt executor com perfil ADMIN ou SYSADMIN
   Svc -> UserRepo : findAll()
@@ -47,11 +49,12 @@ alt executor com perfil ADMIN ou SYSADMIN
   AuditRepo --> Svc : long
   Svc -> AuditRepo : findTop100ByOrderByCreatedAtDesc()
   AuditRepo --> Svc : List<AuditLog>
-  loop até 15 registros mais recentes
-    Svc -> Lgpd : maskEmail(e-mail do autor)
+  loop até 15 registros l mais recentes
+    Svc -> Lgpd : maskEmail(authorEmail)
     Lgpd --> Svc : String
-    Svc -> Lgpd : sanitizeDetails(details)
+    Svc -> Lgpd : sanitizeDetails(l.getDetails())
     Lgpd --> Svc : String
+    note right of Svc : authorEmail é l.user.email, ou nulo quando o registro não tem autor
   end
   Svc --> Ctrl : AdminReportDTO
   Ctrl --> Tela : 200 AdminReportDTO

@@ -1,44 +1,345 @@
 @startuml Diagrama_Classes_App
 !pragma layout smetana
 title
-SpotMeet - Diagrama de classes do aplicativo: telas e dependências específicas
+SpotMeet - Unidades do aplicativo: telas e dependências específicas
 end title
 hide circle
 skinparam classAttributeIconSize 0
-skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam defaultFontSize 11
+skinparam nodesep 25
+skinparam ranksep 35
 left to right direction
-package "Aplicativo (SpotMeetApp)" {
-package "Telas" {
-class AuthScreen <<tela>>
-class MeetingsScreen <<tela>>
-class OrganizationScreen <<tela>>
-class SettingsScreen <<tela>>
-class AdminControlsScreen <<tela>>
-class AdminMonitoringReportsScreen <<tela>>
-class AdminOrganizationsScreen <<tela>>
+class AdminUi <<componente>> {
+  +AdminHeader(props: { title: string; subtitle: string; refreshing?: boolean; onRefresh?: () => void; disabled?: boolean }): React.JSX.Element
 }
-package "Contextos" {
-class BiometricContext <<contexto>>
-class ProfilePhotoContext <<contexto>>
+class AuthLayout <<componente>> {
+  -keyboardVisible: boolean
+  -viewportHeight: number
+  -contentHeight: number
+  -scroll: React.RefObject<ScrollViewInstance | null>
+  -focusedTarget: React.RefObject<number | null>
+  -focusTimer: React.RefObject<number | null>
+  +AuthLayout(props: AuthLayoutProps): React.JSX.Element
 }
-package "Hooks" {
-class useAdminOperation <<hook>>
-class useLiveSync <<hook>>
-class useRefreshRequest <<hook>>
+class BiometricSettings <<componente>> {
+  -active: React.RefObject<boolean>
+  -focusedRef: React.RefObject<boolean>
+  -toggling: boolean
+  +BiometricSettings(props: { disabled?: boolean }): React.JSX.Element
 }
-package "Componentes" {
-class AdminUi <<componente>>
-class AuthLayout <<componente>>
-class BiometricSettings <<componente>>
-class ServerSettings <<componente>>
-class AttendanceListView <<componente>>
-class MeetingAttendancePanel <<componente>>
-class MeetingForm <<componente>>
-class MeetingInvitationActions <<componente>>
-class PresidentSheet <<componente>>
-class meetingStyles <<componente>>
-class ProfilePhotoEditor <<componente>>
+class ServerSettings <<componente>> {
+  -expanded: boolean
+  -draft: string
+  -scanning: boolean
+  -scanProgress: string
+  +ServerSettings(): React.JSX.Element
 }
+class AttendanceListView <<componente>> {
+  +AttendanceListView(props: Props): React.JSX.Element
+}
+class MeetingAttendancePanel <<componente>> {
+  +MeetingAttendancePanel(props: Props): React.JSX.Element | null
+}
+class MeetingForm <<componente>> {
+  -originalStart: React.RefObject<number | null>
+  -committeeId: number | null
+  -priority: MeetingPriority
+  -modality: MeetingModality
+  -allDay: boolean
+  -start: Date
+  -end: Date
+  -recurrence: Recurrence | null
+  -attachment: Attachment
+  -fileError: string
+  -members: CommitteeMemberRow[] | null
+  -membersError: string
+  -invited: Set<number>
+  -sheet: "frequency" | "invitees" | null
+  -tried: boolean
+  -initialInvited: React.RefObject<Set<number>>
+  +MeetingForm(props: Props): React.JSX.Element
+}
+class MeetingInvitationActions <<componente>> {
+  -declining: boolean
+  -comment: string
+  +MeetingInvitationActions(props: Props): React.JSX.Element | null
+}
+class MeetingPolls <<componente>> {
+  -polls: Poll[] | null
+  -busy: boolean
+  -error: string
+  -question: string
+  -description: string
+  -questionError: string
+  -choice: VoteChoice | null
+  -justification: string
+  -busyRef: React.RefObject<boolean>
+  +MeetingPolls(props: Props): React.JSX.Element | null
+}
+class MinutesSection <<componente>> {
+  -minutes: Minutes | null
+  -loadFailed: boolean
+  -busy: boolean
+  -error: string
+  -topics: string
+  -decisions: string
+  -notes: string
+  -reason: string
+  -fieldErrors: { topics?: string; decisions?: string; reason?: string; }
+  -filled: React.RefObject<boolean>
+  -busyRef: React.RefObject<boolean>
+  +MinutesSection(props: Props): React.JSX.Element | null
+}
+class PresidentSheet <<componente>> {
+  -members: CommitteeMemberRow[] | null
+  -error: string
+  -busy: boolean
+  +PresidentSheet(props: Props): React.JSX.Element
+}
+class meetingStyles <<módulo de estilos>> {
+  +createMeetingStyles(colors: ThemeColors): ReturnType<typeof createMeetingStyles>
+}
+class ProfilePhotoEditor <<componente>> {
+  -mounted: React.RefObject<boolean>
+  -confirmation: React.RefObject<boolean>
+  -failedImage: string | null
+  +ProfilePhotoEditor(props: { name: string; disabled: boolean; scrollY?: Animated.Value }): React.JSX.Element
+}
+class UserAvatar <<componente>> {
+  -image: string | null
+  -failed: boolean
+  +UserAvatar(props: UserAvatarProps): React.JSX.Element
+}
+class AttendanceReport <<componente>> {
+  -period: ReportPeriod
+  -committeeId: number | null
+  -custom: { from: Date; to: Date; } | null
+  -editing: { from: Date; to: Date; } | null
+  -customError: string
+  -report: Report | null
+  -error: string
+  -loading: boolean
+  -reload: number
+  +AttendanceReport(props: { token: string | null }): React.JSX.Element
+}
+class HelpCenter <<componente>> {
+  +HelpCenter(props: Props): React.JSX.Element
+}
+class BiometricContext <<contexto>> {
+  +BiometricProvider(props: { children: React.ReactNode }): React.JSX.Element
+}
+class ProfilePhotoContext <<contexto>> {
+  +ProfilePhotoProvider(props: { children: React.ReactNode }): React.JSX.Element
+}
+class useAdminOperation <<hook>> {
+  -mounted: React.RefObject<boolean>
+  -scope: React.RefObject<{ token: string | null; role: string | null; contextKey: string; focused: boolean; }>
+  -write: React.RefObject<object | null>
+  -dialog: React.RefObject<object | null>
+  -executingDialog: React.RefObject<object | null>
+  -generation: React.RefObject<number>
+  -busy: boolean
+  -confirming: boolean
+  -error: string
+  +useAdminOperation(contextKey: string, cancelReads: () => void): ReturnType<typeof useAdminOperation>
+}
+class useLiveSync <<hook>> {
+  {field} -onSyncRef: React.RefObject<(event?: SyncEvent) => void | Promise<void>>
+  -isSyncingRef: React.RefObject<boolean>
+  -pendingRef: React.RefObject<true | SyncEvent | null>
+  {field} -runnerRef: React.RefObject<((event?: SyncEvent, force?: boolean) => Promise<void>) | null>
+  -wasEnabledRef: React.RefObject<boolean>
+  +useLiveSync(onSync: (event?: SyncEvent) => void | Promise<void>, options: LiveSyncOptions): void
+}
+class useRefreshRequest <<hook>> {
+  -mounted: React.RefObject<boolean>
+  -scope: React.RefObject<{ token: string | null; contextKey: string | number | null; isFocused: boolean; }>
+  -request: React.RefObject<{ controller: AbortController; promise: Promise<T | undefined>; } | null>
+  +useRefreshRequest<T = void>(contextKey: string | number | null): { run: (task: (context: RefreshContext) => Promise<T | undefined>) => Promise<T | undefined>; cancel: () => void; isActive: () => boolean; isCurrentScope: () => boolean; }
+}
+class AuthScreen <<tela>> {
+  -mode: AuthMode
+  -showPassword: boolean
+  -showNewPassword: boolean
+  -showConfirmPassword: boolean
+  -resendCooldown: number
+  -verifyingCode: boolean
+  -formError: string
+  -requestPending: React.RefObject<boolean>
+  -loading: boolean
+  -resending: boolean
+  -cooldown: number
+  -verificationError: string
+  -recoveryCodeError: string
+  -formVersion: React.RefObject<number>
+  -formActive: React.RefObject<boolean>
+  -otpRequestPending: React.RefObject<boolean>
+  -verificationAttempt: React.RefObject<string | null>
+  -recoveryAttempt: React.RefObject<string | null>
+  {field} -backRef: React.RefObject<(() => void) | null>
+  +AuthScreen(props: any): React.JSX.Element
+}
+class MeetingsScreen <<tela>> {
+  -meetings: Meeting[]
+  -presided: PresidedCommittee[]
+  -loading: boolean
+  -loadError: string
+  -refreshing: boolean
+  -filter: Filter
+  -page: "list" | "invites"
+  -detail: Meeting | null
+  -view: DetailView
+  -attendanceList: AttendanceList | null
+  -form: FormState
+  -busy: boolean
+  -actionError: string
+  -allGuests: boolean
+  -cancelReason: string
+  -detailRef: React.RefObject<Meeting | null>
+  -busyRef: React.RefObject<boolean>
+  -pageRef: React.RefObject<"list" | "invites">
+  +MeetingsScreen(): React.JSX.Element
+}
+class OrganizationScreen <<tela>> {
+  -tab: Tab
+  -page: Page
+  -myOrgs: MyOrganization[]
+  -selectedOrg: MyOrganization | null
+  -selectedOrgRef: React.RefObject<MyOrganization | null>
+  -members: Member[]
+  -pendingOrgRequests: OrganizationAccessRequest[]
+  -committeeJoinRequests: CommitteeJoinRequest[]
+  -committees: Committee[]
+  -myInvitations: PendingInvitation[]
+  -organizationInvitations: OrganizationInvitation[]
+  -myLinks: UserCommitteeLink[]
+  -sheet: Sheet
+  -editingCommittee: Committee | null
+  -presidentCommittee: Committee | null
+  -selectedMember: Member | null
+  -linksModalVisible: boolean
+  -memberLinks: UserCommitteeLink[]
+  -loadingLinks: boolean
+  -loadingData: boolean
+  -loadingDetails: boolean
+  -detailsLoaded: boolean
+  -refreshing: boolean
+  -busy: boolean
+  -confirmingAction: boolean
+  -writeLock: React.RefObject<object | null>
+  -confirmLock: React.RefObject<object | null>
+  -refreshLock: React.RefObject<Promise<void> | null>
+  -hasLoaded: React.RefObject<boolean>
+  -loadError: string
+  -invitationError: string
+  -detailsError: string
+  -formError: string
+  -joinMessage: string
+  -search: string
+  -memberSearch: string
+  -memberRole: OrganizationRole | "ALL"
+  -preview: OrganizationPreview | null
+  -previewError: string
+  -previewLoading: boolean
+  -candidates: InviteCandidate[]
+  -candidatesError: string
+  -candidatesLoading: boolean
+  -pickedEmail: React.RefObject<string>
+  -inviteCommittee: Committee | null
+  -committeeCandidates: InviteCandidate[] | null
+  -committeeCandidatesError: string
+  -candidateSearch: string
+  -candidateReload: number
+  -createListed: boolean
+  -editListed: boolean
+  -listedOrgs: ListedOrganization[] | null
+  -listedError: string
+  -listedSearch: string
+  -syncPausedRef: React.RefObject<boolean>
+  -viewRef: React.RefObject<string>
+  {field} -backRef: React.RefObject<() => boolean>
+  +OrganizationScreen(): React.JSX.Element
+}
+class SettingsScreen <<tela>> {
+  -section: SettingsSection
+  -sectionRef: React.RefObject<SettingsSection>
+  -helpTopic: string | null
+  -helpQuery: string
+  -helpProfile: HelpProfile | null
+  -email: string
+  -savedThemeRef: React.RefObject<ThemeType>
+  -loadedSession: React.RefObject<{ token: string; userId: number | null | undefined; } | null>
+  -showCurrentPassword: boolean
+  -showNewPassword: boolean
+  -showConfirmPassword: boolean
+  -loadingProfile: boolean
+  -loadError: string
+  -profileError: string
+  -preferencesError: string
+  -passwordError: string
+  -emailRequestError: string
+  -savingSection: "status" | SettingsSection | null
+  -changingPassword: boolean
+  -profileRequestPending: React.RefObject<boolean>
+  -passwordRequestPending: React.RefObject<boolean>
+  -profileReadVersion: React.RefObject<number>
+  -themePreviewTimer: React.RefObject<number | null>
+  -pendingTheme: React.RefObject<ThemeType | null>
+  -emailModalVisible: boolean
+  -emailStep: 2 | 1
+  -currentCodeError: string
+  -newEmailCodeError: string
+  -loadingModal: boolean
+  -changeCooldown: number
+  -emailFlowStep: React.RefObject<0 | 2 | 1>
+  -emailRequestPending: React.RefObject<boolean>
+  -currentCodeAttempt: React.RefObject<string | null>
+  -newEmailCodeAttempt: React.RefObject<string | null>
+  -screenActive: React.RefObject<boolean>
+  -unsavedRef: React.RefObject<{ profile: boolean; }>
+  {field} -askUnsavedRef: React.RefObject<(proceed: () => void) => boolean>
+  {field} -changeSectionRef: React.RefObject<(next: SettingsSection) => void>
+  -helpTopicRef: React.RefObject<string | null>
+  +SettingsScreen(props: any): React.JSX.Element
+}
+class AdminControlsScreen <<tela>> {
+  -subsystem: Subsystem | null
+  -modal: ModalMode
+  -showPasswords: boolean
+  +AdminControlsScreen(props: Props): React.JSX.Element
+}
+class AdminMonitoringReportsScreen <<tela>> {
+  -status: SystemStatus | null
+  -report: AdminReport | null
+  -loading: boolean
+  -refreshing: boolean
+  -error: string
+  -selected: Detail | null
+  -details: SystemDetails | null
+  -detailsLoading: boolean
+  -detailsError: string
+  +AdminMonitoringReportsScreen(): React.JSX.Element
+}
+class AdminOrganizationsScreen <<tela>> {
+  -organizations: AdminOrganization[]
+  -pendingOrgs: AdminOrganization[]
+  -search: string
+  -filter: StatusFilter
+  -loading: boolean
+  -refreshing: boolean
+  -loaded: boolean
+  -loadError: string
+  -selected: AdminOrganization | null
+  -transfer: boolean
+  -moderation: { org: AdminOrganization; action: "reject" | "block"; } | null
+  -members: AdminMember[]
+  -memberSearch: string
+  -memberError: string
+  -loadingMembers: boolean
+  -pausedRef: React.RefObject<boolean>
+  -loadedRef: React.RefObject<boolean>
+  +AdminOrganizationsScreen(props: Props): React.JSX.Element
 }
 AuthScreen --> AuthLayout
 AuthScreen --> ServerSettings
@@ -46,14 +347,21 @@ MeetingsScreen --> AttendanceListView
 MeetingsScreen --> MeetingAttendancePanel
 MeetingsScreen --> MeetingForm
 MeetingsScreen --> MeetingInvitationActions
+MeetingsScreen --> MeetingPolls
+MeetingsScreen --> MinutesSection
 MeetingsScreen --> meetingStyles
+MeetingsScreen --> UserAvatar
 MeetingsScreen --> useLiveSync
 MeetingsScreen --> useRefreshRequest
 OrganizationScreen --> PresidentSheet
+OrganizationScreen --> UserAvatar
 OrganizationScreen --> useLiveSync
 OrganizationScreen --> useRefreshRequest
 SettingsScreen --> BiometricSettings
 SettingsScreen --> ProfilePhotoEditor
+SettingsScreen --> UserAvatar
+SettingsScreen --> AttendanceReport
+SettingsScreen --> HelpCenter
 SettingsScreen --> BiometricContext
 SettingsScreen --> ProfilePhotoContext
 AdminControlsScreen --> AdminUi

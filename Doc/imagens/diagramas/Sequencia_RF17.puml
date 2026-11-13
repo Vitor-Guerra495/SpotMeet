@@ -20,6 +20,7 @@ participant ":UserService" as Svc
 participant ":UserRepository" as Repo
 participant ":AuditLogRepository" as AuditRepo
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom o estado e tema gravados no perfil; não é uma variável local.
 
 group Carregar o tema salvo ao entrar no aplicativo
   note over Tema : ThemeProvider reage à sessão iniciada (isAuthenticated).\nSem sessão, o tema é DARK.
@@ -34,43 +35,54 @@ group Carregar o tema salvo ao entrar no aplicativo
 end
 
 group Experimentar o tema (prévia)
-  U -> Tela : na aba "Ajustes", seção "Preferências", tocar em "Claro" ou "Escuro"
-  Tela -> Tema : setTheme(tema, false)
+  U -> Tela : na aba "Ajustes", abrir o Perfil pelo cartão do menu\ne tocar em "Claro" ou "Escuro" (grupo "TEMA")
+  Tela -> Tela : previewTheme(value)
+  Tela -> Tema : setTheme(value, false)
+  note right of Tela : value é a opção selecionada, LIGHT ou DARK
   Tema --> Tela : Promise<void>
   Tela --> U : o aplicativo troca de cor na hora, sem enviar nada ao servidor
 end
 
-group Salvar a preferência
-  U -> Tela : tocar em "Salvar preferências"
-  Tela -> Tema : setTheme(tema selecionado, false)
-  Tela -> Filtro : PUT /api/users/me (UpdateUserProfileDTO com availabilityStatus e preferredTheme)
+group Salvar o tema com o Perfil
+  U -> Tela : tocar em "Salvar Alterações"
+  note right of Tela : o botão só fica habilitado com alteração;\no tema trocado conta como alteração
+  Tela -> Tela : handleSaveProfile()
+  note right of Tela : confere nome e biografia (RF16) e cancela a prévia pendente
+  Tela -> Filtro : PUT /api/users/me (UpdateUserProfileDTO)
+  note right of Tela : corpo com name, bio e preferredTheme\n(preferredTheme só quando o tema foi trocado)
   Filtro -> Ctrl : updateMyProfile(dto, authentication)
   activate Ctrl
   Ctrl -> Svc : updateMyProfile(email, dto)
   activate Svc
   Svc -> Repo : findByEmail(email)
   Repo --> Svc : Optional<User>
-  note over Svc : preferredTheme em maiúsculas: LIGHT, DARK ou SYSTEM.\nValor desconhecido é ignorado e o tema anterior é mantido.
-  Svc -> Repo : save(User com preferred_theme e availability_status)
-  Repo --> Svc : User
-  Svc -> AuditRepo : save(AuditLog PROFILE_UPDATED)
+  note over Svc : preferredTheme em maiúsculas: LIGHT, DARK ou SYSTEM.\nValor desconhecido é ignorado e o tema anterior é mantido.\nuser recebe o nome, a biografia e o preferredTheme enviados.
+  Svc -> Repo : save(user)
+  Repo --> Svc : User saved
+  Svc -> AuditRepo : save(new AuditLog(saved, "PROFILE_UPDATED", details))
   AuditRepo --> Svc : AuditLog
   Svc --> Ctrl : UserProfileResponseDTO
   deactivate Svc
   alt gravado
     Ctrl --> Tela : 200 UserProfileResponseDTO
-    Tela -> Tema : setTheme(preferredTheme recebido, false)
-    Tela --> U : exibe o aviso "Preferências salvas com sucesso." e mantém o tema
+    Tela -> Tema : setTheme(savedTheme, false)
+    note right of Tela : savedTheme é o preferredTheme da resposta (LIGHT ou DARK)\nou, se ela não trouxer um desses valores, o tema escolhido
+    Tela --> U : exibe o aviso "Perfil atualizado: Suas alterações foram salvas." e mantém o tema
   else usuário não encontrado ou erro inesperado
     Ctrl --> Tela : 400 (texto da mensagem) ou 500 "Erro ao atualizar perfil: ..."
-    Tela --> U : exibe "Não foi possível salvar as preferências. Tente novamente." e mantém a prévia
+    Tela --> U : exibe "Não foi possível salvar o perfil. Confira os campos e tente novamente."\ne mantém a prévia
   end
   deactivate Ctrl
 end
 
-group Sair de Ajustes sem salvar
-  U -> Tela : trocar para outra aba do aplicativo
-  Tela -> Tema : setTheme(último tema salvo, false)
+group Sair do Perfil sem salvar
+  U -> Tela : tocar na seta de voltar ao menu, em outra aba ou no voltar do Android
+  Tela -> Tela : askUnsaved(proceed)
+  Tela --> U : diálogo "Alterações não salvas" (RF16)
+  U -> Tela : tocar em "Descartar"
+  Tela -> Tela : discardSection('profile')
+  Tela -> Tema : setTheme(savedThemeRef.current, false)
   Tema --> U : o aplicativo volta ao tema gravado
+  note over Tela, Tema : ao perder o foco, "Ajustes" também restaura savedThemeRef.current
 end
 @enduml

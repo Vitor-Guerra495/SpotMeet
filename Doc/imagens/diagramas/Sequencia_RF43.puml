@@ -1,0 +1,122 @@
+@startuml Sequencia_RF43
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF43 (Abrir Votação)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MeetingPolls" as Votacoes
+participant ":apiRequest" as Api
+participant ":polls" as Util
+participant ":alerts" as Avisos
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingPollController" as Ctrl
+participant ":MeetingPollService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingPollRepository" as PollRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":PollVoteRepository" as VoteRepo
+participant ":PollResponseDTO" as DTO
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+
+U -> Tela : abrir o detalhe de uma reunião em andamento
+note right of Votacoes : cartão "Votações", com "Nenhuma votação aberta nesta reunião."\nquando ainda não há votação; o botão "Abrir Votação" só aparece para o presidente
+U -> Votacoes : tocar em "Abrir Votação" no cartão "Votações"
+Votacoes -> Tela : onPage("poll-open")
+note right of Tela : onPage é o método openPage: a folha do detalhe passa à página "Abrir votação"
+Votacoes --> U : página "Abrir votação": selo "Em andamento", "Pergunta", "Descrição (opcional)"\ne "3 pessoas podem votar agora."
+U -> Votacoes : escrever a pergunta (até 150) e a descrição (até 500) e tocar em "Abrir Votação"
+Votacoes -> Votacoes : openPoll()
+alt pergunta vazia no aplicativo
+  Votacoes --> U : "Escreva a pergunta da votação." sob o campo (nada é enviado)
+else pergunta preenchida
+  Votacoes -> Votacoes : send(path, body, title, message)
+  note right of Votacoes : body contém question e description (descrição vazia vira null);\nbusyRef impede um segundo envio antes do fim do primeiro
+  Votacoes -> Api : apiRequest(token, path, "POST", body)
+  Api -> Filtro : POST /api/meetings/{meetingId}/polls (PollRequestDTO)
+  alt corpo viola @Valid (pergunta em branco ou acima de 150 caracteres, descrição acima de 500)
+    note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+    note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
+    note right of Handler : lançada pelo Spring MVC ao validar o corpo, antes de chamar o controller
+    Handler --> Api : 400 {message, errors}
+    Api --> Votacoes : ApiResult (ok falso, error)
+    Votacoes --> U : exibe a mensagem na página
+  else corpo válido
+    Filtro -> Ctrl : openPoll(meetingId, dto, auth)
+    Ctrl -> Svc : open(meetingId, email, dto)
+    activate Svc
+    Svc -> Acc : findMeeting(meetingId)
+    Acc --> Svc : Meeting
+    Svc -> Acc : findUser(email)
+    Acc --> Svc : User president
+    Svc -> Acc : requirePresident(president, meeting.getCommittee())
+    Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+    note right of Acc : user e committee são os parâmetros da conferência de vínculo:\nintegrante ativo com o papel COMMITTEE_ADMIN
+    CmRepo --> Acc : CommitteeMember
+    Acc --> Svc : void
+    Svc -> Meeting : statusAt(now)
+    Meeting --> Svc : MeetingStatus
+    note right of Svc : só aceita IN_PROGRESS
+    alt presidente e reunião em andamento
+      Svc -> Acc : clean(dto.getQuestion())
+      Acc --> Svc : String question
+      Svc -> Acc : clean(dto.getDescription())
+      Acc --> Svc : String
+      note right of Svc : poll é a nova MeetingPoll com a reunião, a pergunta, a descrição,\nopenedBy = president e openedAt atual; closedAt e closedBy ficam nulos
+      Svc -> PollRepo : save(poll)
+      PollRepo --> Svc : MeetingPoll
+      Svc -> Acc : audit(president, "MEETING_POLL_OPENED", meeting, " | Votação ID: " + poll.getId())
+      Acc -> AuditRepo : save(new AuditLog(user, action, details))
+      Svc -> Svc : view(meeting, president, now)
+      Svc -> PollRepo : findByMeetingIdOrderByOpenedAtAsc(meeting.getId())
+      PollRepo --> Svc : List<MeetingPoll>
+      Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+      PartRepo --> Svc : List<MeetingParticipant>
+      Svc -> VoteRepo : findByPollIdInOrderByVotedAtAsc(pollIds)
+      note right of VoteRepo : pollIds representa os identificadores das votações da reunião;\nos votos são agrupados por votação
+      VoteRepo --> Svc : List<PollVote>
+      Svc -> Acc : isPresident(viewer, meeting.getCommittee())
+      note right of Acc : viewer é o parâmetro de view, aqui o presidente
+      Acc --> Svc : boolean
+      loop para cada votação da reunião, na ordem de abertura
+        Svc -> DTO : from(poll, participants, pollVotes, viewer.getId(), president, now)
+        DTO --> Svc : PollResponseDTO
+      end
+      Svc --> Ctrl : List<PollResponseDTO>
+      Ctrl --> Api : 201 List<PollResponseDTO>
+      Api --> Votacoes : ApiResult (ok verdadeiro, data)
+      Votacoes -> Util : readPolls(result.data)
+      Util --> Votacoes : Poll[]
+      Votacoes -> Avisos : showAlert("Votação aberta", "As pessoas que registraram entrada já podem votar.")
+      note right of Votacoes : notifySync("MEETINGS_MUTATED") avisa as outras telas
+      Votacoes -> Tela : onChanged()
+      note right of Tela : onChanged é o método refreshDetail: recarrega o detalhe e a lista de reuniões
+      Votacoes -> Tela : onPage(page)
+      note right of Tela : page é poll-{id} da última votação da lista, a recém-aberta
+      Votacoes --> U : página "Votação" com o selo "Aberta"
+    else não é presidente ou a reunião não está em andamento
+      Svc --> Ctrl : SecurityException ou IllegalStateException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Api : 403 ou 409 {message}
+      Api --> Votacoes : ApiResult (ok falso, error)
+      Votacoes --> U : exibe a mensagem, como "A reunião terminou. Só é possível abrir uma votação com a reunião em andamento."
+    end
+    deactivate Svc
+  end
+end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+@enduml

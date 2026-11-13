@@ -1,0 +1,154 @@
+@startuml Sequencia_RF47
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF47 (Consultar Meu Relatório de Reuniões)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Reun
+participant "Navegação do aplicativo" as Nav
+participant ":SettingsScreen" as Tela
+participant ":AttendanceReport" as Rel
+participant ":DateTimeField" as Campo
+participant ":report" as Rep
+participant ":apiRequest" as Api
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":AttendanceReportController" as Ctrl
+participant ":AttendanceReportService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":UserRepository" as URepo
+participant ":MeetingParticipantRepository" as PRepo
+participant ":AttendanceReportDTO" as DTO
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Consultar o meu relatório de reuniões
+  alt pelo atalho da aba "Reuniões"
+    U -> Reun : tocar em "Meu Relatório", no topo da aba "Reuniões"
+    Reun -> Nav : navigate('Settings', { open: 'report' })
+    note right of Reun : chamado em navigation, objeto de navegação da tela
+    Tela -> Nav : setParams({ open: undefined })
+    note right of Tela : ao ganhar o foco, lê route.params.open igual a report e limpa o parâmetro
+    Tela -> Tela : setSection(openParam)
+  else pelo menu de "Ajustes"
+    U -> Tela : tocar em "Meu Relatório de Reuniões", na seção "REUNIÕES E AJUDA"
+    Tela -> Tela : changeSection('report')
+    Tela -> Tela : switchSection(next)
+  end
+  Tela -> Rel : AttendanceReport({ token })
+  note right of Tela : página "Meu Relatório", com o subtítulo\n"Reuniões em que você registrou entrada." e a seta "Voltar a Ajustes"
+  note over Rel : estado inicial: period igual a quarter ("Últimos 3 meses") e committeeId nulo;\no efeito abaixo roda de novo a cada mudança de period, committeeId, custom ou reload
+  Rel -> Rep : periodRange(period, new Date(), custom ?? undefined)
+  Rep --> Rel : { from, to }
+  note right of Rep : month: do dia 1 até hoje; quarter: de hoje menos 3 meses até hoje;\nyear: de 1º de janeiro até hoje; all: from e to nulos; custom: as datas escolhidas
+  Rel -> Rel : setLoading(true)
+  Rel -> Api : apiRequest(token, path)
+  note right of Rel : path é /users/me/report com ?from=AAAA-MM-DD&to=AAAA-MM-DD&committeeId=N,\nsó com os valores definidos
+  Api -> Filtro : GET /api/users/me/report (Authorization: Bearer token)
+  note right of Filtro : sem token válido, responde 401 e o aplicativo encerra a sessão ("Sessão encerrada")
+  Filtro -> Ctrl : getReport(from, to, committeeId, auth)
+  activate Ctrl
+  Ctrl -> Ctrl : getEmail(auth)
+  Ctrl -> Svc : report(email, from, to, committeeId)
+  activate Svc
+  alt from e to informados e to antes de from
+    Svc --> Ctrl : IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 409 {message}
+    Api --> Rel : ApiResult
+    note right of Api : ok falso; error com a mensagem do servidor
+    Rel -> Rel : setError(result.error)
+    Rel -> Rel : setReport(null)
+    Rel --> U : exibe "A data final não pode ser antes da data inicial." e "Tentar novamente"
+  else filtros válidos
+    Svc -> Acc : findUser(email)
+    Acc -> URepo : findByEmail(email)
+    URepo --> Acc : Optional<User>
+    Acc --> Svc : User
+    note right of Acc : sem usuário, IllegalStateException "Usuário autenticado não encontrado." (409)
+    Svc -> PRepo : findEnteredByUser(user.getId())
+    PRepo --> Svc : List<MeetingParticipant>
+    note right of PRepo : só participações do usuário do token com enteredAt preenchido,\ncom a reunião e a comissão, ordenadas por startsAt decrescente
+    note right of Svc : opções de comissão: todas as comissões da lista, em qualquer período, em ordem alfabética.\nFiltro: dia de startsAt entre from e to (inclusive) e comissão igual a committeeId, quando informados.\nTempo: Duration.between(enteredAt, leftAt).toMinutes(); sem leftAt, durationMinutes nulo
+    Svc -> DTO : AttendanceReportDTO(from, to, committeeId, rows, options)
+    note right of DTO : o construtor calcula totalMeetings, totalMinutes (só linhas com tempo),\ntotalCommittees (comissões diferentes) e missingExit (alguma linha sem saída)
+    DTO --> Svc : AttendanceReportDTO
+    Svc --> Ctrl : AttendanceReportDTO
+    Ctrl --> Api : 200 AttendanceReportDTO
+    Api --> Rel : ApiResult
+    Rel -> Rep : readReport(result.data)
+    Rep --> Rel : AttendanceReport
+    Rel -> Rel : setReport(report)
+    note right of Rel : report é o AttendanceReport lido; se a leitura falhar,\nsetError("Não foi possível ler o relatório. Tente novamente.");\nesse erro de leitura mantém o relatório anterior, se houver
+    Rel -> Rep : formatTotal(report.totalMinutes)
+    Rep --> Rel : string
+    alt nenhuma reunião com entrada no filtro
+      Rel --> U : "Você ainda não participou de nenhuma reunião neste período.",\n"Só contam as reuniões em que você registrou entrada." e "Ver Todo o Período"
+    else reuniões encontradas
+      Rel --> U : cartões "Reuniões", "Horas no total" e "Comissões", filtros "PERÍODO" e "COMISSÃO"\ne as reuniões por mês: "Entrada 14:00 · Saída 15:30" e "1 h 30 min",\nou "Saída não registrada" e "–" (fora de "Horas no total")
+    end
+  end
+  deactivate Svc
+  deactivate Ctrl
+  opt erro na consulta
+    U -> Rel : tocar em "Tentar novamente"
+    Rel -> Rel : setReload(value => value + 1)
+    note right of Rel : repete o efeito com os mesmos filtros
+  end
+end
+
+group Filtrar o relatório por período
+  U -> Rel : tocar em "Este mês", "Últimos 3 meses", "Este ano" ou "Todo o período"
+  Rel -> Rel : setPeriod(value)
+  note right of Rel : o efeito repete periodRange e apiRequest do grupo anterior;\n"Todo o período" não envia from nem to. "Ver Todo o Período" também chama setPeriod('all')
+  Rel --> U : relatório do período escolhido, com o filtro marcado
+end
+
+group Escolher as datas do período
+  U -> Rel : tocar em "Escolher as datas"
+  Rel -> Rel : setEditing(custom ?? { from, to })
+  note right of Rel : sem período personalizado anterior, from é o dia 1 do mês atual e to é hoje
+  Rel --> U : página "Período Personalizado": "Data inicial", "Data final",\n"Aplicar Período" e "Cancelar"
+  U -> Campo : tocar em "Data inicial" ou em "Data final"
+  Campo -> Campo : open()
+  note right of Campo : Android: diálogo de data do sistema;\niOS: folha com o calendário, "Concluir" e "Cancelar"
+  U -> Campo : escolher a data
+  Campo -> Rel : onChange(value)
+  Rel -> Rel : setEditing({ ...editing, from })
+  note right of Rel : ou { ...editing, to } para a data final; também limpa o erro com setCustomError('')
+  alt tocar em "Aplicar Período"
+    U -> Rel : tocar em "Aplicar Período"
+    Rel -> Rel : apply()
+    alt editing.to antes de editing.from
+      Rel -> Rel : setCustomError("A data final não pode ser antes da data inicial.")
+      Rel --> U : mensagem abaixo de "Data final"; nada é enviado ao servidor
+    else datas válidas
+      Rel -> Rel : setCustom(editing)
+      Rel -> Rel : setPeriod('custom')
+      Rel -> Rel : setEditing(null)
+      note right of Rel : o efeito envia from e to das datas escolhidas, como no primeiro grupo
+      Rel --> U : "Escolher as datas" marcado e "De 1 de novembro a 7 de novembro."
+    end
+  else tocar em "Cancelar" ou no botão voltar do celular
+    U -> Rel : tocar em "Cancelar" ou no botão voltar do celular
+    Rel -> Rel : setEditing(null)
+    Rel -> Rel : setCustomError('')
+    Rel --> U : volta ao relatório com o período anterior
+  end
+end
+
+group Filtrar o relatório por comissão
+  U -> Rel : tocar no nome de uma comissão ou em "Todas as suas comissões"
+  Rel -> Rel : setCommitteeId(item.committeeId)
+  note right of Rel : "Todas as suas comissões" chama setCommitteeId(null);\no efeito repete a consulta com committeeId e o período marcado
+  Rel --> U : reuniões só da comissão escolhida, com os totais recalculados pelo servidor
+end
+@enduml

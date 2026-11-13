@@ -1,11 +1,13 @@
 @startuml Sequencia_RF02
 !pragma layout smetana
 title
-SpotMeet - Sequência do RF02 (Autenticar Usuário)
+SpotMeet - Sequência do RF02 (Autenticar Usuário): e-mail e senha e validação da sessão
 end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 180
+skinparam wrapWidth 180
 autonumber "<b>0"
 
 actor "Usuário ou\nAdministrador do sistema" as U
@@ -13,6 +15,7 @@ box "Aplicativo (SpotMeetApp)" #F4F6FF
 participant ":AuthScreen" as Tela
 participant ":AuthContext" as Ctx
 participant ":BiometricContext" as Bio
+participant ":biometricSession" as BioSess
 participant ":BiometricGate" as Gate
 participant ":SessionGuard" as SG
 end box
@@ -20,6 +23,8 @@ box "API (backend)" #F6FFF4
 participant ":AuthController" as Ctrl
 participant ":AuthenticationAttempts" as Att
 participant ":AuthenticationManager" as Mgr
+participant ":DaoAuthenticationProvider" as Provider
+participant "Ponto de entrada HTTP do Spring Security" as Entry
 participant ":UserDetailsServiceImpl" as UDS
 participant ":UserRepository" as Repo
 participant ":BCryptPasswordEncoder" as Enc
@@ -29,40 +34,47 @@ participant ":UserController" as UCtrl
 participant ":GlobalExceptionHandler" as Handler
 end box
 
+
 group Entrar com e-mail e senha
   U -> Tela : preencher "E-mail" e "Senha" e tocar em "Entrar no SpotMeet"
   note right of Tela : handleLogin confere se os dois campos foram\npreenchidos e se o e-mail tem formato válido
   Tela -> Ctrl : POST /api/auth/login (LoginRequestDTO)
   activate Ctrl
   note over Ctrl, Att : Bean Validation (@Valid) recusa e-mail inválido ou senha vazia antes do método:\n:GlobalExceptionHandler responde 400 {message, errors}
-  Ctrl -> Att : verify(LOGIN, email, autenticação)
+  Ctrl -> Att : verify(AuthenticationAttempts.Purpose.LOGIN, dto.getEmail(), verification)
   activate Att
-  Att -> Mgr : authenticate(UsernamePasswordAuthenticationToken)
+  note right of Att : verification é o Supplier de autenticação passado pelo controller
+  Att -> Mgr : authenticate(new UsernamePasswordAuthenticationToken(dto.getEmail().trim().toLowerCase(Locale.ROOT), dto.getPassword()))
   activate Mgr
-  Mgr -> UDS : loadUserByUsername(email)
+  Mgr -> Provider : authenticate(authentication)
+  note right of Provider : authentication é o token recebido pelo manager.
+  Provider -> UDS : loadUserByUsername(email)
   UDS -> Repo : findByEmail(email)
   Repo --> UDS : Optional<User>
-  UDS --> Mgr : User ou UsernameNotFoundException
-  Mgr -> Enc : matches(senha, hash)
-  Enc --> Mgr : boolean
-  note right of Mgr : com a senha correta, conta com\nemail_verified = false gera DisabledException
+  UDS --> Provider : User ou UsernameNotFoundException
+  Provider -> Enc : matches(rawPassword, encodedPassword)
+  Enc --> Provider : boolean
+  note right of Provider : com a senha correta, conta com\nemail_verified = false gera DisabledException
+  Provider --> Mgr : Authentication, BadCredentialsException ou DisabledException
   Mgr --> Att : Authentication, BadCredentialsException ou DisabledException
   deactivate Mgr
   Att --> Ctrl : Authentication, a exceção recebida ou TooManyAttemptsException
   deactivate Att
   alt senha correta e e-mail verificado
     Ctrl -> Ctrl : createSession(user, issuedAt)
-    Ctrl -> Jwt : generateToken(email, role, issuedAt)
+    note right of Ctrl : issuedAt fica após tokensValidAfter, se necessário
+    Ctrl -> Jwt : generateToken(user.getEmail(), user.getRole(), issuedAt)
     Jwt --> Ctrl : token JWT
     Ctrl --> Tela : 200 AuthResponseDTO
-    Tela -> Ctx : signIn(AuthSession)
-    Ctx -> Bio : onSession(evento signIn)
+    Tela -> Ctx : signIn(session)
+    Ctx -> Bio : onSession(event)
+    note right of Bio : event.reason = 'signIn'; sessão e servidor identificam a conta
     Tela --> U : abre a área principal (abas conforme o papel)
     opt aplicativo em Android ou iOS
-      Bio -> Bio : takeBiometricRearm()
+      Bio -> BioSess : takeBiometricRearm()
       alt login logo depois de uma troca de senha com a biometria habilitada (RF14)
         Bio -> Bio : enable()
-        note right of Bio : pede só a confirmação da digital e guarda a nova sessão (RF36)
+        note right of Bio : pede a confirmação biométrica e guarda a nova sessão (RF36)
       else demais logins
         Gate --> U : diálogo "Deseja habilitar a biometria?" com "Sim" e "Não"
       end
@@ -82,45 +94,31 @@ group Entrar com e-mail e senha
 end
 
 group Validar a sessão nas requisições seguintes
-  SG -> Filtro : GET /api/users/me (Authorization: Bearer token), a cada 15 s com o app ativo
+  SG -> Filtro : GET /api/users/me (Authorization: Bearer token)
+  note right of SG : a cada 15 s com o app ativo e ao voltar ao primeiro plano
   activate Filtro
-  Filtro -> Jwt : extractEmail(token)
-  Jwt --> Filtro : email
-  Filtro -> UDS : loadUserByUsername(email)
-  UDS -> Repo : findByEmail(email)
-  Repo --> UDS : Optional<User>
-  UDS --> Filtro : User
-  Filtro -> Jwt : isTokenValid(token, email, tokensValidAfter)
-  Jwt --> Filtro : boolean
+  opt cabeçalho Bearer presente
+    Filtro -> Jwt : extractEmail(jwt)
+    Jwt --> Filtro : email
+    Filtro -> UDS : loadUserByUsername(email)
+    UDS -> Repo : findByEmail(email)
+    Repo --> UDS : Optional<User>
+    UDS --> Filtro : User
+    Filtro -> Jwt : isTokenValid(jwt, user.getUsername(), user.getTokensValidAfter())
+    Jwt --> Filtro : boolean
+  end
   alt assinatura válida, token não expirado, emitido após tokens_valid_after e conta verificada
     Filtro -> UCtrl : getMyProfile(authentication)
     UCtrl --> SG : 200 UserProfileResponseDTO
   else token ausente, inválido, expirado ou revogado
-    Filtro --> SG : 401
-    note right of SG : o fetch instalado por sessionFetch.ts\ndetecta o 401 e chama onExpired
+    Entry --> SG : 401
+    note right of SG : o fetch instalado por sessionFetch.ts\ndetecta o 401 e chama onExpired; falha de conexão não encerra a sessão
     SG -> Ctx : signOut()
     SG --> U : aviso "Sessão encerrada" e volta à tela de acesso
+  else consulta à conta indisponível
+    Filtro --> SG : 503
+    note right of SG : indisponibilidade não equivale a token recusado
   end
   deactivate Filtro
-end
-
-group Reabrir o aplicativo com a biometria habilitada
-  U -> Gate : tocar em "Desbloquear"
-  Gate -> Bio : unlock()
-  activate Bio
-  note right of Bio : autentica o aparelho (biometria ou PIN) e lê o token\nguardado no cofre do aparelho
-  Bio -> Filtro : GET /api/users/me (Authorization: Bearer token guardado)
-  alt o filtro aceita o token (mesma validação do grupo anterior)
-    Filtro -> UCtrl : getMyProfile(authentication)
-    UCtrl --> Bio : 200 UserProfileResponseDTO
-    Bio -> Ctx : signIn(AuthSession)
-    Bio --> Gate : locked = false
-    Gate --> U : mostra a área principal
-  else o filtro recusa o token
-    Filtro --> Bio : 401
-    Bio -> Ctx : signOut()
-    Bio --> U : aviso "Sessão encerrada" e volta à tela de acesso
-  end
-  deactivate Bio
 end
 @enduml

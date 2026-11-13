@@ -6,11 +6,11 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(presidente da comissão)" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
-participant ":MeetingAttendancePanel" as Painel
 participant ":MeetingsScreen" as Tela
 end box
 box "API (backend)" #F6FFF4
@@ -18,15 +18,18 @@ participant ":JwtAuthFilter" as Filtro
 participant ":MeetingAttendanceController" as Ctrl
 participant ":MeetingAttendanceService" as Svc
 participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
 participant ":CommitteeMemberRepository" as CmRepo
 participant ":MeetingParticipantRepository" as PartRepo
 participant ":MeetingRepository" as MeetRepo
+participant ":MeetingMinutesRepository" as MinRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
 
-U -> Painel : tocar em "Limpar registros" na linha de uma pessoa
-Painel -> Tela : onReset(participant)
+U -> Tela : tocar em "Limpar registros" na linha de uma pessoa em "Convidados"
+Tela -> Tela : resetPerson(meeting, person)
 Tela --> U : confirmação "Limpar registros" (Apagar a entrada e a saída de <nome>?)
 U -> Tela : confirmar com "Limpar"
 Tela -> Filtro : DELETE /api/meetings/{meetingId}/participants/{userId}/attendance
@@ -36,30 +39,47 @@ activate Svc
 Svc -> Acc : findMeeting(meetingId)
 Acc --> Svc : Meeting
 Svc -> Acc : findUser(email)
-Acc --> Svc : User
-Svc -> Acc : requirePresident(president, committee)
-Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+Acc --> Svc : User president
+Svc -> Acc : requirePresident(president, meeting.getCommittee())
+Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+note right of Acc : user e committee são os parâmetros da conferência de vínculo do presidente
 CmRepo --> Acc : CommitteeMember
 Acc --> Svc : void
-Svc -> Svc : statusAt(now) não pode ser CANCELED nem SCHEDULED
-Svc -> PartRepo : findForUpdate(meetingId, userId)
-PartRepo --> Svc : MeetingParticipant (linha bloqueada)
+Svc -> Meeting : statusAt(now)
+Meeting --> Svc : MeetingStatus
+note right of Svc : não aceita CANCELED nem SCHEDULED
+Svc -> MinRepo : findByMeetingId(meetingId)
+MinRepo --> Svc : Optional<MeetingMinutes>
+alt ata existe e não está em DRAFT
+  Svc --> Ctrl : IllegalStateException
+  Ctrl --> Handler : exceção propagada
+  Handler --> Tela : 409 "A presença não pode mais ser corrigida porque a ata já foi enviada."
+  Tela --> U : exibe a mensagem e mantém os registros
+else sem ata enviada
+Svc -> PartRepo : findForUpdate(meetingId, targetUserId)
+PartRepo --> Svc : Optional<MeetingParticipant> (linha bloqueada)
 alt presidente, reunião em andamento ou encerrada e pessoa convidada
-  Svc -> PartRepo : save(participant com enteredAt, enteredBy, leftAt e leftBy nulos)
+  note right of Svc : participant recebe enteredAt, enteredBy, leftAt e leftBy nulos
+  Svc -> PartRepo : save(participant)
   Svc -> Acc : invalidateList(meeting)
-  Acc -> MeetRepo : save(Meeting sem o carimbo da lista de presença)
-  Svc -> Acc : audit(president, "MEETING_ATTENDANCE_RESET", meeting, " | Usuário ID: ...")
-  Acc -> AuditRepo : save(AuditLog)
+  opt havia lista gerada
+    note right of Acc : limpa attendanceListGeneratedAt e attendanceListGeneratedBy
+    Acc -> MeetRepo : save(meeting)
+  end
+  Svc -> Acc : audit(president, "MEETING_ATTENDANCE_RESET", meeting, " | Usuário ID: " + targetUserId)
+  Acc -> AuditRepo : save(new AuditLog(user, action, details))
   Svc -> Acc : detail(meeting, president, now)
   Acc --> Svc : MeetingResponseDTO
   Svc --> Ctrl : MeetingResponseDTO
   Ctrl --> Tela : 200 MeetingResponseDTO
   Tela --> U : aviso "Registros apagados." e painel "Presença" atualizado
 else não é presidente, reunião cancelada ou ainda não iniciada, ou pessoa não convidada
-  Svc --> Ctrl : SecurityException ou IllegalStateException
+  Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
   Ctrl --> Handler : exceção propagada
   Handler --> Tela : 403 ou 409 {message}
   Tela --> U : exibe a mensagem de erro
 end
+end
 deactivate Svc
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
 @enduml

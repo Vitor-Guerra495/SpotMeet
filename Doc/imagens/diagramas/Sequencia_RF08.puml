@@ -1,14 +1,15 @@
 @startuml Sequencia_RF08
 !pragma layout smetana
 title
-SpotMeet - Sequência do RF08 (Gerenciar Organizações)
+SpotMeet - Sequência do RF08 (Validar Organização)
 end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 300
 autonumber "<b>0"
 
-actor "Administrador do sistema" as U
+actor "Administrador do sistema\n(ADMIN ou SYSADMIN)" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
 participant ":AdminOrganizationsScreen" as Tela
 end box
@@ -18,68 +19,68 @@ participant ":AdminController" as Ctrl
 participant ":AdminService" as Svc
 participant ":UserRepository" as UserRepo
 participant ":OrganizationRepository" as OrgRepo
-participant ":OrganizationMemberRepository" as MemRepo
-participant ":CommitteeRepository" as ComRepo
-participant ":LgpdMaskUtil" as Mask
+participant ":EmailService" as Mail
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom a organização, decisão e tamanho do motivo quando informado; não é uma variável local.
+note over Tela, Svc : a área administrativa reconhece ADMIN ou SYSADMIN;\na autorização das operações é conferida no servidor.
 
-group Consultar as organizações
-  U -> Tela : abrir a aba "Organizações" ou "Aprovações" (ou atualizar a lista)
+group Consultar organizações
+  U -> Tela : abrir a aba "Organizações"
+  Tela -> Tela : loadData()
   Tela -> Filtro : GET /api/admin/organizations
-  alt perfil global USER
-    Filtro --> Tela : 403 (regra hasAnyRole de SecurityConfig)
-    Tela --> U : exibe "Acesso negado pelo servidor. Esta área exige permissão administrativa."
-  else perfil ADMIN ou SYSADMIN
-    Filtro -> Ctrl : listOrganizations(authentication)
-    activate Ctrl
-    Ctrl -> Svc : listOrganizations(executorEmail)
-    activate Svc
-    Svc -> Svc : validateSysAdmin(executorEmail)
-    Svc -> UserRepo : findByEmail(executorEmail)
-    UserRepo --> Svc : Optional<User>
+  Filtro -> Ctrl : listOrganizations(authentication)
+  activate Ctrl
+  Ctrl -> Svc : listOrganizations(email)
+  activate Svc
+  Svc -> Svc : validateSysAdmin(executorEmail)
+  Svc -> UserRepo : findByEmail(executorEmail)
+  UserRepo --> Svc : Optional<User>
+  alt executor tem role ADMIN ou SYSADMIN
     Svc -> OrgRepo : findAllWithOwner()
     OrgRepo --> Svc : List<Organization>
-    loop cada organização
-      Svc -> Svc : toDTO(org)
-      Svc -> MemRepo : findByOrganizationId(orgId)
-      MemRepo --> Svc : List<OrganizationMember>
-      Svc -> ComRepo : findByOrganizationIdOrderByNameAsc(orgId)
-      ComRepo --> Svc : List<Committee>
-      Svc -> Mask : maskEmail(ownerEmail)
-      Mask --> Svc : String
-      Svc -> Mask : maskCnpj(cnpj)
-      Mask --> Svc : String
-    end
     Svc --> Ctrl : List<AdminOrganizationDTO>
-    deactivate Svc
     Ctrl --> Tela : 200 List<AdminOrganizationDTO>
-    deactivate Ctrl
-    note over Tela : a tela também envia GET /api/admin/organizations/pending, que repete o fluxo com listPendingOrganizations e o filtro approved=false e status PENDING ou nulo
-    Tela --> U : exibe a lista ("Organizações") ou a fila de pendentes ("Aprovações")
+    Tela -> Filtro : GET /api/admin/organizations/pending
+    Filtro -> Ctrl : listPendingOrganizations(authentication)
+    Ctrl -> Svc : listPendingOrganizations(email)
+    note right of Svc : confere o administrador e consulta as organizações pendentes;\ntoDTO conta integrantes e comissões e mascara e-mail e CNPJ.
+    Svc --> Ctrl : List<AdminOrganizationDTO>
+    Ctrl --> Tela : 200 List<AdminOrganizationDTO>
+    Tela --> U : abas "Aprovações" e "Organizações", com busca
+  else executor não é ADMIN nem SYSADMIN
+    Svc --> Ctrl : SecurityException
+    Ctrl --> Tela : 403 (mensagem em texto, capturada pelo controller)
+    Tela --> U : exibe o acesso negado
   end
+  deactivate Svc
+  deactivate Ctrl
 end
 
 group Aprovar uma organização pendente
-  U -> Tela : tocar em "Aprovar" (aba "Aprovações") e confirmar com "Aprovar"
+  U -> Tela : tocar em "Aprovar" e confirmar com "Aprovar"
   Tela -> Filtro : POST /api/admin/organizations/{id}/approve
   Filtro -> Ctrl : approveOrganization(id, authentication)
   activate Ctrl
   Ctrl -> Svc : approveOrganization(orgId, executorEmail)
   activate Svc
+  note over Svc : transação
   Svc -> Svc : validateSysAdmin(executorEmail)
   Svc -> UserRepo : findByEmail(executorEmail)
   UserRepo --> Svc : Optional<User>
   Svc -> OrgRepo : findByIdForUpdate(orgId)
   OrgRepo --> Svc : Optional<Organization>
   alt organização encontrada
-    Svc -> OrgRepo : save(approved=true, status "APPROVED", moderationReason nulo)
+    note right of Svc : org recebe approved true, status APPROVED e moderationReason nulo
+    Svc -> OrgRepo : save(org)
     OrgRepo --> Svc : Organization
-    Svc -> AuditRepo : save(AuditLog "ADMIN_ORGANIZATION_APPROVED")
+    Svc -> AuditRepo : save(new AuditLog(executor, "ADMIN_ORGANIZATION_APPROVED", details))
     AuditRepo --> Svc : AuditLog
-    Svc -> Svc : toDTO(saved)
-    note over Svc : toDTO repete as contagens (OrganizationMemberRepository, CommitteeRepository) e as máscaras (LgpdMaskUtil)
+    opt organização tem dono
+      Svc -> Mail : sendOrganizationApprovedEmail(org.getOwner().getEmail(), org.getOwner().getName(), org.getName())
+      note right of Mail : envio assíncrono, depois do commit
+    end
     Svc --> Ctrl : AdminOrganizationDTO
     Ctrl --> Tela : 200 AdminOrganizationDTO
     Tela --> U : exibe o aviso "Estado de <nome> atualizado." e tira a organização da fila
@@ -97,7 +98,8 @@ group Recusar uma organização pendente
   note over Tela : validateModerationReason (moderation) exige de 3 a 500 caracteres
   Tela -> Filtro : POST /api/admin/organizations/{id}/reject (OrganizationRejectionDTO)
   alt corpo viola @Valid (motivo em branco ou fora de 3 a 500 caracteres)
-    Filtro -> Handler : MethodArgumentNotValidException
+    note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+    note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
     Handler --> Tela : 400 {message, errors}
     Tela --> U : exibe o erro sob o campo "Motivo"
   else corpo válido
@@ -113,10 +115,15 @@ group Recusar uma organização pendente
     alt organização encontrada
       Svc -> Svc : validateModerationReason(reason)
       alt motivo válido
-        Svc -> OrgRepo : save(approved=false, status "REJECTED", moderationReason=motivo)
+        note right of Svc : org recebe approved false, status REJECTED e moderationReason cleanReason
+        Svc -> OrgRepo : save(org)
         OrgRepo --> Svc : Organization
-        Svc -> AuditRepo : save(AuditLog "ADMIN_ORGANIZATION_REJECTED")
+        Svc -> AuditRepo : save(new AuditLog(executor, "ADMIN_ORGANIZATION_REJECTED", details))
         AuditRepo --> Svc : AuditLog
+        opt organização tem dono
+          Svc -> Mail : sendOrganizationRejectedEmail(org.getOwner().getEmail(), org.getOwner().getName(), org.getName(), cleanReason)
+          note right of Mail : envio assíncrono, depois do commit
+        end
         Svc --> Ctrl : AdminOrganizationDTO
         Ctrl --> Tela : 200 AdminOrganizationDTO
         Tela --> U : exibe o aviso "Estado de <nome> atualizado." e tira a organização da fila
@@ -139,7 +146,8 @@ group Bloquear ou reativar uma organização
   U -> Tela : tocar em "Bloquear Organização" (informar o "Motivo" e confirmar) ou em "Aprovar Organização" (confirmar)
   Tela -> Filtro : PATCH /api/admin/organizations/{id}/status (UpdateOrganizationStatusDTO)
   alt corpo viola @Valid (approved ausente)
-    Filtro -> Handler : MethodArgumentNotValidException
+    note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+    note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
     Handler --> Tela : 400 {message, errors}
     Tela --> U : exibe a mensagem de erro
   else corpo válido
@@ -157,10 +165,22 @@ group Bloquear ou reativar uma organização
         Svc -> Svc : validateModerationReason(justification)
       end
       alt approved=true, ou motivo válido
-        Svc -> OrgRepo : save(approved, status "APPROVED" ou "BLOCKED", moderationReason)
+        note right of Svc : org recebe approved, status APPROVED ou BLOCKED e moderationReason cleanReason
+        Svc -> OrgRepo : save(org)
         OrgRepo --> Svc : Organization
-        Svc -> AuditRepo : save(AuditLog "ADMIN_ORGANIZATION_STATUS_CHANGED")
+        Svc -> AuditRepo : save(new AuditLog(executor, "ADMIN_ORGANIZATION_STATUS_CHANGED", details))
         AuditRepo --> Svc : AuditLog
+        Svc -> Svc : notifyStatusChange(org, previousStatus, wasApproved, cleanReason)
+        opt organização tem dono
+          alt bloqueio
+            Svc -> Mail : sendOrganizationBlockedEmail(owner.getEmail(), owner.getName(), org.getName(), reason)
+          else antes estava BLOCKED e agora está aprovada
+            Svc -> Mail : sendOrganizationReactivatedEmail(owner.getEmail(), owner.getName(), org.getName())
+          else aprovação de organização antes não aprovada
+            Svc -> Mail : sendOrganizationApprovedEmail(owner.getEmail(), owner.getName(), org.getName())
+          end
+          note right of Mail : envio assíncrono, depois do commit; reason é o parâmetro de notifyStatusChange
+        end
         Svc --> Ctrl : AdminOrganizationDTO
         Ctrl --> Tela : 200 AdminOrganizationDTO
         Tela --> U : exibe o aviso "Estado de <nome> atualizado." e atualiza o selo da organização

@@ -1,0 +1,129 @@
+@startuml Sequencia_RF44
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF44 (Votar)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(com entrada registrada)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MeetingPolls" as Votacoes
+participant ":alerts" as Avisos
+participant ":apiRequest" as Api
+participant ":polls" as Util
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingPollController" as Ctrl
+participant ":MeetingPollService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingPollRepository" as PollRepo
+participant ":MeetingPoll" as Votacao
+participant ":Meeting" as Meeting
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":PollVoteRepository" as VoteRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+
+U -> Votacoes : tocar em "Votar Agora" no cartão "Votações" (ou na votação)
+note right of Votacoes : o cartão exibe "Você ainda não votou." quando canVote é verdadeiro;\npara o presidente, "Votar Agora" não aparece no cartão e ele vota na página
+Votacoes -> Tela : onPage(page)
+note right of Tela : page é poll-{id}; a folha do detalhe passa à página "Votação"
+Votacoes --> U : selo "Aberta", pergunta, descrição e "SEU VOTO" com "Sim", "Não" e "Abstenção"
+U -> Votacoes : escolher "Sim", "Não" ou "Abstenção"
+opt "Abstenção"
+  Votacoes --> U : campo "Justificativa (opcional)", até 280 caracteres
+  U -> Votacoes : escrever a justificativa
+end
+U -> Votacoes : tocar em "Confirmar Voto"
+Votacoes -> Votacoes : vote()
+Votacoes -> Avisos : confirmAction("Confirmar voto", message, onConfirm)
+note right of Avisos : message é "Confirmar voto: Sim? Não será possível trocar." e, na abstenção\ncom justificativa, "Sua justificativa:" e o texto; o ConfirmationHost exibe o pedido
+Avisos --> U : confirmação "Confirmar voto", com "Cancelar" e "Confirmar"
+alt tocar em "Cancelar"
+  Avisos --> U : fecha a confirmação; nada é enviado
+else tocar em "Confirmar"
+  U -> Avisos : tocar em "Confirmar"
+  Votacoes -> Votacoes : send(path, body, title, message)
+  note right of Votacoes : chamado por onConfirm; body contém choice e justification,\nesta só na abstenção (vazia vira null)
+  Votacoes -> Api : apiRequest(token, path, "POST", body)
+  Api -> Filtro : POST /api/meetings/{meetingId}/polls/{pollId}/vote (PollVoteDTO)
+  alt escolha ausente ou desconhecida, ou justificativa acima de 280 caracteres
+    note over Ctrl, Handler : O Spring MVC trata a validação do corpo antes do controller;\nMethodArgumentNotValidException ou HttpMessageNotReadableException chegam ao handler.
+    note right of Handler : lançadas pelo Spring MVC ao ler e validar o corpo, antes de chamar o controller
+    Handler --> Api : 400 {message}
+    Api --> Votacoes : ApiResult (ok falso, error)
+    Votacoes --> U : exibe a mensagem na página
+  else corpo válido
+    Filtro -> Ctrl : vote(meetingId, pollId, dto, auth)
+    Ctrl -> Svc : vote(meetingId, pollId, email, dto)
+    activate Svc
+    Svc -> Acc : findMeeting(meetingId)
+    Acc --> Svc : Meeting
+    Svc -> Acc : findUser(email)
+    Acc --> Svc : User user
+    Svc -> Acc : requireActiveMember(user, meeting.getCommittee())
+    Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+    note right of Acc : committee é o parâmetro recebido na conferência de vínculo ativo
+    CmRepo --> Acc : CommitteeMember (ACTIVE)
+    Acc --> Svc : void
+    Svc -> PollRepo : findForUpdate(meetingId, pollId)
+    PollRepo --> Svc : MeetingPoll (linha bloqueada)
+    note right of PollRepo : o bloqueio serializa os votos e o encerramento da mesma votação;\nsem a votação nessa reunião, "Votação não encontrada."
+    Svc -> Votacao : isClosedAt(now)
+    Votacao -> Meeting : statusAt(now)
+    Meeting --> Votacao : MeetingStatus
+    Votacao --> Svc : boolean
+    note right of Votacao : encerrada quando closedAt está preenchido (RF45)\nou quando a reunião está ENDED ou CANCELED
+    Svc -> Meeting : statusAt(now)
+    Meeting --> Svc : MeetingStatus
+    note right of Svc : fora de IN_PROGRESS, "Só é possível votar com a reunião em andamento."
+    Svc -> PartRepo : findByMeetingIdAndUserId(meetingId, user.getId())
+    PartRepo --> Svc : Optional<MeetingParticipant>
+    note right of PartRepo : vota quem tem enteredAt preenchido, mesmo depois de registrar a saída
+    Svc -> VoteRepo : existsByPollIdAndUserId(pollId, user.getId())
+    VoteRepo --> Svc : boolean
+    alt votação aberta, entrada registrada e sem voto anterior
+      opt choice igual a ABSTAIN
+        Svc -> Acc : clean(dto.getJustification())
+        Acc --> Svc : String
+      end
+      note right of Svc : vote é o novo PollVote com a votação, o usuário, a escolha,\na justificativa (nula fora da abstenção) e votedAt atual
+      Svc -> VoteRepo : save(vote)
+      VoteRepo --> Svc : PollVote
+      Svc -> Acc : audit(user, "MEETING_POLL_VOTED", meeting, " | Votação ID: " + pollId)
+      Acc -> AuditRepo : save(new AuditLog(user, action, details))
+      Svc -> Svc : view(meeting, user, now)
+      note right of Svc : monta a lista como no RF43: votações, participantes, votos,\nisPresident e PollResponseDTO.from para cada votação
+      Svc --> Ctrl : List<PollResponseDTO>
+      Ctrl --> Api : 200 List<PollResponseDTO>
+      Api --> Votacoes : ApiResult (ok verdadeiro, data)
+      Votacoes -> Util : readPolls(result.data)
+      Util --> Votacoes : Poll[]
+      Votacoes -> Avisos : showAlert("Voto registrado", message)
+      note right of Avisos : message é "Você votou Sim.", "Você votou Não." ou "Você se absteve."
+      note right of Votacoes : notifySync("MEETINGS_MUTATED") avisa as outras telas
+      Votacoes -> Tela : onChanged()
+      note right of Tela : onChanged é o método refreshDetail
+      Votacoes --> U : cartão "Seu voto: Sim", "Registrado às 14:07, com o seu nome."\ne "Aguardando o encerramento."
+    else não é integrante ativo, votação inexistente ou encerrada, sem entrada ou já votou
+      Svc --> Ctrl : SecurityException, IllegalArgumentException ou IllegalStateException
+      Ctrl --> Handler : exceção propagada
+      Handler --> Api : 403 ou 409 {message}
+      Api --> Votacoes : ApiResult (ok falso, error)
+      Votacoes --> U : exibe a mensagem, como "Você já votou nesta votação. O voto não pode ser trocado."
+    end
+    deactivate Svc
+  end
+end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+note over U : confirmAction usa requestConfirmation do módulo utils/confirmation.\nConfirmationHost apresenta o pedido e executa o callback onConfirm após a confirmação.
+@enduml

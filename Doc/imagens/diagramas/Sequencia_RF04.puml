@@ -24,8 +24,10 @@ participant ":UserRepository" as UserRepo
 participant ":OrganizationMemberRepository" as MemRepo
 participant ":AccessRequestRepository" as ReqRepo
 participant ":OrganizationInvitationRepository" as InvRepo
+participant ":EmailService" as Mail
 participant ":AuditLogRepository" as AuditRepo
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom a identificação da solicitação, organização ou pessoa envolvida; não é uma variável local.
 
 group Consultar as solicitações pendentes
   U -> Tela : tocar na organização em "Minhas" e no atalho "Solicitações"
@@ -40,7 +42,7 @@ group Consultar as solicitações pendentes
   MSvc -> MSvc : requireOwnerOrViceOwner(executor, organizationId)
   note right of MSvc : consulta a organização (findById) e o cargo do\nexecutor (findByUserIdAndOrganizationId)
   alt o executor é dono ou vice
-    MSvc -> ReqRepo : findByOrganizationIdAndStatus(organizationId, PENDING)
+    MSvc -> ReqRepo : findByOrganizationIdAndStatus(organizationId, AccessRequestStatus.PENDING)
     ReqRepo --> MSvc : List<AccessRequest>
     MSvc --> MCtrl : List<AccessRequestResponseDTO>
     MCtrl --> Tela : 200 List<AccessRequestResponseDTO>
@@ -67,19 +69,22 @@ group Aprovar uma solicitação
   ReqRepo --> MSvc : AccessRequest
   MSvc -> UserRepo : findByEmail(leaderEmail)
   UserRepo --> MSvc : User
-  MSvc -> MSvc : requireOwnerOrViceOwner(leader, organizationId)
+  MSvc -> MSvc : requireOwnerOrViceOwner(leader, request.getOrganization().getId())
   alt dono ou vice, pedido PENDING e organização aprovada
-    MSvc -> ReqRepo : save(AccessRequest APPROVED)
-    MSvc -> MemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+    note right of MSvc : request passa a APPROVED; membership novo recebe papel MEMBER
+    MSvc -> ReqRepo : save(request)
+    MSvc -> MemRepo : existsByUserIdAndOrganizationId(request.getUser().getId(), request.getOrganization().getId())
     MemRepo --> MSvc : boolean
     opt o solicitante ainda não é membro
-      MSvc -> MemRepo : save(OrganizationMember MEMBER)
+      MSvc -> MemRepo : save(membership)
     end
-    MSvc -> AuditRepo : save(AuditLog ACCESS_APPROVED)
+    MSvc -> AuditRepo : save(new AuditLog(leader, "ACCESS_APPROVED", details))
+    MSvc -> Mail : sendAccessApprovedEmail(request.getUser().getEmail(), request.getUser().getName(), request.getOrganization().getName(), leader.getName())
+    note right of Mail : envio assíncrono, depois do commit
     MSvc --> MCtrl : AccessRequestResponseDTO
     MCtrl --> Tela : 200 AccessRequestResponseDTO (APPROVED)
     Tela --> U : aviso "Integrante aprovado." e listas atualizadas
-  else sem permissão, pedido inexistente, pedido não pendente ou organização não aprovada
+  else sem permissão, pedido inexistente, não pendente ou organização não aprovada
     MSvc --> MCtrl : SecurityException, IllegalArgumentException ou IllegalStateException
     MCtrl --> Tela : 403, 404 ou 409 {mensagem em texto}
     Tela --> U : exibe a mensagem de erro
@@ -97,8 +102,11 @@ group Rejeitar uma solicitação
   activate MSvc
   note right of MSvc : transação; mesmas buscas, bloqueio da organização e\nverificação de liderança da aprovação
   alt dono ou vice e pedido PENDING
-    MSvc -> ReqRepo : save(AccessRequest REJECTED)
-    MSvc -> AuditRepo : save(AuditLog ACCESS_REJECTED)
+    note right of MSvc : request passa a REJECTED
+    MSvc -> ReqRepo : save(request)
+    MSvc -> AuditRepo : save(new AuditLog(leader, "ACCESS_REJECTED", details))
+    MSvc -> Mail : sendAccessRejectedEmail(request.getUser().getEmail(), request.getUser().getName(), request.getOrganization().getName(), request.getRequestedAt(), leader.getName())
+    note right of Mail : envio assíncrono, depois do commit
     MSvc --> MCtrl : AccessRequestResponseDTO
     MCtrl --> Tela : 200 AccessRequestResponseDTO (REJECTED)
     Tela --> U : aviso "Solicitação rejeitada." e listas atualizadas
@@ -124,10 +132,11 @@ group Buscar a pessoa a convidar
   OrgRepo --> ISvc : Organization
   ISvc -> ISvc : requireOwnerOrVice(executor, organization)
   alt dono ou vice e organização aprovada
-    ISvc -> UserRepo : findInviteCandidates(termo escapado, organizationId, donoId, agora, 10 itens)
+    ISvc -> UserRepo : findInviteCandidates(escaped, organizationId, organization.getOwner().getId(), Instant.now().truncatedTo(ChronoUnit.MILLIS), PageRequest.of(0, MAX_SEARCH_RESULTS))
+    note right of ISvc : escaped contém o termo escapado; até 10 resultados
     UserRepo --> ISvc : List<User> (sem dono, membros e convite vigente)
     ISvc --> ICtrl : List<InviteCandidateDTO>
-    ICtrl --> Tela : 200 [{name, email}]
+    ICtrl --> Tela : 200 List<InviteCandidateDTO>
     Tela --> U : cartões com nome e e-mail; tocar em um preenche o campo com o e-mail
   else sem permissão, organização inexistente ou não aprovada
     ISvc --> ICtrl : SecurityException, IllegalArgumentException ou IllegalStateException
@@ -150,15 +159,19 @@ group Convidar uma pessoa para a organização
   ISvc -> OrgRepo : findByIdForUpdate(organizationId)
   OrgRepo --> ISvc : Organization (linha bloqueada)
   ISvc -> ISvc : requireOwnerOrVice(executor, organization)
-  ISvc -> UserRepo : findByEmail(emailConvidado)
+  ISvc -> UserRepo : findByEmail(dto.getEmail())
   UserRepo --> ISvc : Optional<User> (verificado)
-  ISvc -> MemRepo : existsByUserIdAndOrganizationId(convidadoId, organizationId)
+  ISvc -> MemRepo : existsByUserIdAndOrganizationId(recipient.getId(), organizationId)
   MemRepo --> ISvc : boolean
-  ISvc -> InvRepo : findByOrganizationIdAndUserId(organizationId, convidadoId)
+  ISvc -> InvRepo : findByOrganizationIdAndUserId(organizationId, recipient.getId())
   InvRepo --> ISvc : Optional<OrganizationInvitation>
   alt dono ou vice, organização aprovada, convidado verificado e fora da organização, sem convite vigente
-    ISvc -> InvRepo : save(OrganizationInvitation PENDING, expiresAt = agora + 24 h)
-    ISvc -> AuditRepo : save(AuditLog ORGANIZATION_INVITATION_SENT)
+    note right of ISvc : invitation recebe PENDING, expiresAt em 24 horas e respondedAt nulo
+    ISvc -> InvRepo : save(invitation)
+    InvRepo --> ISvc : OrganizationInvitation saved
+    ISvc -> AuditRepo : save(new AuditLog(executor, "ORGANIZATION_INVITATION_SENT", details))
+    ISvc -> Mail : sendOrganizationInvitationEmail(recipient.getEmail(), recipient.getName(), organization.getName(), executor.getName(), saved.getExpiresAt())
+    note right of Mail : envio assíncrono, depois do commit
     ISvc --> ICtrl : OrganizationInvitationResponseDTO
     ICtrl --> Tela : 201 OrganizationInvitationResponseDTO
     Tela --> U : aviso "Convite enviado. A pessoa tem 24 horas para aceitar ou recusar."
@@ -170,4 +183,6 @@ group Convidar uma pessoa para a organização
   deactivate ISvc
   deactivate ICtrl
 end
+note over MSvc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+note over MSvc : A primeira regra violada interrompe a operação;\nas consultas seguintes só são executadas após as validações anteriores.
 @enduml

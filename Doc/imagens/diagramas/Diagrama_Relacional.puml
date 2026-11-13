@@ -42,6 +42,7 @@ entity "organizations" as organizations {
   *approved : boolean
   cnpj : varchar(255)
   *created_at : timestamp
+  *listed : boolean
   moderation_reason : varchar(500)
   *name : varchar(255)
   *owner_id : bigint <<FK>>
@@ -98,8 +99,11 @@ entity "committee_members" as committee_members {
 entity "meetings" as meetings {
   *id : bigint <<PK>>
   agenda : varchar(2000)
+  *all_day : boolean
+  attachment_id : bigint <<FK>>
   attendance_list_generated_at : timestamp
   attendance_list_generated_by_id : bigint <<FK>>
+  cancel_reason : varchar(300)
   canceled_at : timestamp
   *committee_id : bigint <<FK>>
   created_at : timestamp
@@ -107,7 +111,9 @@ entity "meetings" as meetings {
   *ends_at : timestamp
   link : varchar(300)
   location : varchar(100)
+  modality : varchar(10)
   *priority : varchar(10)
+  series_id : bigint <<FK>>
   *starts_at : timestamp
   *title : varchar(100)
 }
@@ -125,6 +131,86 @@ entity "meeting_participants" as meeting_participants {
   *user_id : bigint <<FK>>
 }
 
+entity "meeting_series" as meeting_series {
+  *id : bigint <<PK>>
+  agenda : varchar(2000)
+  *all_day : boolean
+  attachment_id : bigint <<FK>>
+  *committee_id : bigint <<FK>>
+  created_at : timestamp
+  *created_by_id : bigint <<FK>>
+  *created_count : integer
+  *duration_minutes : bigint
+  end_date : date
+  *finished : boolean
+  *first_starts_at : timestamp
+  *frequency : varchar(10)
+  invited_user_ids : varchar(4000)
+  last_starts_at : timestamp
+  link : varchar(300)
+  location : varchar(100)
+  max_occurrences : integer
+  modality : varchar(10)
+  *monthly_by_weekday : boolean
+  *priority : varchar(10)
+  *repeat_interval : integer
+  *title : varchar(100)
+  week_days : varchar(20)
+}
+
+entity "meeting_files" as meeting_files {
+  *id : bigint <<PK>>
+  *committee_id : bigint <<FK>>
+  *content_type : varchar(100)
+  *created_at : timestamp
+  *data : bytea
+  *file_name : varchar(150)
+  *size_bytes : bigint
+  uploaded_by_id : bigint <<FK>>
+}
+
+entity "meeting_minutes" as meeting_minutes {
+  *id : bigint <<PK>>
+  closed_at : timestamp
+  decisions : varchar(4000)
+  *meeting_id : bigint <<FK>>
+  notes : varchar(2000)
+  *status : varchar(20)
+  submitted_at : timestamp
+  topics : varchar(4000)
+  *updated_at : timestamp
+  *written_by_id : bigint <<FK>>
+}
+
+entity "minutes_responses" as minutes_responses {
+  *id : bigint <<PK>>
+  *approved : boolean
+  *minutes_id : bigint <<FK>>
+  reason : varchar(300)
+  *responded_at : timestamp
+  *user_id : bigint <<FK>>
+}
+
+entity "meeting_polls" as meeting_polls {
+  *id : bigint <<PK>>
+  closed_at : timestamp
+  closed_by_id : bigint <<FK>>
+  description : varchar(500)
+  *meeting_id : bigint <<FK>>
+  *opened_at : timestamp
+  *opened_by_id : bigint <<FK>>
+  *question : varchar(150)
+}
+
+entity "poll_votes" as poll_votes {
+  *id : bigint <<PK>>
+  *choice : varchar(10)
+  justification : varchar(280)
+  *poll_id : bigint <<FK>>
+  *user_id : bigint <<FK>>
+  *voted_at : timestamp
+}
+
 entity "audit_logs" as audit_logs {
   *id : bigint <<PK>>
   *action : varchar(255)
@@ -140,19 +226,35 @@ committee_members }o--|| committees : committee_id
 committee_members }o--o| users : invited_by_id
 committee_members }o--|| users : user_id
 committees }o--|| organizations : organization_id
+meeting_files }o--|| committees : committee_id
+meeting_files }o--o| users : uploaded_by_id
+meeting_minutes |o--|| meetings : meeting_id
+meeting_minutes }o--|| users : written_by_id
 meeting_participants }o--o| users : entered_by_id
 meeting_participants }o--o| users : left_by_id
 meeting_participants }o--|| meetings : meeting_id
 meeting_participants }o--|| users : user_id
+meeting_polls }o--o| users : closed_by_id
+meeting_polls }o--|| meetings : meeting_id
+meeting_polls }o--|| users : opened_by_id
+meeting_series }o--o| meeting_files : attachment_id
+meeting_series }o--|| committees : committee_id
+meeting_series }o--|| users : created_by_id
+meetings }o--o| meeting_files : attachment_id
 meetings }o--o| users : attendance_list_generated_by_id
 meetings }o--|| committees : committee_id
 meetings }o--|| users : created_by_id
+meetings }o--o| meeting_series : series_id
+minutes_responses }o--|| meeting_minutes : minutes_id
+minutes_responses }o--|| users : user_id
 organization_invitations }o--|| users : invited_by_id
 organization_invitations }o--|| organizations : organization_id
 organization_invitations }o--|| users : user_id
 organization_members }o--|| organizations : organization_id
 organization_members }o--|| users : user_id
 organizations }o--|| users : owner_id
+poll_votes }o--|| meeting_polls : poll_id
+poll_votes }o--|| users : user_id
 user_profile_photos |o--|| users : user_id
 
 legend bottom

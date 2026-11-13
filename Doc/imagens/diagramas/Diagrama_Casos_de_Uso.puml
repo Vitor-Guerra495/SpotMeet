@@ -5,309 +5,270 @@ SpotMeet - Diagrama de casos de uso
 end title
 left to right direction
 skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam nodesep 18
+skinparam ranksep 30
 
-actor "Usuário" as Usuario
-actor "Administrador\ndo sistema" as Admin
-
-rectangle "Cadastro de usuário (RF01 a RF05)" as PK0 {
-  usecase "Cadastrar conta" as UC01
-  usecase "Confirmar o e-mail com\no código" as UC02
-  usecase "Reenviar o código de\nconfirmação" as UC03
-  usecase "Autenticar com e-mail\ne senha" as UC04
-  usecase "Entrar por biometria\nao reabrir o\naplicativo" as UC05
-  usecase "Solicitar acesso a uma\norganização pela chave" as UC06
-  usecase "Consultar os convites\nde organização\nrecebidos" as UC07
-  usecase "Responder a um convite\nde organização" as UC08
-  usecase "Consultar as\nsolicitações de acesso\npendentes" as UC09
-  usecase "Aprovar uma\nsolicitação de acesso" as UC10
-  usecase "Rejeitar uma\nsolicitação de acesso" as UC11
-  usecase "Convidar uma pessoa\npara a organização" as UC12
-  usecase "Consultar os membros\nda organização" as UC13
-  usecase "Promover um membro" as UC14
-  usecase "Rebaixar um membro" as UC15
-  usecase "Remover um membro da\norganização" as UC16
-  usecase "Transferir a liderança\nda organização" as UC17
+rectangle "Cadastro de comissão (RF09 a RF13)" as Box2 {
+  usecase "UC30 [Usuário]\nCadastrar comissão" as UC30 #EAF2FA
+  usecase "UC31 [Usuário]\nConsultar comissões da\norganização" as UC31 #EAF2FA
+  usecase "UC32 [Usuário]\nEditar comissão" as UC32 #EAF2FA
+  usecase "UC33 [Usuário]\nExcluir comissão" as UC33 #EAF2FA
+  usecase "UC34 [Usuário]\nConvidar integrante para\ncomissão" as UC34 #EAF2FA
+  usecase "UC35 [Usuário]\nConsultar convites de comissão" as UC35 #EAF2FA
+  usecase "UC36 [Usuário]\nAceitar ou recusar convite de\ncomissão" as UC36 #EAF2FA
+  usecase "UC37 [Usuário]\nSolicitar entrada em comissão" as UC37 #EAF2FA
+  usecase "UC38 [Usuário]\nConsultar solicitações de\nentrada em comissão" as UC38 #EAF2FA
+  usecase "UC39 [Usuário]\nAprovar ou rejeitar\nsolicitação de entrada em\ncomissão" as UC39 #EAF2FA
+  usecase "UC40 [Usuário]\nConsultar a situação de um\nintegrante nas comissões" as UC40 #EAF2FA
+  usecase "UC41 [Usuário]\nRemover integrante da comissão" as UC41 #EAF2FA
 }
-
-rectangle "Cadastro de organização (RF06 a RF08)" as PK1 {
-  usecase "Cadastrar organização" as UC18
-  usecase "Consultar minhas\norganizações" as UC19
-  usecase "Editar organização" as UC20
-  usecase "Excluir organização" as UC21
-  usecase "Transferir liderança\nda organização" as UC22
-  usecase "Consultar organizações\ncadastradas" as UC23
-  usecase "Consultar organizações\npendentes" as UC24
-  usecase "Aprovar ou reativar\norganização" as UC25
-  usecase "Recusar organização" as UC26
-  usecase "Bloquear organização" as UC27
-  usecase "Pedir reavaliação de\norganização recusada" as UC28
+rectangle "Reuniões e lista de presença (RF24 a RF35)" as Box5 {
+  usecase "UC64 [Usuário]\nConsultar os integrantes\nativos de uma comissão" as UC64 #EAF2FA
+  usecase "UC65 [Usuário]\nDesignar o presidente da\ncomissão" as UC65 #EAF2FA
+  usecase "UC66 [Usuário]\nAgendar reunião" as UC66 #EAF2FA
+  usecase "UC67 [Usuário]\nAgendar reunião que se repete" as UC67 #EAF2FA
+  usecase "UC68 [Usuário]\nAnexar documento à pauta" as UC68 #EAF2FA
+  usecase "UC69 [Usuário]\nEditar reunião" as UC69 #EAF2FA
+  usecase "UC70 [Usuário]\nCancelar reunião" as UC70 #EAF2FA
+  usecase "UC71 [Usuário]\nConsultar minhas reuniões" as UC71 #EAF2FA
+  usecase "UC72 [Usuário]\nConsultar o detalhe de uma\nreunião" as UC72 #EAF2FA
+  usecase "UC73 [Usuário]\nConsultar os convites sem\nresposta" as UC73 #EAF2FA
+  usecase "UC74 [Usuário]\nBaixar o anexo da pauta" as UC74 #EAF2FA
+  usecase "UC75 [Usuário]\nAbrir a reunião pelo e-mail" as UC75 #EAF2FA
+  usecase "UC76 [Usuário]\nEscolher os convidados da\nreunião" as UC76 #EAF2FA
+  usecase "UC77 [Usuário]\nAceitar convite de reunião" as UC77 #EAF2FA
+  usecase "UC78 [Usuário]\nRecusar convite de reunião" as UC78 #EAF2FA
+  usecase "UC79 [Usuário]\nRegistrar a própria entrada" as UC79 #EAF2FA
+  usecase "UC80 [Usuário]\nRegistrar a entrada de outro\nconvidado" as UC80 #EAF2FA
+  usecase "UC81 [Usuário]\nRegistrar a entrada de todos\nque aceitaram" as UC81 #EAF2FA
+  usecase "UC82 [Usuário]\nRegistrar a própria saída" as UC82 #EAF2FA
+  usecase "UC83 [Usuário]\nRegistrar a saída de outro\nconvidado" as UC83 #EAF2FA
+  usecase "UC84 [Usuário]\nRegistrar a saída de todos que\nestão dentro" as UC84 #EAF2FA
+  usecase "UC85 [Usuário]\nCorrigir os registros de\npresença de um convidado" as UC85 #EAF2FA
+  usecase "UC86 [Usuário]\nGerar a lista de presença" as UC86 #EAF2FA
+  usecase "UC87 [Usuário]\nConsultar a lista de presença" as UC87 #EAF2FA
 }
-
-rectangle "Cadastro de comissão (RF09 a RF13)" as PK2 {
-  usecase "Cadastrar comissão" as UC29
-  usecase "Consultar comissões da\norganização" as UC30
-  usecase "Editar comissão" as UC31
-  usecase "Excluir comissão" as UC32
-  usecase "Convidar integrante\npara comissão" as UC33
-  usecase "Consultar convites de\ncomissão" as UC34
-  usecase "Aceitar ou recusar\nconvite de comissão" as UC35
-  usecase "Solicitar entrada em\ncomissão" as UC36
-  usecase "Consultar solicitações\nde entrada em comissão" as UC37
-  usecase "Aprovar ou rejeitar\nsolicitação de entrada\nem comissão" as UC38
-  usecase "Consultar a situação\nde um integrante nas\ncomissões" as UC39
-  usecase "Remover integrante da\ncomissão" as UC40
+rectangle "Ata de reunião (RF37 a RF42)" as Box6 {
+  usecase "UC88 [Usuário]\nEscrever a ata da reunião" as UC88 #EAF2FA
+  usecase "UC89 [Usuário]\nEditar o rascunho da ata" as UC89 #EAF2FA
+  usecase "UC90 [Usuário]\nEnviar a ata para aprovação" as UC90 #EAF2FA
+  usecase "UC91 [Usuário]\nAprovar a ata" as UC91 #EAF2FA
+  usecase "UC92 [Usuário]\nReprovar a ata com motivo" as UC92 #EAF2FA
+  usecase "UC93 [Usuário]\nAcompanhar as respostas da ata" as UC93 #EAF2FA
+  usecase "UC94 [Usuário]\nEncerrar a aprovação da ata" as UC94 #EAF2FA
+  usecase "UC95 [Usuário]\nCorrigir e reenviar a ata\nreprovada" as UC95 #EAF2FA
+  usecase "UC96 [Usuário]\nConsultar a ata da reunião" as UC96 #EAF2FA
+  usecase "UC97 [Usuário]\nConsultar as atas para\nresponder" as UC97 #EAF2FA
 }
-
-rectangle "Configurações de usuário (RF14 a RF18 e RF36)" as PK3 {
-  usecase "Alterar senha" as UC41
-  usecase "Recuperar conta" as UC42
-  usecase "Consultar dados\npessoais" as UC43
-  usecase "Alterar nome e\nbiografia" as UC44
-  usecase "Alterar\ndisponibilidade" as UC45
-  usecase "Adicionar ou trocar\nfoto de perfil" as UC46
-  usecase "Remover foto de perfil" as UC47
-  usecase "Definir tema" as UC48
-  usecase "Alterar e-mail" as UC49
-  usecase "Habilitar o bloqueio\nbiométrico" as UC50
-  usecase "Definir o prazo do\nbloqueio" as UC51
-  usecase "Desabilitar o bloqueio\nbiométrico" as UC52
+rectangle "Votação em reunião (RF43 a RF46)" as Box7 {
+  usecase "UC98 [Usuário]\nAbrir votação" as UC98 #EAF2FA
+  usecase "UC99 [Usuário]\nVotar Sim ou Não" as UC99 #EAF2FA
+  usecase "UC100 [Usuário]\nAbster-se, com justificativa\nopcional" as UC100 #EAF2FA
+  usecase "UC101 [Usuário]\nEncerrar votação" as UC101 #EAF2FA
+  usecase "UC102 [Usuário]\nConsultar as votações da\nreunião" as UC102 #EAF2FA
+  usecase "UC103 [Usuário]\nAcompanhar a contagem ao vivo" as UC103 #EAF2FA
+  usecase "UC104 [Usuário]\nConsultar o resultado da\nvotação" as UC104 #EAF2FA
 }
-
-rectangle "Informações do sistema (RF19 a RF23)" as PK4 {
-  usecase "Iniciar o servidor" as UC53
-  usecase "Abrir o aplicativo e\nlocalizar o servidor" as UC54
-  usecase "Configurar o endereço\ndo servidor" as UC55
-  usecase "Atualizar o aplicativo\nAndroid" as UC56
-  usecase "Consultar o status do\nsistema" as UC57
-  usecase "Consultar os detalhes\nde banco, API e\nrecursos" as UC58
-  usecase "Consultar os\nrelatórios" as UC59
-  usecase "Reiniciar um\nsubsistema" as UC60
-  usecase "Resetar o sistema" as UC61
+rectangle "Relatório individual (RF47)" as Box8 {
+  usecase "UC105 [Usuário]\nConsultar o meu relatório de\nreuniões" as UC105 #EAF2FA
+  usecase "UC106 [Usuário]\nFiltrar o relatório por\nperíodo" as UC106 #EAF2FA
+  usecase "UC107 [Usuário]\nEscolher as datas do período" as UC107 #EAF2FA
+  usecase "UC108 [Usuário]\nFiltrar o relatório por\ncomissão" as UC108 #EAF2FA
 }
-
-rectangle "Reuniões e lista de presença (RF24 a RF35)" as PK5 {
-  usecase "Consultar os\nintegrantes ativos de\numa comissão" as UC62
-  usecase "Designar o presidente\nda comissão" as UC63
-  usecase "Agendar reunião" as UC64
-  usecase "Editar reunião\nagendada" as UC65
-  usecase "Cancelar reunião" as UC66
-  usecase "Consultar minhas\nreuniões" as UC67
-  usecase "Consultar o detalhe de\numa reunião" as UC68
-  usecase "Escolher os convidados\nda reunião" as UC69
-  usecase "Aceitar convite de\nreunião" as UC70
-  usecase "Recusar convite de\nreunião" as UC71
-  usecase "Registrar a própria\nentrada" as UC72
-  usecase "Registrar a entrada de\noutro convidado" as UC73
-  usecase "Registrar a entrada de\ntodos que aceitaram" as UC74
-  usecase "Registrar a própria\nsaída" as UC75
-  usecase "Registrar a saída de\noutro convidado" as UC76
-  usecase "Registrar a saída de\ntodos que estão dentro" as UC77
-  usecase "Corrigir os registros\nde presença de um\nconvidado" as UC78
-  usecase "Gerar a lista de\npresença" as UC79
-  usecase "Consultar a lista de\npresença" as UC80
+rectangle "Manual de utilização (RF48)" as Box9 {
+  usecase "UC109 [Usuário]\nConsultar os tópicos por\nperfil" as UC109 #EAF2FA
+  usecase "UC110 [Usuário]\nBuscar um tópico" as UC110 #EAF2FA
+  usecase "UC111 [Usuário]\nAbrir um tópico e os\nrelacionados" as UC111 #EAF2FA
 }
+actor "Usuário" as Usuario #EAF2FA
+rectangle "Cadastro de usuário (RF01 a RF05)" as Box0 {
+  usecase "UC01 [Usuário]\nCadastrar conta" as UC01 #EAF2FA
+  usecase "UC02 [Usuário]\nConfirmar o e-mail com o\ncódigo" as UC02 #EAF2FA
+  usecase "UC03 [Usuário]\nReenviar o código de\nconfirmação" as UC03 #EAF2FA
+  usecase "UC04 [Ambos]\nAutenticar com e-mail e senha" as UC04 #EAF5EA
+  usecase "UC05 [Ambos]\nAutenticar com Google" as UC05 #EAF5EA
+  usecase "UC06 [Ambos]\nEntrar por biometria ao\nreabrir o aplicativo" as UC06 #EAF5EA
+  usecase "UC07 [Usuário]\nSolicitar acesso a uma\norganização pela chave" as UC07 #EAF2FA
+  usecase "UC08 [Usuário]\nConsultar os convites de\norganização recebidos" as UC08 #EAF2FA
+  usecase "UC09 [Usuário]\nResponder a um convite de\norganização" as UC09 #EAF2FA
+  usecase "UC10 [Usuário]\nConsultar as solicitações de\nacesso pendentes" as UC10 #EAF2FA
+  usecase "UC11 [Usuário]\nAprovar uma solicitação de\nacesso" as UC11 #EAF2FA
+  usecase "UC12 [Usuário]\nRejeitar uma solicitação de\nacesso" as UC12 #EAF2FA
+  usecase "UC13 [Usuário]\nConvidar uma pessoa para a\norganização" as UC13 #EAF2FA
+  usecase "UC14 [Usuário]\nConsultar os membros da\norganização" as UC14 #EAF2FA
+  usecase "UC15 [Usuário]\nPromover um membro" as UC15 #EAF2FA
+  usecase "UC16 [Usuário]\nRebaixar um membro" as UC16 #EAF2FA
+  usecase "UC17 [Usuário]\nRemover um membro da\norganização" as UC17 #EAF2FA
+  usecase "UC18 [Usuário]\nTransferir a liderança da\norganização" as UC18 #EAF2FA
+}
+rectangle "Cadastro de organização (RF06 a RF08)" as Box1 {
+  usecase "UC19 [Usuário]\nCadastrar organização" as UC19 #EAF2FA
+  usecase "UC20 [Usuário]\nConsultar minhas organizações" as UC20 #EAF2FA
+  usecase "UC21 [Usuário]\nEditar organização" as UC21 #EAF2FA
+  usecase "UC22 [Usuário]\nExcluir organização" as UC22 #EAF2FA
+  usecase "UC23 [Administrador]\nTransferir a liderança de uma\norganização pelo painel\nadministrativo" as UC23 #FFF1DF
+  usecase "UC24 [Administrador]\nConsultar organizações\ncadastradas" as UC24 #FFF1DF
+  usecase "UC25 [Administrador]\nConsultar organizações\npendentes" as UC25 #FFF1DF
+  usecase "UC26 [Administrador]\nAprovar ou reativar\norganização" as UC26 #FFF1DF
+  usecase "UC27 [Administrador]\nRecusar organização" as UC27 #FFF1DF
+  usecase "UC28 [Administrador]\nBloquear organização" as UC28 #FFF1DF
+  usecase "UC29 [Usuário]\nPedir reavaliação de\norganização recusada" as UC29 #EAF2FA
+}
+rectangle "Configurações de usuário (RF14 a RF18 e RF36)" as Box3 {
+  usecase "UC42 [Ambos]\nAlterar senha" as UC42 #EAF5EA
+  usecase "UC43 [Ambos]\nRecuperar conta" as UC43 #EAF5EA
+  usecase "UC44 [Usuário]\nConsultar dados pessoais" as UC44 #EAF2FA
+  usecase "UC45 [Usuário]\nAlterar nome e biografia" as UC45 #EAF2FA
+  usecase "UC46 [Usuário]\nAlterar disponibilidade" as UC46 #EAF2FA
+  usecase "UC47 [Usuário]\nAdicionar ou trocar foto de\nperfil" as UC47 #EAF2FA
+  usecase "UC48 [Usuário]\nRemover foto de perfil" as UC48 #EAF2FA
+  usecase "UC49 [Usuário]\nVer a foto de outra pessoa" as UC49 #EAF2FA
+  usecase "UC50 [Usuário]\nDefinir tema" as UC50 #EAF2FA
+  usecase "UC51 [Usuário]\nAlterar e-mail" as UC51 #EAF2FA
+  usecase "UC52 [Ambos]\nHabilitar o bloqueio\nbiométrico" as UC52 #EAF5EA
+  usecase "UC53 [Usuário]\nDefinir o prazo do bloqueio" as UC53 #EAF2FA
+  usecase "UC54 [Usuário]\nDesabilitar o bloqueio\nbiométrico" as UC54 #EAF2FA
+}
+rectangle "Informações do sistema (RF19 a RF23)" as Box4 {
+  usecase "UC55 [Administrador]\nIniciar o servidor" as UC55 #FFF1DF
+  usecase "UC56 [Ambos]\nAbrir o aplicativo e localizar\no servidor" as UC56 #EAF5EA
+  usecase "UC57 [Ambos]\nConfigurar o endereço do\nservidor" as UC57 #EAF5EA
+  usecase "UC58 [Ambos]\nAtualizar o aplicativo Android" as UC58 #EAF5EA
+  usecase "UC59 [Administrador]\nConsultar o status do sistema" as UC59 #FFF1DF
+  usecase "UC60 [Administrador]\nConsultar os detalhes de\nbanco, API e recursos" as UC60 #FFF1DF
+  usecase "UC61 [Administrador]\nConsultar os relatórios" as UC61 #FFF1DF
+  usecase "UC62 [Administrador]\nReiniciar um subsistema" as UC62 #FFF1DF
+  usecase "UC63 [Administrador]\nResetar o sistema" as UC63 #FFF1DF
+}
+actor "Administrador\ndo sistema" as Admin #FFF1DF
 
-Usuario --> UC01
-Usuario --> UC02
-Usuario --> UC03
-Usuario --> UC04
-Admin --> UC04
-Usuario --> UC05
-Admin --> UC05
-Usuario --> UC06
-Usuario --> UC07
-Usuario --> UC08
-Usuario --> UC09
-Usuario --> UC10
-Usuario --> UC11
-Usuario --> UC12
-Usuario --> UC13
-Usuario --> UC14
-Usuario --> UC15
-Usuario --> UC16
-Usuario --> UC17
-Usuario --> UC18
-Usuario --> UC19
-Usuario --> UC20
-Usuario --> UC21
-Usuario --> UC22
-Admin --> UC22
-Admin --> UC23
-Admin --> UC24
-Admin --> UC25
-Admin --> UC26
-Admin --> UC27
-Usuario --> UC28
-Usuario --> UC29
-Usuario --> UC30
-Usuario --> UC31
-Usuario --> UC32
-Usuario --> UC33
-Usuario --> UC34
-Usuario --> UC35
-Usuario --> UC36
-Usuario --> UC37
-Usuario --> UC38
-Usuario --> UC39
-Usuario --> UC40
-Usuario --> UC41
-Admin --> UC41
-Usuario --> UC42
-Usuario --> UC43
-Usuario --> UC44
-Usuario --> UC45
-Usuario --> UC46
-Usuario --> UC47
-Usuario --> UC48
-Usuario --> UC49
-Usuario --> UC50
-Usuario --> UC51
-Usuario --> UC52
-Admin --> UC53
-Usuario --> UC54
-Usuario --> UC55
-Usuario --> UC56
-Admin --> UC57
-Admin --> UC58
-Admin --> UC59
-Admin --> UC60
-Admin --> UC61
-Usuario --> UC62
-Usuario --> UC63
-Usuario --> UC64
-Usuario --> UC65
-Usuario --> UC66
-Usuario --> UC67
-Usuario --> UC68
-Usuario --> UC69
-Usuario --> UC70
-Usuario --> UC71
-Usuario --> UC72
-Usuario --> UC73
-Usuario --> UC74
-Usuario --> UC75
-Usuario --> UC76
-Usuario --> UC77
-Usuario --> UC78
-Usuario --> UC79
-Usuario --> UC80
-UC01 -[hidden]right-> UC02
-UC01 -[hidden]down-> UC05
-UC02 -[hidden]right-> UC03
-UC02 -[hidden]down-> UC06
-UC03 -[hidden]right-> UC04
-UC03 -[hidden]down-> UC07
-UC04 -[hidden]down-> UC08
-UC05 -[hidden]right-> UC06
-UC05 -[hidden]down-> UC09
-UC06 -[hidden]right-> UC07
-UC06 -[hidden]down-> UC10
-UC07 -[hidden]right-> UC08
-UC07 -[hidden]down-> UC11
-UC08 -[hidden]down-> UC12
-UC09 -[hidden]right-> UC10
-UC09 -[hidden]down-> UC13
-UC10 -[hidden]right-> UC11
-UC10 -[hidden]down-> UC14
-UC11 -[hidden]right-> UC12
-UC11 -[hidden]down-> UC15
-UC12 -[hidden]down-> UC16
-UC13 -[hidden]right-> UC14
-UC13 -[hidden]down-> UC17
-UC14 -[hidden]right-> UC15
-UC15 -[hidden]right-> UC16
-UC18 -[hidden]right-> UC19
-UC18 -[hidden]down-> UC22
-UC19 -[hidden]right-> UC20
-UC19 -[hidden]down-> UC23
-UC20 -[hidden]right-> UC21
-UC20 -[hidden]down-> UC24
-UC21 -[hidden]down-> UC25
-UC22 -[hidden]right-> UC23
-UC22 -[hidden]down-> UC26
-UC23 -[hidden]right-> UC24
-UC23 -[hidden]down-> UC27
-UC24 -[hidden]right-> UC25
-UC24 -[hidden]down-> UC28
-UC26 -[hidden]right-> UC27
-UC27 -[hidden]right-> UC28
-UC29 -[hidden]right-> UC30
-UC29 -[hidden]down-> UC33
-UC30 -[hidden]right-> UC31
-UC30 -[hidden]down-> UC34
-UC31 -[hidden]right-> UC32
-UC31 -[hidden]down-> UC35
-UC32 -[hidden]down-> UC36
-UC33 -[hidden]right-> UC34
-UC33 -[hidden]down-> UC37
-UC34 -[hidden]right-> UC35
-UC34 -[hidden]down-> UC38
-UC35 -[hidden]right-> UC36
-UC35 -[hidden]down-> UC39
-UC36 -[hidden]down-> UC40
-UC37 -[hidden]right-> UC38
-UC38 -[hidden]right-> UC39
-UC39 -[hidden]right-> UC40
-UC41 -[hidden]right-> UC42
-UC41 -[hidden]down-> UC45
-UC42 -[hidden]right-> UC43
-UC42 -[hidden]down-> UC46
-UC43 -[hidden]right-> UC44
-UC43 -[hidden]down-> UC47
-UC44 -[hidden]down-> UC48
-UC45 -[hidden]right-> UC46
-UC45 -[hidden]down-> UC49
-UC46 -[hidden]right-> UC47
-UC46 -[hidden]down-> UC50
-UC47 -[hidden]right-> UC48
-UC47 -[hidden]down-> UC51
-UC48 -[hidden]down-> UC52
-UC49 -[hidden]right-> UC50
-UC50 -[hidden]right-> UC51
-UC51 -[hidden]right-> UC52
-UC53 -[hidden]right-> UC54
-UC53 -[hidden]down-> UC57
-UC54 -[hidden]right-> UC55
-UC54 -[hidden]down-> UC58
-UC55 -[hidden]right-> UC56
-UC55 -[hidden]down-> UC59
-UC56 -[hidden]down-> UC60
-UC57 -[hidden]right-> UC58
-UC57 -[hidden]down-> UC61
-UC58 -[hidden]right-> UC59
-UC59 -[hidden]right-> UC60
-UC62 -[hidden]right-> UC63
-UC62 -[hidden]down-> UC66
-UC63 -[hidden]right-> UC64
-UC63 -[hidden]down-> UC67
-UC64 -[hidden]right-> UC65
-UC64 -[hidden]down-> UC68
-UC65 -[hidden]down-> UC69
-UC66 -[hidden]right-> UC67
-UC66 -[hidden]down-> UC70
-UC67 -[hidden]right-> UC68
-UC67 -[hidden]down-> UC71
-UC68 -[hidden]right-> UC69
-UC68 -[hidden]down-> UC72
-UC69 -[hidden]down-> UC73
-UC70 -[hidden]right-> UC71
-UC70 -[hidden]down-> UC74
-UC71 -[hidden]right-> UC72
-UC71 -[hidden]down-> UC75
-UC72 -[hidden]right-> UC73
-UC72 -[hidden]down-> UC76
-UC73 -[hidden]down-> UC77
-UC74 -[hidden]right-> UC75
-UC74 -[hidden]down-> UC78
-UC75 -[hidden]right-> UC76
-UC75 -[hidden]down-> UC79
-UC76 -[hidden]right-> UC77
-UC76 -[hidden]down-> UC80
-UC78 -[hidden]right-> UC79
-UC79 -[hidden]right-> UC80
-PK0 -[hidden]down-> PK1
-PK1 -[hidden]down-> PK2
-PK2 -[hidden]down-> PK3
-PK3 -[hidden]down-> PK4
-PK4 -[hidden]down-> PK5
+UC30 -[#3B6EA5]- Usuario
+UC31 -[#3B6EA5]- Usuario
+UC32 -[#3B6EA5]- Usuario
+UC33 -[#3B6EA5]- Usuario
+UC34 -[#3B6EA5]- Usuario
+UC35 -[#3B6EA5]- Usuario
+UC36 -[#3B6EA5]- Usuario
+UC37 -[#3B6EA5]- Usuario
+UC38 -[#3B6EA5]- Usuario
+UC39 -[#3B6EA5]- Usuario
+UC40 -[#3B6EA5]- Usuario
+UC41 -[#3B6EA5]- Usuario
+UC64 -[#3B6EA5]- Usuario
+UC65 -[#3B6EA5]- Usuario
+UC66 -[#3B6EA5]- Usuario
+UC67 -[#3B6EA5]- Usuario
+UC68 -[#3B6EA5]- Usuario
+UC69 -[#3B6EA5]- Usuario
+UC70 -[#3B6EA5]- Usuario
+UC71 -[#3B6EA5]- Usuario
+UC72 -[#3B6EA5]- Usuario
+UC73 -[#3B6EA5]- Usuario
+UC74 -[#3B6EA5]- Usuario
+UC75 -[#3B6EA5]- Usuario
+UC76 -[#3B6EA5]- Usuario
+UC77 -[#3B6EA5]- Usuario
+UC78 -[#3B6EA5]- Usuario
+UC79 -[#3B6EA5]- Usuario
+UC80 -[#3B6EA5]- Usuario
+UC81 -[#3B6EA5]- Usuario
+UC82 -[#3B6EA5]- Usuario
+UC83 -[#3B6EA5]- Usuario
+UC84 -[#3B6EA5]- Usuario
+UC85 -[#3B6EA5]- Usuario
+UC86 -[#3B6EA5]- Usuario
+UC87 -[#3B6EA5]- Usuario
+UC88 -[#3B6EA5]- Usuario
+UC89 -[#3B6EA5]- Usuario
+UC90 -[#3B6EA5]- Usuario
+UC91 -[#3B6EA5]- Usuario
+UC92 -[#3B6EA5]- Usuario
+UC93 -[#3B6EA5]- Usuario
+UC94 -[#3B6EA5]- Usuario
+UC95 -[#3B6EA5]- Usuario
+UC96 -[#3B6EA5]- Usuario
+UC97 -[#3B6EA5]- Usuario
+UC98 -[#3B6EA5]- Usuario
+UC99 -[#3B6EA5]- Usuario
+UC100 -[#3B6EA5]- Usuario
+UC101 -[#3B6EA5]- Usuario
+UC102 -[#3B6EA5]- Usuario
+UC103 -[#3B6EA5]- Usuario
+UC104 -[#3B6EA5]- Usuario
+UC105 -[#3B6EA5]- Usuario
+UC106 -[#3B6EA5]- Usuario
+UC107 -[#3B6EA5]- Usuario
+UC108 -[#3B6EA5]- Usuario
+UC109 -[#3B6EA5]- Usuario
+UC110 -[#3B6EA5]- Usuario
+UC111 -[#3B6EA5]- Usuario
+Usuario -[#3B6EA5]- UC01
+Usuario -[#3B6EA5]- UC02
+Usuario -[#3B6EA5]- UC03
+Usuario -[#3B6EA5]- UC04
+UC04 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC05
+UC05 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC06
+UC06 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC07
+Usuario -[#3B6EA5]- UC08
+Usuario -[#3B6EA5]- UC09
+Usuario -[#3B6EA5]- UC10
+Usuario -[#3B6EA5]- UC11
+Usuario -[#3B6EA5]- UC12
+Usuario -[#3B6EA5]- UC13
+Usuario -[#3B6EA5]- UC14
+Usuario -[#3B6EA5]- UC15
+Usuario -[#3B6EA5]- UC16
+Usuario -[#3B6EA5]- UC17
+Usuario -[#3B6EA5]- UC18
+Usuario -[#3B6EA5]- UC19
+Usuario -[#3B6EA5]- UC20
+Usuario -[#3B6EA5]- UC21
+Usuario -[#3B6EA5]- UC22
+UC23 -[#9A5B13]- Admin
+UC24 -[#9A5B13]- Admin
+UC25 -[#9A5B13]- Admin
+UC26 -[#9A5B13]- Admin
+UC27 -[#9A5B13]- Admin
+UC28 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC29
+Usuario -[#3B6EA5]- UC42
+UC42 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC43
+UC43 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC44
+Usuario -[#3B6EA5]- UC45
+Usuario -[#3B6EA5]- UC46
+Usuario -[#3B6EA5]- UC47
+Usuario -[#3B6EA5]- UC48
+Usuario -[#3B6EA5]- UC49
+Usuario -[#3B6EA5]- UC50
+Usuario -[#3B6EA5]- UC51
+Usuario -[#3B6EA5]- UC52
+UC52 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC53
+Usuario -[#3B6EA5]- UC54
+UC55 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC56
+UC56 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC57
+UC57 -[#9A5B13]- Admin
+Usuario -[#3B6EA5]- UC58
+UC58 -[#9A5B13]- Admin
+UC59 -[#9A5B13]- Admin
+UC60 -[#9A5B13]- Admin
+UC61 -[#9A5B13]- Admin
+UC62 -[#9A5B13]- Admin
+UC63 -[#9A5B13]- Admin
+legend bottom left
+O rótulo entre colchetes identifica quem participa do caso:
+| <back:#EAF2FA>[Usuário]</back> | Usuário |
+| <back:#FFF1DF>[Administrador]</back> | Administrador do sistema |
+| <back:#EAF5EA>[Ambos]</back> | Usuário e Administrador do sistema |
+<color:#3B6EA5>Linha azul: Usuário.</color> <color:#9A5B13>Linha marrom: Administrador do sistema.</color>
+Os papéis e as condições de acesso constam nas tabelas de casos de uso.
+endlegend
 @enduml

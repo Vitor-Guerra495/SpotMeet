@@ -1,68 +1,95 @@
 @startuml Diagrama_Classes_API_Administracao
 !pragma layout smetana
 title
-SpotMeet - Diagrama de classes da API: Administração do sistema (RF19 a RF23)
+SpotMeet - Classes da API: Administração do sistema (RF08 e RF19 a RF23)
 end title
 hide circle
 skinparam classAttributeIconSize 0
-skinparam packageStyle rectangle
-package "API (backend)" {
+skinparam shadowing false
+skinparam defaultFontSize 11
+skinparam nodesep 25
+skinparam ranksep 35
 class AdminController <<controller>> {
-  +listOrganizations()
-  +listPendingOrganizations()
-  +invalidModerationBody()
-  +approveOrganization()
-  +rejectOrganization()
-  +updateOrganizationStatus()
-  +getSystemStatus()
-  +getSystemDetails()
-  +getReports()
-  +restartSystem()
-  +resetSystem()
+  +listOrganizations(authentication: Authentication): ResponseEntity<?>
+  +listPendingOrganizations(authentication: Authentication): ResponseEntity<?>
+  +invalidModerationBody(): ResponseEntity<?>
+  +approveOrganization(id: Long, authentication: Authentication): ResponseEntity<?>
+  +rejectOrganization(id: Long, body: OrganizationRejectionDTO, authentication: Authentication): ResponseEntity<?>
+  +updateOrganizationStatus(id: Long, dto: UpdateOrganizationStatusDTO, authentication: Authentication): ResponseEntity<?>
+  +getSystemStatus(authentication: Authentication): ResponseEntity<?>
+  +getSystemDetails(authentication: Authentication): ResponseEntity<?>
+  +getReports(authentication: Authentication): ResponseEntity<?>
+  +restartSystem(dto: CriticalActionRequestDTO, authentication: Authentication): ResponseEntity<?>
+  +resetSystem(dto: CriticalActionRequestDTO, authentication: Authentication): ResponseEntity<?>
 }
 class AppReleaseController <<controller>> {
-  +androidRelease()
+  +androidRelease(): ResponseEntity<AndroidReleaseDTO>
 }
 class AdminService <<service>> {
-  +listOrganizations()
-  +listPendingOrganizations()
-  +approveOrganization()
-  +rejectOrganization()
-  +updateOrganizationStatus()
-  +getSystemStatus()
-  +getSystemDetails()
-  +getReports()
-  +restartSystem()
-  +resetSystem()
+  +listOrganizations(executorEmail: String): List<AdminOrganizationDTO>
+  +listPendingOrganizations(executorEmail: String): List<AdminOrganizationDTO>
+  +approveOrganization(orgId: Long, executorEmail: String): AdminOrganizationDTO
+  +rejectOrganization(orgId: Long, reason: String, executorEmail: String): AdminOrganizationDTO
+  +updateOrganizationStatus(orgId: Long, approved: boolean, justification: String, executorEmail: String): AdminOrganizationDTO
+  +getSystemStatus(executorEmail: String): SystemStatusDTO
+  +getSystemDetails(executorEmail: String): SystemDetailsDTO
+  +getReports(executorEmail: String): AdminReportDTO
+  +restartSystem(dto: CriticalActionRequestDTO, executorEmail: String): Map<String, Object>
+  +resetSystem(dto: CriticalActionRequestDTO, executorEmail: String): Map<String, Object>
 }
 class SystemMonitoringService <<service>> {
-  +getVersion()
-  +getUptimeSeconds()
-  +collect()
-  +collectResources()
-  +getOverallStatus()
+  +getVersion(): String
+  +getUptimeSeconds(): long
+  +collect(): SystemDetailsDTO
+  +collectResources(): MemoryInfo
+  +getOverallStatus(database: String, network: String, resources: String): String
 }
 class AppReleaseService <<service>> {
-  +getAndroidRelease()
+  +getAndroidRelease(): Optional<AndroidReleaseDTO>
 }
-interface AccessRequestRepository <<repository>>
-interface AuditLogRepository <<repository>>
-interface CommitteeMemberRepository <<repository>>
-interface CommitteeRepository <<repository>>
-interface OrganizationInvitationRepository <<repository>>
-interface OrganizationMemberRepository <<repository>>
-interface OrganizationRepository <<repository>>
-interface UserRepository <<repository>>
+class EmailService <<service>> {
+
+}
+interface AccessRequestRepository <<repository>> {
+
+}
+interface AuditLogRepository <<repository>> {
+
+}
+interface CommitteeMemberRepository <<repository>> {
+
+}
+interface CommitteeRepository <<repository>> {
+
+}
+interface OrganizationInvitationRepository <<repository>> {
+
+}
+interface OrganizationMemberRepository <<repository>> {
+
+}
+interface OrganizationRepository <<repository>> {
+
+}
+interface UserRepository <<repository>> {
+
 }
 AdminController --> AdminService
-AppReleaseController --> AppReleaseService
-AdminService ..> AccessRequestRepository
-AdminService ..> AuditLogRepository
-AdminService ..> CommitteeMemberRepository
-AdminService ..> CommitteeRepository
-AdminService ..> OrganizationInvitationRepository
-AdminService ..> OrganizationMemberRepository
-AdminService ..> OrganizationRepository
+AdminService --> AccessRequestRepository
+AdminService --> AuditLogRepository
+AdminService --> CommitteeMemberRepository
+AdminService --> CommitteeRepository
+AdminService --> EmailService
+AdminService --> OrganizationInvitationRepository
+AdminService --> OrganizationMemberRepository
+AdminService --> OrganizationRepository
 AdminService --> SystemMonitoringService
-AdminService ..> UserRepository
+AdminService --> UserRepository
+AppReleaseController --> AppReleaseService
+AdminService -[hidden]down-> EmailService
+AccessRequestRepository -[hidden]down-> CommitteeRepository
+AuditLogRepository -[hidden]down-> OrganizationInvitationRepository
+CommitteeMemberRepository -[hidden]down-> OrganizationMemberRepository
+CommitteeRepository -[hidden]down-> OrganizationRepository
+OrganizationInvitationRepository -[hidden]down-> UserRepository
 @enduml

@@ -1,61 +1,83 @@
 @startuml Diagrama_Classes_API_Comissao
 !pragma layout smetana
 title
-SpotMeet - Diagrama de classes da API: Comissão (RF09 a RF13 e RF24)
+SpotMeet - Classes da API: Comissão (RF09 a RF13 e RF24)
 end title
 hide circle
 skinparam classAttributeIconSize 0
-skinparam packageStyle rectangle
-package "API (backend)" {
+skinparam shadowing false
+skinparam defaultFontSize 11
+skinparam nodesep 25
+skinparam ranksep 35
 class CommitteeController <<controller>> {
-  +createCommittee()
-  +listCommittees()
-  +updateCommittee()
-  +deleteCommittee()
-  +listUserCommitteeLinks()
-  +addUserToCommittee()
-  +removeUserFromCommittee()
-  +listActiveMembers()
-  +listPresidedCommittees()
-  +assignPresident()
-  +listMyInvitations()
-  +respondInvitation()
-  +requestToJoin()
-  +listPendingJoinRequests()
-  +respondJoinRequest()
-  +listPendingJoinRequestsForOrganization()
+  +createCommittee(organizationId: Long, dto: CommitteeRequestDTO, auth: Authentication): ResponseEntity<CommitteeResponseDTO>
+  +listCommittees(organizationId: Long, auth: Authentication): ResponseEntity<List<CommitteeResponseDTO>>
+  +updateCommittee(committeeId: Long, dto: CommitteeRequestDTO, auth: Authentication): ResponseEntity<CommitteeResponseDTO>
+  +deleteCommittee(committeeId: Long, auth: Authentication): ResponseEntity<?>
+  +listUserCommitteeLinks(organizationId: Long, userId: Long, auth: Authentication): ResponseEntity<List<UserCommitteeLinkDTO>>
+  +addUserToCommittee(committeeId: Long, userId: Long, auth: Authentication): ResponseEntity<CommitteeMemberResponseDTO>
+  +removeUserFromCommittee(committeeId: Long, userId: Long, auth: Authentication): ResponseEntity<?>
+  +listInviteCandidates(committeeId: Long, auth: Authentication): ResponseEntity<List<InviteCandidateDTO>>
+  +listActiveMembers(committeeId: Long, auth: Authentication): ResponseEntity<List<CommitteeMemberResponseDTO>>
+  +listPresidedCommittees(auth: Authentication): ResponseEntity<List<CommitteeMemberResponseDTO>>
+  +assignPresident(committeeId: Long, userId: Long, auth: Authentication): ResponseEntity<CommitteeMemberResponseDTO>
+  +listMyInvitations(auth: Authentication): ResponseEntity<List<CommitteeMemberResponseDTO>>
+  +respondInvitation(committeeId: Long, accept: boolean, auth: Authentication): ResponseEntity<CommitteeMemberResponseDTO>
+  +requestToJoin(committeeId: Long, auth: Authentication): ResponseEntity<CommitteeMemberResponseDTO>
+  +listPendingJoinRequests(committeeId: Long, auth: Authentication): ResponseEntity<List<CommitteeMemberResponseDTO>>
+  +respondJoinRequest(membershipId: Long, approve: boolean, auth: Authentication): ResponseEntity<CommitteeMemberResponseDTO>
+  +listPendingJoinRequestsForOrganization(organizationId: Long, auth: Authentication): ResponseEntity<List<CommitteeMemberResponseDTO>>
 }
 class CommitteeService <<service>> {
-  +requireOrganizationLeader()
-  +createCommittee()
-  +listCommittees()
-  +updateCommittee()
-  +deleteCommittee()
-  +listUserCommitteeLinks()
-  +addUserToCommittee()
-  +removeUserFromCommittee()
-  +listActiveMembers()
-  +listPresidedCommittees()
-  +assignPresident()
-  +listMyInvitations()
-  +respondInvitation()
-  +requestToJoin()
-  +listPendingJoinRequests()
-  +respondJoinRequest()
-  +listPendingJoinRequestsForOrganization()
+  +requireOrganizationLeader(executor: User, organizationId: Long): void
+  +createCommittee(organizationId: Long, leaderEmail: String, dto: CommitteeRequestDTO): CommitteeResponseDTO
+  +listCommittees(organizationId: Long, userEmail: String): List<CommitteeResponseDTO>
+  +updateCommittee(committeeId: Long, leaderEmail: String, dto: CommitteeRequestDTO): CommitteeResponseDTO
+  +deleteCommittee(committeeId: Long, leaderEmail: String): void
+  +listUserCommitteeLinks(organizationId: Long, targetUserId: Long, executorEmail: String): List<UserCommitteeLinkDTO>
+  +addUserToCommittee(committeeId: Long, targetUserId: Long, leaderEmail: String): CommitteeMemberResponseDTO
+  +removeUserFromCommittee(committeeId: Long, targetUserId: Long, leaderEmail: String): void
+  +listInviteCandidates(committeeId: Long, leaderEmail: String): List<InviteCandidateDTO>
+  +listActiveMembers(committeeId: Long, userEmail: String): List<CommitteeMemberResponseDTO>
+  +listPresidedCommittees(userEmail: String): List<CommitteeMemberResponseDTO>
+  +assignPresident(committeeId: Long, targetUserId: Long, leaderEmail: String): CommitteeMemberResponseDTO
+  +listMyInvitations(userEmail: String): List<CommitteeMemberResponseDTO>
+  +respondInvitation(committeeId: Long, userEmail: String, accept: boolean): CommitteeMemberResponseDTO
+  +requestToJoin(committeeId: Long, userEmail: String): CommitteeMemberResponseDTO
+  +listPendingJoinRequests(committeeId: Long, leaderEmail: String): List<CommitteeMemberResponseDTO>
+  +respondJoinRequest(membershipId: Long, leaderEmail: String, approve: boolean): CommitteeMemberResponseDTO
+  +listPendingJoinRequestsForOrganization(organizationId: Long, executorEmail: String): List<CommitteeMemberResponseDTO>
 }
-interface AuditLogRepository <<repository>>
-interface CommitteeMemberRepository <<repository>>
-interface CommitteeRepository <<repository>>
-interface OrganizationMemberRepository <<repository>>
-interface OrganizationRepository <<repository>>
-interface UserRepository <<repository>>
+class EmailService <<service>> {
+
+}
+interface AuditLogRepository <<repository>> {
+
+}
+interface CommitteeMemberRepository <<repository>> {
+
+}
+interface CommitteeRepository <<repository>> {
+
+}
+interface OrganizationMemberRepository <<repository>> {
+
+}
+interface OrganizationRepository <<repository>> {
+
+}
+interface UserRepository <<repository>> {
+
 }
 CommitteeController --> CommitteeService
-CommitteeService ..> AuditLogRepository
-CommitteeService ..> CommitteeMemberRepository
-CommitteeService ..> CommitteeRepository
-CommitteeService ..> OrganizationMemberRepository
-CommitteeService ..> OrganizationRepository
-CommitteeService ..> UserRepository
+CommitteeService --> AuditLogRepository
+CommitteeService --> CommitteeMemberRepository
+CommitteeService --> CommitteeRepository
+CommitteeService --> EmailService
+CommitteeService --> OrganizationMemberRepository
+CommitteeService --> OrganizationRepository
+CommitteeService --> UserRepository
+AuditLogRepository -[hidden]down-> OrganizationMemberRepository
+CommitteeMemberRepository -[hidden]down-> OrganizationRepository
+CommitteeRepository -[hidden]down-> UserRepository
 @enduml

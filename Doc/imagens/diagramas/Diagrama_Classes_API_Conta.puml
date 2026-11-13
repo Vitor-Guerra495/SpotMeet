@@ -1,107 +1,158 @@
 @startuml Diagrama_Classes_API_Conta
 !pragma layout smetana
 title
-SpotMeet - Diagrama de classes da API: Conta de usuário (RF01, RF02, RF14 a RF18)
+SpotMeet - Classes da API: Conta de usuário (RF01, RF02, RF14 a RF18)
 end title
 hide circle
 skinparam classAttributeIconSize 0
-skinparam packageStyle rectangle
-package "API (backend)" {
+skinparam shadowing false
+skinparam defaultFontSize 11
+skinparam nodesep 25
+skinparam ranksep 35
 class AuthController <<controller>> {
-  +register()
-  +login()
-  +verifyEmail()
-  +resendVerification()
-  +forgotPassword()
-  +verifyRecoveryCode()
-  +resetPassword()
+  +register(dto: RegisterRequestDTO): ResponseEntity<?>
+  +login(dto: LoginRequestDTO): ResponseEntity<?>
+  +verifyEmail(dto: VerifyEmailDTO): ResponseEntity<?>
+  +googleStatus(): Map<String, Object>
+  +googleSignIn(dto: GoogleSignInDTO): ResponseEntity<?>
+  +resendVerification(dto: ResendVerificationDTO): ResponseEntity<?>
+  +forgotPassword(dto: ForgotPasswordDTO): ResponseEntity<?>
+  +verifyRecoveryCode(dto: VerifyRecoveryCodeDTO): ResponseEntity<?>
+  +resetPassword(dto: ResetPasswordDTO): ResponseEntity<?>
 }
 class UserController <<controller>> {
-  +getMyProfile()
-  +updateMyProfile()
-  +changeMyPassword()
-  +requestEmailChange()
-  +confirmEmailChange()
-  +resendNewEmailCode()
-  +completeEmailChange()
+  +getMyProfile(authentication: Authentication): ResponseEntity<?>
+  +updateMyProfile(dto: UpdateUserProfileDTO, authentication: Authentication): ResponseEntity<?>
+  +changeMyPassword(dto: ChangePasswordDTO, authentication: Authentication): ResponseEntity<?>
+  +requestEmailChange(authentication: Authentication): ResponseEntity<?>
+  +confirmEmailChange(dto: ConfirmEmailChangeDTO, authentication: Authentication): ResponseEntity<?>
+  +resendNewEmailCode(authentication: Authentication): ResponseEntity<?>
+  +completeEmailChange(dto: CompleteEmailChangeDTO, authentication: Authentication, authorization: String): ResponseEntity<?>
 }
 class ProfilePhotoController <<controller>> {
-  +get()
-  +save()
-  +remove()
-  +missingPhoto()
-  +oversizedPhoto()
+  +get(authentication: Authentication): ResponseEntity<?>
+  +getOf(userId: Long, authentication: Authentication): ResponseEntity<?>
+  +save(photo: MultipartFile, authentication: Authentication): ResponseEntity<?>
+  +remove(authentication: Authentication): ResponseEntity<?>
+  +missingPhoto(): ResponseEntity<?>
+  +oversizedPhoto(): ResponseEntity<?>
 }
 class UserService <<service>> {
-  +registerUser()
-  +getMyProfile()
-  +updateMyProfile()
-  +updateAvailabilityStatus()
-  +updatePreferredTheme()
-  +verifyEmail()
-  +resendVerification()
-  +forgotPassword()
-  +verifyRecoveryCode()
-  +resetPassword()
-  +changePassword()
-  +requestEmailChange()
-  +confirmEmailChange()
-  +resendNewEmailCode()
-  +completeEmailChange()
+  +registerUser(dto: RegisterRequestDTO): CodeDeliveryResultDTO
+  +getMyProfile(email: String): UserProfileResponseDTO
+  +updateMyProfile(email: String, dto: UpdateUserProfileDTO): UserProfileResponseDTO
+  +updateAvailabilityStatus(userId: Long, newStatus: User.AvailabilityStatus): User
+  +updatePreferredTheme(userId: Long, newTheme: User.PreferredTheme): User
+  +verifyEmail(dto: VerifyEmailDTO): User
+  +resendVerification(dto: ResendVerificationDTO): CodeDeliveryResultDTO
+  +forgotPassword(dto: ForgotPasswordDTO): CodeDeliveryResultDTO
+  +verifyRecoveryCode(dto: VerifyRecoveryCodeDTO): String
+  +resetPassword(dto: ResetPasswordDTO): String
+  +changePassword(authenticatedEmail: String, dto: ChangePasswordDTO): String
+  +requestEmailChange(authenticatedEmail: String): CodeDeliveryResultDTO
+  +confirmEmailChange(authenticatedEmail: String, dto: ConfirmEmailChangeDTO): CodeDeliveryResultDTO
+  +resendNewEmailCode(authenticatedEmail: String): CodeDeliveryResultDTO
+  +completeEmailChange(authenticatedEmail: String, dto: CompleteEmailChangeDTO): User
 }
 class ProfilePhotoService <<service>> {
-  +get()
-  +save()
-  +remove()
+  +get(email: String): ProfilePhotoResponseDTO
+  +getOf(viewerEmail: String, userId: Long): ProfilePhotoResponseDTO
+  +save(email: String, file: MultipartFile): ProfilePhotoResponseDTO
+  +remove(email: String): void
 }
 class EmailService <<service>> {
-  +sendVerificationEmail()
-  +sendPasswordRecoveryEmail()
-  +sendCurrentEmailChangeCode()
-  +sendNewEmailConfirmationCode()
-  +sendPasswordChangedEmail()
+  +sendVerificationEmail(recipient: String, name: String, code: String, expiresAt: LocalDateTime): void
+  +sendPasswordRecoveryEmail(recipient: String, name: String, recoveryToken: String, expiresAt: LocalDateTime): void
+  +sendCurrentEmailChangeCode(recipient: String, name: String, code: String, expiresAt: LocalDateTime): void
+  +sendNewEmailConfirmationCode(recipient: String, name: String, code: String, expiresAt: LocalDateTime): void
+  +sendPasswordChangedEmail(recipient: String, name: String, origin: PasswordOrigin): void
+  +sendEmailChangedEmail(previousEmail: String, name: String, newEmail: String): void
+  +sendAccessApprovedEmail(recipient: String, name: String, organization: String, approvedBy: String): void
+  +sendAccessRejectedEmail(recipient: String, name: String, organization: String, requestedAt: LocalDateTime, decidedBy: String): void
+  +sendCommitteeInvitationEmail(recipient: String, name: String, organization: String, committee: String, invitedBy: String): void
+  +sendOrganizationApprovedEmail(recipient: String, name: String, organization: String): void
+  +sendOrganizationRejectedEmail(recipient: String, name: String, organization: String, reason: String): void
+  +sendOrganizationInvitationEmail(recipient: String, name: String, organization: String, invitedBy: String, expiresAt: Instant): void
+  +sendOrganizationBlockedEmail(recipient: String, name: String, organization: String, reason: String): void
+  +sendOrganizationReactivatedEmail(recipient: String, name: String, organization: String): void
+  +sendMeetingInvitationEmail(recipient: String, name: String, meeting: MeetingText.Mail, invitedBy: String): void
+  +sendMeetingChangedEmail(recipient: String, name: String, meeting: MeetingText.Mail, changedBy: String, changes: List<String[]>): void
+  +sendMeetingCanceledEmail(recipient: String, name: String, meeting: MeetingText.Mail, canceledBy: String, reason: String): void
+  +sendInvitationDeclinedEmail(recipient: String, name: String, meeting: MeetingText.Mail, declinedBy: String, reason: String): void
+  +sendMinutesForApprovalEmail(recipient: String, name: String, meeting: MeetingText.Mail, writer: String, sentAt: LocalDateTime): void
+  +sendMinutesApprovedEmail(recipient: String, name: String, meeting: MeetingText.Mail, result: String, closedAt: LocalDateTime): void
+  +sendMinutesRejectedEmail(recipient: String, name: String, meeting: MeetingText.Mail, result: String, why: String, reasons: List<String[]>, closedAt: LocalDateTime, president: boolean): void
 }
 class EmailDeliveryService <<service>> {
-  +sendEmail()
-  +sendPasswordChangedEmail()
+  +sendEmail(recipient: String, email: EmailTemplate.Email, code: String, expiresAt: LocalDateTime): void
+  +sendNotice(recipient: String, email: EmailTemplate.Email): void
+}
+class GoogleSignInService <<service>> {
+  +isEnabled(): boolean
+  +getClientId(): String
+  +signIn(idToken: String): User
+}
+class GoogleKeysClient <<service>> {
+  +fetch(): JsonNode
 }
 class JwtUtil <<segurança>> {
-  +generateToken()
-  +generateToken()
-  +extractEmail()
-  +extractRole()
-  +extractExpiration()
-  +extractIssuedAt()
-  +extractClaim()
-  +isTokenValid()
-  +isTokenValid()
+  +generateToken(email: String, role: String): String
+  +generateToken(email: String, role: String, issuedAt: Instant): String
+  +extractEmail(token: String): String
+  +extractRole(token: String): String
+  +extractExpiration(token: String): Date
+  +extractIssuedAt(token: String): Instant
+  +extractClaim<T>(token: String, claimsResolver: Function<Claims, T>): T
+  +isTokenValid(token: String, email: String): boolean
+  +isTokenValid(token: String, email: String, tokensValidAfter: Instant): boolean
 }
 class JwtAuthFilter <<segurança>> {
-
+  #doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain): void
 }
 class AuthenticationAttempts <<segurança>> {
-  +verify()
+  +verify<T>(purpose: Purpose, identity: String, verification: Supplier<T>): T
 }
 class UserDetailsServiceImpl <<segurança>> {
-  +loadUserByUsername()
+  +loadUserByUsername(email: String): UserDetails
 }
-interface AuditLogRepository <<repository>>
-interface UserProfilePhotoRepository <<repository>>
-interface UserRepository <<repository>>
+interface AuditLogRepository <<repository>> {
+  +findByUserIdOrderByCreatedAtDesc(userId: Long): List<AuditLog>
+  +findByActionOrderByCreatedAtDesc(action: String): List<AuditLog>
+  +findByPeriod(start: LocalDateTime, end: LocalDateTime): List<AuditLog>
+  +findTop100ByOrderByCreatedAtDesc(): List<AuditLog>
+  +deleteAllExceptAdminLogs(adminId: Long): void
+}
+interface UserProfilePhotoRepository <<repository>> {
+  +findByUserId(userId: Long): Optional<UserProfilePhoto>
+}
+interface UserRepository <<repository>> {
+  +findByEmail(email: String): Optional<User>
+  +existsByEmail(email: String): boolean
+  +findByEmailForUpdate(email: String): Optional<User>
+  +findInviteCandidates(term: String, organizationId: Long, ownerId: Long, now: Instant, pageable: Pageable): List<User>
+  +deleteAllExceptAdmin(adminId: Long): void
 }
 AuthController --> AuthenticationAttempts
+AuthController --> GoogleSignInService
 AuthController --> JwtUtil
 AuthController --> UserService
+EmailService --> EmailDeliveryService
+GoogleSignInService --> AuditLogRepository
+GoogleSignInService --> GoogleKeysClient
+GoogleSignInService --> UserRepository
+JwtAuthFilter --> JwtUtil
+ProfilePhotoController --> ProfilePhotoService
+ProfilePhotoService --> AuditLogRepository
+ProfilePhotoService --> UserProfilePhotoRepository
+ProfilePhotoService --> UserRepository
 UserController --> JwtUtil
 UserController --> UserService
-ProfilePhotoController --> ProfilePhotoService
-UserService ..> AuditLogRepository
+UserDetailsServiceImpl --> UserRepository
+UserService --> AuditLogRepository
 UserService --> AuthenticationAttempts
 UserService --> EmailService
-UserService ..> UserRepository
-ProfilePhotoService ..> UserProfilePhotoRepository
-ProfilePhotoService ..> UserRepository
-EmailService --> EmailDeliveryService
-JwtAuthFilter --> JwtUtil
-UserDetailsServiceImpl ..> UserRepository
+UserService --> UserRepository
+UserService -[hidden]down-> EmailDeliveryService
+ProfilePhotoService -[hidden]down-> GoogleSignInService
+EmailService -[hidden]down-> GoogleKeysClient
 @enduml

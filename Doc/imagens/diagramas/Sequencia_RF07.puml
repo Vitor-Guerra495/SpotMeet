@@ -6,58 +6,61 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 300
 autonumber "<b>0"
 
-actor "Usuário" as U
+actor "Usuário\n(dono ou vice da organização)" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
 participant ":OrganizationScreen" as Tela
 end box
 box "API (backend)" #F6FFF4
 participant ":JwtAuthFilter" as Filtro
 participant ":OrganizationController" as Ctrl
-participant ":OrganizationLeadershipController" as LCtrl
 participant ":OrganizationService" as Svc
+participant ":OrganizationLeadershipController" as LCtrl
 participant ":MembershipService" as MSvc
 participant ":UserRepository" as UserRepo
 participant ":OrganizationRepository" as OrgRepo
 participant ":OrganizationMemberRepository" as MemRepo
-participant ":OrganizationInvitationRepository" as InvRepo
 participant ":CommitteeRepository" as ComRepo
 participant ":CommitteeMemberRepository" as CmRepo
 participant ":AccessRequestRepository" as ArRepo
+participant ":OrganizationInvitationRepository" as InvRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom a organização e os dados afetados; não é uma variável local.
 
-group Pesquisar as organizações do usuário
-  U -> Tela : abrir a aba "Organização" (ou atualizar a lista)
+group Abrir a organização
+  U -> Tela : tocar no cartão da organização em "Minhas"
+  note over Tela : os detalhes são carregados para a organização selecionada;\no usuário vê nome, chave, responsáveis e ações permitidas pelo seu cargo
   Tela -> Filtro : GET /api/organizations/mine
   Filtro -> Ctrl : listMyOrganizations(authentication)
-  Ctrl -> Svc : listMyOrganizations(userEmail)
-  Svc -> UserRepo : findByEmail(userEmail)
+  Ctrl -> Svc : listMyOrganizations(email)
+  Svc -> UserRepo : findByEmail(email)
   UserRepo --> Svc : Optional<User>
-  Svc -> MemRepo : findByUserId(userId)
+  Svc -> MemRepo : findByUserId(user.getId())
   MemRepo --> Svc : List<OrganizationMember>
-  note over Svc : DTO por vínculo, com myRole
   Svc --> Ctrl : List<OrganizationResponseDTO>
   Ctrl --> Tela : 200 List<OrganizationResponseDTO>
-  Tela --> U : exibe "SUAS ORGANIZAÇÕES" com estado e papel
+  Tela --> U : exibe nome, chave de acesso, dono em "Responsável" e estado da organização
 end
 
 group Editar a organização
-  U -> Tela : tocar em "Editar organização", alterar os campos e tocar em "Salvar alterações"
-  note over Tela : validateOrganizationName e validateAccessKey (organizationForms)
+  U -> Tela : tocar em "Editar organização", alterar nome, chave ou "Mostrar na lista de organizações"\ne tocar em "Salvar alterações"
+  note over Tela : valida os campos com organizationForms antes de enviar
   Tela -> Filtro : PUT /api/organizations/{organizationId} (OrganizationRequestDTO)
   alt corpo viola @Valid
-    Filtro -> Handler : MethodArgumentNotValidException
+    note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+    note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
     Handler --> Tela : 400 {message, errors}
-    Tela --> U : exibe o erro sob o campo
+    Tela --> U : exibe a mensagem sob o campo correspondente
   else corpo válido
     Filtro -> Ctrl : updateOrganization(organizationId, dto, authentication)
     activate Ctrl
     Ctrl -> Svc : updateOrganization(organizationId, executorEmail, dto)
     activate Svc
-    note over Svc : transação READ_COMMITTED
+    note over Svc : transação READ_COMMITTED; não permite trocar dono, approved nem status pelo corpo
     Svc -> UserRepo : findByEmail(executorEmail)
     UserRepo --> Svc : Optional<User>
     Svc -> OrgRepo : lockForUniquenessCheck()
@@ -65,28 +68,26 @@ group Editar a organização
     Svc -> OrgRepo : findByIdForUpdate(organizationId)
     OrgRepo --> Svc : Optional<Organization>
     Svc -> Svc : requireOwnerOrViceOwner(executor, org)
-    opt executor não é SYSADMIN nem o dono (owner_id)
-      Svc -> MemRepo : findByUserIdAndOrganizationId(executorId, organizationId)
-      MemRepo --> Svc : Optional<OrganizationMember>
-    end
     alt é dono, vice-líder ou SYSADMIN
-      Svc -> Svc : checkAvailability(nome, chave, cnpj, organizationId)
-      Svc -> OrgRepo : existsByNormalizedName(nome, espaços, organizationId)
+      Svc -> Svc : checkAvailability(cleanName, cleanKey, cleanCnpj, organizationId)
+      Svc -> OrgRepo : existsByNormalizedName(name, ValidationPatterns.ORGANIZATION_WHITESPACE, excludedId)
       OrgRepo --> Svc : boolean
-      Svc -> OrgRepo : existsByNormalizedAccessKey(chave, espaços, organizationId)
+      Svc -> OrgRepo : existsByNormalizedAccessKey(accessKey, ValidationPatterns.ORGANIZATION_WHITESPACE, excludedId)
       OrgRepo --> Svc : boolean
-      opt há CNPJ (enviado ou já gravado)
-        Svc -> OrgRepo : existsByCnpjExcludingId(cnpj, organizationId)
+      note right of Svc : name, accessKey, cnpj e excludedId são parâmetros de checkAvailability;\no próprio ID é excluído da verificação de duplicidade
+      opt CNPJ informado
+        Svc -> OrgRepo : existsByCnpjExcludingId(cnpj, excludedId)
         OrgRepo --> Svc : boolean
       end
       alt nenhuma consulta encontrou conflito
-        Svc -> OrgRepo : save(Organization com novo name e access_key)
+        note right of Svc : org recebe os valores normalizados; CNPJ nulo mantém o atual e vazio o apaga;\nlisted nulo mantém o atual
+        Svc -> OrgRepo : save(org)
         OrgRepo --> Svc : Organization
-        Svc -> AuditRepo : save(AuditLog "ORGANIZATION_UPDATED")
+        Svc -> AuditRepo : save(new AuditLog(executor, "ORGANIZATION_UPDATED", details))
         AuditRepo --> Svc : AuditLog
         Svc --> Ctrl : OrganizationResponseDTO
         Ctrl --> Tela : 200 OrganizationResponseDTO
-        Tela --> U : exibe o aviso "Organização atualizada." e fecha o formulário
+        Tela --> U : exibe o aviso "Organização atualizada. Se você mudou a chave, avise quem ainda vai solicitar acesso." e fecha o formulário
       else nome, chave ou CNPJ já em uso
         Svc --> Ctrl : IllegalArgumentException
         Ctrl --> Tela : 409 (mensagem em texto)
@@ -119,30 +120,30 @@ group Excluir a organização
   Svc -> OrgRepo : findByIdForUpdate(organizationId)
   OrgRepo --> Svc : Optional<Organization>
   opt executor não é SYSADMIN nem o dono (owner_id)
-    Svc -> MemRepo : findByUserIdAndOrganizationId(executorId, organizationId)
+    Svc -> MemRepo : findByUserIdAndOrganizationId(executor.getId(), organizationId)
     MemRepo --> Svc : Optional<OrganizationMember>
   end
   alt é dono, vice-líder ou SYSADMIN
     Svc -> InvRepo : deleteByOrganizationId(organizationId)
     Svc -> ComRepo : findByOrganizationIdOrderByNameAsc(organizationId)
-    ComRepo --> Svc : List<Committee>
-    loop cada comissão da organização
-      Svc -> CmRepo : findByCommitteeId(committeeId)
-      CmRepo --> Svc : List<CommitteeMember>
-      Svc -> CmRepo : deleteAll(vínculos da comissão)
+    ComRepo --> Svc : List<Committee> committees
+    loop cada comissão c da organização
+      Svc -> CmRepo : findByCommitteeId(c.getId())
+      CmRepo --> Svc : List<CommitteeMember> members
+      Svc -> CmRepo : deleteAll(members)
     end
-    Svc -> ComRepo : deleteAll(comissões)
+    Svc -> ComRepo : deleteAll(committees)
     Svc -> ArRepo : findByOrganizationId(organizationId)
-    ArRepo --> Svc : List<AccessRequest>
-    Svc -> ArRepo : deleteAll(solicitações de acesso)
+    ArRepo --> Svc : List<AccessRequest> requests
+    Svc -> ArRepo : deleteAll(requests)
     Svc -> MemRepo : findByOrganizationId(organizationId)
-    MemRepo --> Svc : List<OrganizationMember>
-    Svc -> MemRepo : deleteAll(integrantes)
-    Svc -> OrgRepo : delete(Organization)
-    Svc -> AuditRepo : save(AuditLog "ORGANIZATION_DELETED")
+    MemRepo --> Svc : List<OrganizationMember> members
+    Svc -> MemRepo : deleteAll(members)
+    Svc -> OrgRepo : delete(org)
+    Svc -> AuditRepo : save(new AuditLog(executor, "ORGANIZATION_DELETED", details))
     AuditRepo --> Svc : AuditLog
     Svc --> Ctrl : void
-    Ctrl --> Tela : 200 "Organizacao excluida com sucesso."
+    Ctrl --> Tela : 200 "Organização excluída com sucesso."
     Tela --> U : exibe o aviso "Organização excluída." e volta a "Minhas"
   else não é dono, vice-líder nem SYSADMIN
     Svc --> Ctrl : SecurityException
@@ -172,19 +173,20 @@ group Transferir a liderança
   MSvc -> OrgRepo : findByIdForUpdate(organizationId)
   OrgRepo --> MSvc : Optional<Organization>
   alt executor é o dono (owner_id) ou SYSADMIN, organização aprovada
-    MSvc -> MemRepo : findByOrganizationIdAndRole(organizationId, ORG_OWNER)
+    MSvc -> MemRepo : findByOrganizationIdAndRole(organizationId, OrganizationRole.ORG_OWNER)
     MemRepo --> MSvc : List<OrganizationMember>
-    MSvc -> MemRepo : findByUserIdAndOrganizationId(userId, organizationId)
+    MSvc -> MemRepo : findByUserIdAndOrganizationId(targetUserId, organizationId)
     MemRepo --> MSvc : Optional<OrganizationMember>
     alt destino é integrante e não é o dono
-      MSvc -> MemRepo : save(vínculo do dono anterior com role MEMBER)
-      MSvc -> MemRepo : save(vínculo do destino com role ORG_OWNER)
-      MSvc -> OrgRepo : save(Organization com owner igual ao destino)
-      MSvc -> AuditRepo : save(AuditLog "ORGANIZATION_LEADER_CHANGED")
+      note right of MSvc : previousMembership recebe MEMBER; target recebe ORG_OWNER;\norganization.owner passa a apontar para target.user
+      MSvc -> MemRepo : save(previousMembership)
+      MSvc -> MemRepo : save(target)
+      MSvc -> OrgRepo : save(organization)
+      MSvc -> AuditRepo : save(new AuditLog(executor, "ORGANIZATION_LEADER_CHANGED", details))
       AuditRepo --> MSvc : AuditLog
       MSvc --> LCtrl : OrganizationLeadershipResponseDTO
       LCtrl --> Tela : 200 OrganizationLeadershipResponseDTO
-      Tela --> U : exibe o aviso "Liderança transferida." e abre "Comissões"
+      Tela --> U : exibe o aviso "Liderança transferida. Seu papel agora é membro." e abre "Comissões"
     else destino já é o dono ou liderança inconsistente
       MSvc --> LCtrl : IllegalStateException
       LCtrl --> Tela : 409 (mensagem)
@@ -212,7 +214,8 @@ group Reenviar para avaliação (organização recusada, uma única vez)
   note over Tela : o botão só aparece ao dono de organização recusada que ainda não usou a reavaliação
   Tela -> Filtro : POST /api/organizations/{organizationId}/resubmit (OrganizationResubmitDTO)
   alt corpo viola @Valid
-    Filtro -> Handler : MethodArgumentNotValidException
+    note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+    note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
     Handler --> Tela : 400 {message, errors}
     Tela --> U : exibe a mensagem abaixo do formulário
   else corpo válido
@@ -225,9 +228,10 @@ group Reenviar para avaliação (organização recusada, uma única vez)
     Svc -> OrgRepo : findByIdForUpdate(organizationId)
     OrgRepo --> Svc : Optional<Organization>
     alt executor é o dono, status REJECTED e resubmitted_at nulo
-      Svc -> OrgRepo : save(Organization com status PENDING, resubmission_note e resubmitted_at)
+      note right of Svc : org recebe status PENDING, approved false,\nresubmissionNote e resubmittedAt atuais
+      Svc -> OrgRepo : save(org)
       OrgRepo --> Svc : Organization
-      Svc -> AuditRepo : save(AuditLog "ORGANIZATION_RESUBMITTED")
+      Svc -> AuditRepo : save(new AuditLog(executor, "ORGANIZATION_RESUBMITTED", details))
       AuditRepo --> Svc : AuditLog
       Svc --> Ctrl : OrganizationResponseDTO
       Ctrl --> Tela : 200 OrganizationResponseDTO
@@ -247,4 +251,6 @@ group Reenviar para avaliação (organização recusada, uma única vez)
     deactivate Ctrl
   end
 end
+note over Svc : As validações são sequenciais: a primeira falha encerra a operação.\nAs chamadas seguintes só ocorrem se as anteriores forem aprovadas.
+note over Tela : loadDetails carrega membros, comissões e pedidos ao selecionar a organização,\nao ganhar foco e na sincronização de 15 segundos. Abrir uma subpágina pode apenas\nmostrar esses dados já carregados, sem uma nova requisição causada pelo toque.
 @enduml

@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário" as U
@@ -25,6 +26,7 @@ participant ":AuditLogRepository" as AuditRepo
 participant ":JwtUtil" as Jwt
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom a solicitação de cadastro, ativação ou reenvio e o e-mail da conta; não é uma variável local.
 
 group Cadastrar a conta
   U -> Tela : preencher "Nome completo", "E-mail" e "Senha" e tocar em "Criar Conta"
@@ -35,25 +37,27 @@ group Cadastrar a conta
   Ctrl -> Svc : registerUser(dto)
   activate Svc
   note right of Svc : transação
-  Svc -> Repo : findByEmailForUpdate(emailNormalizado)
+  Svc -> Repo : findByEmailForUpdate(normalizedEmail)
   Repo --> Svc : Optional<User>
   alt já existe conta com o e-mail verificado
     Svc --> Ctrl : IllegalArgumentException
     Ctrl --> Tela : 409 {success: false, message}
     Tela --> U : diálogo "Conta Já Cadastrada" com o botão "Fazer Login"
   else e-mail novo ou conta ainda não verificada
-    Svc -> Enc : encode(senha)
+    Svc -> Enc : encode(dto.getPassword())
     Enc --> Svc : hash BCrypt
-    Svc -> Svc : generateCode(hashAnterior)
-    Svc -> Enc : encode(código de 6 dígitos)
+    Svc -> Svc : generateCode(user.getVerificationToken())
+    Svc -> Enc : encode(verificationCode)
     Enc --> Svc : hash BCrypt
-    Svc -> Repo : save(User)
-    Svc -> Mail : sendVerificationEmail(email, nome, código, validade)
+    Svc -> Repo : save(user)
+    Repo --> Svc : User saved
+    Svc -> Mail : sendVerificationEmail(saved.getEmail(), saved.getName(), verificationCode, saved.getVerificationTokenExpiresAt())
     note right of Mail : registra o envio para depois do commit
-    Svc -> AuditRepo : save(AuditLog USER_REGISTERED)
+    Svc -> AuditRepo : save(new AuditLog(saved, "USER_REGISTERED", details))
     Svc --> Ctrl : CodeDeliveryResultDTO
     deactivate Svc
-    Mail ->> Deliv : sendEmail(destinatário, assunto, texto, código, validade) após o commit
+    Mail ->> Deliv : sendEmail(recipient, email, code, expiresAt)
+    note right of Deliv : após o commit; email é EmailTemplate.Email, com assunto, HTML e texto
     Ctrl --> Tela : 201 {success, message, email, name, emailVerified: false}
     Tela --> U : aviso "Código enviado" e formulário "Confirme seu e-mail"
   end
@@ -66,25 +70,26 @@ group Confirmar o e-mail com o código
   activate Ctrl
   Ctrl -> Svc : verifyEmail(dto)
   activate Svc
-  Svc -> Att : verify(EMAIL_VERIFICATION, email, conferência do código)
+  Svc -> Att : verify(AuthenticationAttempts.Purpose.EMAIL_VERIFICATION, dto.getEmail(), verification)
   activate Att
-  Att -> Svc : conferência do código
-  Svc -> Repo : findByEmailForUpdate(email)
+  note over Att, Svc : verification é o Supplier que busca a conta,\ncompara o código e confere a validade antes de permitir a alteração
+  Svc -> Repo : findByEmailForUpdate(email.trim().toLowerCase(Locale.ROOT))
   Repo --> Svc : Optional<User>
-  Svc -> Enc : matches(código, verification_token)
+  Svc -> Enc : matches(code, hash)
   Enc --> Svc : boolean
   Att --> Svc : User, IllegalArgumentException ou TooManyAttemptsException
   deactivate Att
   alt código correto e dentro da validade
-    Svc -> Repo : save(User com email_verified = true e código apagado)
-    Svc -> AuditRepo : save(AuditLog ACCOUNT_VERIFIED)
+    note right of Svc : confirma emailVerified e apaga verificationToken e sua validade
+    Svc -> Repo : save(user)
+    Svc -> AuditRepo : save(new AuditLog(user, "ACCOUNT_VERIFIED", details))
     Svc --> Ctrl : User
     deactivate Svc
     Ctrl -> Ctrl : createSession(user, issuedAt)
-    Ctrl -> Jwt : generateToken(email, role, issuedAt)
+    Ctrl -> Jwt : generateToken(user.getEmail(), user.getRole(), issuedAt)
     Jwt --> Ctrl : token JWT
     Ctrl --> Tela : 200 {success, message, token, role, name, email, userId, emailVerified: true}
-    Tela -> Ctx : signIn(AuthSession)
+    Tela -> Ctx : signIn(session)
     Tela --> U : abre a área principal (sessão iniciada como no RF02)
   else código incorreto, inexistente ou expirado
     Svc --> Ctrl : IllegalArgumentException
@@ -105,20 +110,22 @@ group Reenviar o código
   activate Ctrl
   Ctrl -> Svc : resendVerification(dto)
   activate Svc
-  Svc -> Repo : findByEmailForUpdate(email)
+  Svc -> Repo : findByEmailForUpdate(dto.getEmail().trim().toLowerCase())
   Repo --> Svc : Optional<User>
-  Svc -> Svc : generateCode(hashAnterior)
-  Svc -> Enc : encode(código de 6 dígitos)
+  Svc -> Svc : generateCode(user != null && !user.isEmailVerified() ? user.getVerificationToken() : null)
+  Svc -> Enc : encode(newCode)
   Enc --> Svc : hash BCrypt
   opt a conta existe e ainda não foi verificada
-    Svc -> Repo : save(User com novo código e nova validade)
-    Svc -> Mail : sendVerificationEmail(email, nome, código, validade)
-    Svc -> AuditRepo : save(AuditLog VERIFICATION_RESENT)
+    note right of Svc : substitui o hash do código e renova a validade de 5 minutos
+    Svc -> Repo : save(user)
+    Svc -> Mail : sendVerificationEmail(user.getEmail(), user.getName(), newCode, user.getVerificationTokenExpiresAt())
+    Svc -> AuditRepo : save(new AuditLog(user, "VERIFICATION_RESENT", details))
   end
   Svc --> Ctrl : CodeDeliveryResultDTO
   deactivate Svc
   opt e-mail agendado (conta pendente)
-    Mail ->> Deliv : sendEmail(destinatário, assunto, texto, código, validade) após o commit
+    Mail ->> Deliv : sendEmail(recipient, email, code, expiresAt)
+    note right of Deliv : após o commit; email contém HTML e texto
   end
   Ctrl --> Tela : 200 {success: true, message} (igual para qualquer e-mail)
   deactivate Ctrl

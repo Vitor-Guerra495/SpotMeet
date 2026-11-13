@@ -22,16 +22,18 @@ participant ":OrganizationMemberRepository" as MemRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom nome, chave e ID da organização; não é uma variável local.
 
-U -> Tela : abrir a aba "Criar", preencher "Nome da organização" e "Chave de acesso" e tocar em "Criar organização"
+U -> Tela : abrir a aba "Criar", preencher "Nome da organização" e "Chave de acesso",\nmanter ou desmarcar "Mostrar na lista de organizações" e tocar em "Criar organização"
 note over Tela : validateOrganizationName e validateAccessKey (organizationForms) antes do envio
 
 alt nome ou chave inválidos no aplicativo
   Tela --> U : exibe a mensagem de erro sob o campo (nada é enviado)
 else campos válidos
-  Tela -> Filtro : POST /api/organizations (OrganizationRequestDTO)
+  Tela -> Filtro : POST /api/organizations (OrganizationRequestDTO com name, accessKey e listed)
   alt corpo viola @Valid (nome em branco ou acima de 255 caracteres, chave fora do padrão, CNPJ acima de 255)
-    Filtro -> Handler : MethodArgumentNotValidException
+    note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+    note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
     note right of Handler : lançada pelo Spring MVC ao validar o corpo, antes de chamar o controller
     Handler --> Tela : 400 {message, errors}
     Tela --> U : exibe a mensagem sob o campo correspondente
@@ -45,21 +47,23 @@ else campos válidos
     UserRepo --> Svc : Optional<User>
     Svc -> OrgRepo : lockForUniquenessCheck()
     OrgRepo --> Svc : void
-    Svc -> Svc : checkAvailability(nome, chave, cnpj, null)
-    Svc -> OrgRepo : existsByNormalizedName(nome, espaços, null)
+    Svc -> Svc : checkAvailability(cleanName, cleanKey, cleanCnpj, null)
+    Svc -> OrgRepo : existsByNormalizedName(name, ValidationPatterns.ORGANIZATION_WHITESPACE, excludedId)
     OrgRepo --> Svc : boolean
-    Svc -> OrgRepo : existsByNormalizedAccessKey(chave, espaços, null)
+    Svc -> OrgRepo : existsByNormalizedAccessKey(accessKey, ValidationPatterns.ORGANIZATION_WHITESPACE, excludedId)
     OrgRepo --> Svc : boolean
+    note right of Svc : name, accessKey, cnpj e excludedId são os parâmetros\nrecebidos por checkAvailability; excludedId é nulo no cadastro
     opt CNPJ informado
-      Svc -> OrgRepo : existsByCnpjExcludingId(cnpj, null)
+      Svc -> OrgRepo : existsByCnpjExcludingId(cnpj, excludedId)
       OrgRepo --> Svc : boolean
     end
     alt nenhuma consulta encontrou conflito
-      Svc -> OrgRepo : save(Organization com approved=false e status "PENDING")
-      OrgRepo --> Svc : Organization
-      Svc -> MemRepo : save(OrganizationMember com role ORG_OWNER)
+      note right of Svc : org recebe approved = false, status PENDING e listed\n(verdadeiro quando não informado); membership recebe papel ORG_OWNER e aponta para o dono
+      Svc -> OrgRepo : save(org)
+      OrgRepo --> Svc : Organization saved
+      Svc -> MemRepo : save(membership)
       MemRepo --> Svc : OrganizationMember
-      Svc -> AuditRepo : save(AuditLog "ORGANIZATION_CREATED")
+      Svc -> AuditRepo : save(new AuditLog(owner, "ORGANIZATION_CREATED", details))
       AuditRepo --> Svc : AuditLog
       Svc --> Ctrl : OrganizationResponseDTO
       Ctrl --> Tela : 201 OrganizationResponseDTO
@@ -73,4 +77,5 @@ else campos válidos
     deactivate Ctrl
   end
 end
+note over Svc : As validações são sequenciais: a primeira falha encerra a operação.\nAs chamadas seguintes só ocorrem se as anteriores forem aprovadas.
 @enduml

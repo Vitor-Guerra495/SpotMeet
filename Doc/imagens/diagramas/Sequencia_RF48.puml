@@ -1,0 +1,86 @@
+@startuml Sequencia_RF48
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF48 (Consultar a Ajuda)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":SettingsScreen" as Tela
+participant ":HelpCenter" as Ajuda
+participant ":helpTopics" as Topicos
+end box
+note over Ajuda, Topicos : a ajuda não consulta o servidor: o texto dos 23 tópicos está nas constantes\nHELP_TOPICS, PROFILE_LABELS e PROFILE_HINTS do módulo helpTopics, sem imagens;\no mesmo módulo gera o documento Doc/06-manual-de-uso.md
+
+group Consultar os tópicos por perfil
+  U -> Tela : tocar em "Ajuda", na seção "REUNIÕES E AJUDA" de "Ajustes"
+  Tela -> Tela : changeSection('help')
+  Tela -> Tela : switchSection(next)
+  Tela -> Ajuda : HelpCenter({ topicId: helpTopic, onOpenTopic: setHelpTopic, query: helpQuery, onQuery: setHelpQuery, openProfile: helpProfile, onOpenProfile: setHelpProfile })
+  note right of Tela : título "Ajuda", subtítulo "Manual de utilização do SpotMeet."\ne seta "Voltar a Ajustes"; helpTopic nulo
+  note right of Ajuda : estado inicial: query vazia e openProfile igual a all ("Primeiros Passos" aberto);\ncada cartão conta os tópicos do perfil em HELP_TOPICS
+  Ajuda --> U : campo "BUSCAR UM TÓPICO" e os cartões "Primeiros Passos" (6 tópicos · Todos),\n"Membro" (5 · Seu perfil), "Presidente da comissão" (5 · Quem preside uma comissão),\n"Dono e vice-líder da organização" (3 · Quem lidera uma organização)\ne "Administrador do sistema" (4 · Equipe do SpotMeet)
+  U -> Ajuda : tocar no cartão de um perfil
+  Ajuda -> Tela : onOpenProfile(expanded ? null : profile)
+  Ajuda -> Ajuda : topicRow(item)
+  Ajuda --> U : títulos dos tópicos do perfil; o cartão aberto antes é fechado
+end
+
+group Buscar um tópico
+  U -> Ajuda : digitar no campo "Buscar um tópico" (por exemplo, "ata")
+  Ajuda -> Tela : onQuery(text)
+  Ajuda -> Topicos : searchTopics(query)
+  activate Topicos
+  Topicos -> Topicos : fold(query)
+  note right of Topicos : fold tira os acentos (normalize NFD) e passa a minúsculas;\nas palavras são separadas pelos espaços; texto vazio devolve a lista vazia
+  loop para cada tópico de HELP_TOPICS
+    Topicos -> Topicos : fold([topic.title, topic.summary, ...topic.steps, topic.note?.title ?? '', topic.note?.text ?? ''].join(' '))
+    note right of Topicos : o tópico entra quando cada palavra digitada é o início de uma palavra\ndo título, do resumo, dos passos ou do destaque ("ata" não encontra "data");\nos relacionados não entram na busca
+  end
+  Topicos --> Ajuda : HelpTopic[]
+  deactivate Topicos
+  alt algum tópico encontrado
+    Ajuda -> Ajuda : topicRow(item, true)
+    Ajuda --> U : "1 tópico encontrado." ou "N tópicos encontrados.", com o título e o perfil de cada tópico
+  else nenhum tópico
+    Ajuda --> U : "Nenhum tópico encontrado.", "Tente outra palavra, como ata, convite ou votação."\ne o botão "Limpar Busca"
+  end
+  opt limpar a busca
+    U -> Ajuda : tocar no "x" do campo ("Limpar busca") ou em "Limpar Busca"
+    Ajuda -> Tela : onQuery('')
+    Ajuda --> U : volta aos cartões dos perfis
+  end
+end
+
+group Abrir um tópico e os relacionados
+  U -> Ajuda : tocar em um tópico (na lista de um perfil, nos resultados ou em "VEJA TAMBÉM")
+  Ajuda -> Tela : onOpenTopic(topic.id)
+  note right of Tela : onOpenTopic é o setHelpTopic da tela; a chave da rolagem muda com o tópico\ne a página é montada de novo, do topo
+  Tela -> Ajuda : HelpCenter({ topicId: helpTopic, onOpenTopic: setHelpTopic, query: helpQuery, onQuery: setHelpQuery, openProfile: helpProfile, onOpenProfile: setHelpProfile })
+  Ajuda --> U : título, perfil ("Todos" nos Primeiros Passos), resumo, "PASSO A PASSO" numerado,\ndestaque (quando há) e "VEJA TAMBÉM" com dois tópicos relacionados
+  note right of Tela : com o tópico aberto, a seta passa a "Voltar à Ajuda"
+  alt tocar em um tópico de "VEJA TAMBÉM"
+    U -> Ajuda : tocar no tópico relacionado
+    Ajuda -> Tela : onOpenTopic(topic.id)
+    Tela -> Ajuda : HelpCenter({ topicId: helpTopic, onOpenTopic: setHelpTopic, query: helpQuery, onQuery: setHelpQuery, openProfile: helpProfile, onOpenProfile: setHelpProfile })
+    Ajuda --> U : página do tópico relacionado
+  else voltar à lista
+    U -> Tela : tocar em "Voltar à Ajuda" ou no botão voltar do celular
+    note right of Tela : o botão do celular chega pelo BackHandler, registrado ao ganhar o foco
+    Tela -> Tela : setHelpTopic(null)
+    Tela -> Ajuda : HelpCenter({ topicId: helpTopic, onOpenTopic: setHelpTopic, query: helpQuery, onQuery: setHelpQuery, openProfile: helpProfile, onOpenProfile: setHelpProfile })
+    Ajuda --> U : resultados ou cartões dos perfis, com a busca e o perfil aberto preservados
+  end
+  opt sair da Ajuda
+    U -> Tela : tocar em "Voltar a Ajustes" ou no botão voltar do celular, sem tópico aberto
+    Tela -> Tela : changeSection('menu')
+    note right of Tela : switchSection limpa helpQuery e repõe helpProfile = all.\nTrocar de aba fecha o tópico e retorna ao menu, mas preserva busca e perfil.
+    Tela --> U : menu de Ajustes
+  end
+end
+@enduml

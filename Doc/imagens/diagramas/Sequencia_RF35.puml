@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(integrante ou líder)" as U
@@ -18,13 +19,15 @@ participant ":JwtAuthFilter" as Filtro
 participant ":AttendanceListController" as Ctrl
 participant ":AttendanceListService" as Svc
 participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
+participant ":AttendanceListDTO" as DTO
 participant ":CommitteeService" as ComSvc
 participant ":CommitteeMemberRepository" as CmRepo
 participant ":MeetingParticipantRepository" as PartRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
 
-U -> Tela : abrir a reunião com lista gerada e tocar em "Ver lista"
+U -> Tela : abrir a reunião com lista gerada e tocar em "Lista de presença" no cartão "Presença"\nou no cartão de "Acontecendo agora"
 Tela -> Filtro : GET /api/meetings/{meetingId}/attendance-list
 Filtro -> Ctrl : get(meetingId, auth)
 Ctrl -> Svc : get(meetingId, email)
@@ -33,33 +36,41 @@ Svc -> Acc : findMeeting(meetingId)
 Acc --> Svc : Meeting
 Svc -> Acc : findUser(email)
 Acc --> Svc : User
-Svc -> Acc : requireViewer(user, committee)
-Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+Svc -> Acc : requireViewer(user, meeting.getCommittee())
+Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+note right of Acc : committee é o parâmetro recebido por requireViewer
 CmRepo --> Acc : CommitteeMember
 opt o usuário não é integrante ativo
-  Acc -> ComSvc : requireOrganizationLeader(user, organizationId)
+  Acc -> ComSvc : requireOrganizationLeader(user, committee.getOrganization().getId())
   ComSvc --> Acc : void ou SecurityException
 end
 Acc --> Svc : void
-Svc -> Svc : attendanceListGeneratedAt deve estar preenchido
+Svc -> Meeting : getAttendanceListGeneratedAt()
+Meeting --> Svc : LocalDateTime ou null
 alt integrante ativo ou líder, e lista já gerada
   Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
   PartRepo --> Svc : List<MeetingParticipant>
-  Svc -> Svc : AttendanceListDTO.from(meeting, participants, now)
+  Svc -> DTO : from(meeting, participants, LocalDateTime.now())
+  note right of DTO : participants representa o parâmetro da fábrica estática from,\nrecebendo a consulta anterior diretamente; não é uma variável local de get
+  DTO --> Svc : AttendanceListDTO
   Svc --> Ctrl : AttendanceListDTO
   Ctrl --> Tela : 200 AttendanceListDTO
-  Tela -> Lista : exibir a lista (list)
+  Tela -> Tela : setAttendanceList(list)
+  Tela -> Tela : setView('list')
+  note right of Tela : renderiza AttendanceListView com list
   Lista --> U : "Lista de presença": presentes, ausentes, entrada, saída, "registrado por" e tempo na reunião
 else sem permissão, ou lista ainda não gerada
-  Svc --> Ctrl : SecurityException ou IllegalStateException
+  Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
   Ctrl --> Handler : exceção propagada
   Handler --> Tela : 403 ou 409 {message}
   Tela --> U : exibe a mensagem de erro
 end
 deactivate Svc
-group Lista aberta depois de uma nova entrada ou saída
-  note over Tela : a atualização automática (a cada 10 s) recarrega o detalhe da reunião;\numa entrada ou saída registrada depois da geração deixa attendanceListGeneratedAt vazio
-  Tela -> Tela : detalhe sem lista gerada enquanto a lista está aberta
+group Lista aberta depois de uma mudança nos registros de presença
+  note over Tela : a atualização automática (a cada 10 s) recarrega o detalhe;\nse attendanceListGeneratedAt vier nulo enquanto a lista está aberta, fecha a lista
+  Tela -> Tela : setAttendanceList(null)
+  Tela -> Tela : setView('detail')
   Tela --> U : volta ao detalhe com "A presença mudou depois que a lista foi gerada. A lista precisa ser gerada de novo."
 end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
 @enduml

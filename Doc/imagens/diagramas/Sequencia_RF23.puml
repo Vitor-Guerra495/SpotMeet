@@ -25,6 +25,7 @@ participant ":CommitteeRepository" as ComRepo
 participant ":OrganizationMember\nRepository" as OmRepo
 participant ":Organization\nRepository" as OrgRepo
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom o administrador preservado e o motivo do reset; não é uma variável local.
 
 A -> Tela : tocar na aba "Controles" e em "Executar Reset Total do Sistema"
 Tela --> A : abre a janela "Confirmar reset total" (campos "Confirmação" e "Motivo (opcional)")
@@ -40,7 +41,8 @@ else texto correto
   Ctrl -> Svc : resetSystem(dto, email)
   activate Svc
   note over Svc : transação única
-  Svc -> UserRepo : findByEmailForUpdate(email)
+  Svc -> Svc : validateSysAdmin(executorEmail, true)
+  Svc -> UserRepo : findByEmailForUpdate(executorEmail)
   UserRepo --> Svc : Optional<User> (linha bloqueada)
   alt confirmation diferente de CONFIRM_FULL_RESET
     Svc --> Ctrl : IllegalArgumentException
@@ -63,9 +65,10 @@ else texto correto
     OrgRepo --> Svc : void
     Svc -> UserRepo : deleteAllExceptAdmin(adminId)
     UserRepo --> Svc : void
-    Svc -> UserRepo : save(User com tokensValidAfter = agora)
+    note right of Svc : executor recebe tokensValidAfter atual; invalida os JWT anteriores do administrador
+    Svc -> UserRepo : save(executor)
     UserRepo --> Svc : User
-    Svc -> AuditRepo : save(AuditLog ADMIN_SYSTEM_FULL_RESET)
+    Svc -> AuditRepo : save(new AuditLog(executor, "ADMIN_SYSTEM_FULL_RESET", details))
     AuditRepo --> Svc : AuditLog
     alt reset concluído
       Svc --> Ctrl : Map {success, message, adminPreserved, reason, timestamp}

@@ -6,15 +6,18 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
 participant ":BiometricSettings" as Cfg
 participant ":BiometricContext" as Ctx
+participant ":AuthContext" as Auth
 participant ":biometricSession" as Sess
 participant ":LocalAuthentication" as Local
 participant ":SecureStore" as Store
+participant ":AsyncStorage" as Async
 end box
 box "API (backend)" #F6FFF4
 participant ":JwtAuthFilter" as Filtro
@@ -22,80 +25,108 @@ participant ":UserController" as Ctrl
 participant ":UserService" as Svc
 participant ":UserRepository" as Repo
 end box
+note over Sess, Local : options representa simbolicamente o único objeto recebido por authenticateAsync,\nnão uma variável local. No helper, disableDeviceFallback = enabling,\nfallbackLabel vazio ao habilitar e "Usar código do aparelho" nos demais casos;\nbiometricsSecurityLevel = "strong", cancelLabel = "Cancelar" e textos do diálogo conforme enabling.
+note over Sess, Store : saveBiometricSession exige session, config e isCurrent.\nO token fica só no SecureStore; o AsyncStorage recebe servidor, prazo e schema, sem token.
 
 group Habilitar o bloqueio biométrico
   U -> Cfg : tocar na chave "Bloqueio biométrico" (Desligado)
   Cfg -> Ctx : enable()
   Ctx -> Sess : getBiometricAvailability()
+  note right of Sess : fora de Android e iOS, retorna indisponível;\nas verificações seguintes param no primeiro impedimento
   Sess -> Store : isAvailableAsync()
-  Sess -> Local : hasHardwareAsync(), isEnrolledAsync() e getEnrolledLevelAsync()
+  Sess -> Local : hasHardwareAsync()
+  Sess -> Local : isEnrolledAsync()
+  opt Android
+    Sess -> Local : getEnrolledLevelAsync()
+  end
+  opt iOS no Expo Go
+    Sess -> Local : supportedAuthenticationTypesAsync()
+    note right of Sess : Face ID precisa de build própria; não está disponível no Expo Go
+  end
   Sess --> Ctx : BiometricAvailability
-  alt aparelho sem biometria forte cadastrada
+  alt aparelho indisponível ou sem biometria compatível cadastrada
     Ctx --> Cfg : error (mensagem sobre o que falta no aparelho)
     Cfg --> U : exibe a mensagem; a biometria permanece desligada
   else biometria disponível
     Ctx -> Sess : authenticateBiometricDevice(true)
-    Sess -> Local : authenticateAsync(sem PIN do aparelho)
-    Local --> U : solicita a biometria
+    Sess -> Local : authenticateAsync(options)
+    Local --> U : solicita biometria forte, sem fallback para o PIN
     U --> Local : confirma a biometria
-    Local --> Sess : resultado
+    Local --> Sess : LocalAuthenticationResult
     Sess --> Ctx : boolean
     alt biometria não confirmada
       Ctx --> Cfg : error ("Autenticação cancelada ou não confirmada...")
     else biometria confirmada
+      Ctx -> Ctx : confirmSession(session, operation)
       Ctx -> Filtro : GET /api/users/me (Authorization: Bearer token, prazo de 10 s)
-      Filtro -> Ctrl : getMyProfile(auth)
+      Filtro -> Ctrl : getMyProfile(authentication)
       Ctrl -> Svc : getMyProfile(email)
       Svc -> Repo : findByEmail(email)
       Repo --> Svc : User
       Svc --> Ctrl : UserProfileResponseDTO
       Ctrl --> Ctx : 200 UserProfileResponseDTO
-      Ctx -> Ctx : confirmSession(): confere id, nome, e-mail e perfil
-      Ctx -> Sess : saveBiometricSession(session, config)
-      Sess -> Store : setItemAsync(token, id do usuário e servidor)
-      Sess --> Ctx : true
-      Ctx --> Cfg : enabled = true
-      Cfg --> U : chave "Habilitado" e as opções de prazo
+      note right of Ctx : confere ID, nome, e-mail e papel; 401, 403 ou 404 encerra a sessão.\nErro de conexão não habilita a biometria e mantém o login atual.
+      opt perfil confirmado e operação ainda atual
+        Ctx -> Sess : saveBiometricSession(session, next, () => current(operation))
+        Sess -> Async : removeItem(CONFIG_KEY)
+        Sess -> Store : setItemAsync(SESSION_KEY, JSON.stringify({ schema: 1, token: session.token, userId: session.userId, apiBaseUrl: session.apiBaseUrl }), STORE_OPTIONS)
+        Sess -> Async : setItem(CONFIG_KEY, JSON.stringify({ schema: 1, apiBaseUrl: config.apiBaseUrl, delay: config.delay }))
+        Sess --> Ctx : true
+        Ctx --> Cfg : enabled = true
+        Cfg --> U : chave "Habilitado" e as opções de prazo
+      end
     end
+  end
+  opt gravação não concluída
+    Ctx -> Sess : clearBiometricSession()
   end
 end
 
 group Definir o prazo do bloqueio
   U -> Cfg : escolher "Imediatamente", "1 minuto", "5 minutos", "1 hora", "3 horas" ou "24 horas"
   Cfg -> Ctx : setDelay(delay)
-  Ctx -> Sess : saveBiometricSession(session, config com o novo prazo)
+  Ctx -> Sess : saveBiometricSession(session, next, () => current(operation))
+  note right of Ctx : next contém apiBaseUrl e o novo delay; a callback evita persistir operação superada
   Sess --> Ctx : true
   Ctx --> Cfg : delay atualizado
   Cfg --> U : opção marcada (a chave mantém o interruptor durante a gravação)
-  note over Cfg, Ctx : o prazo vale com o aplicativo em segundo plano;\nse o aplicativo for fechado, o desbloqueio é sempre pedido
+  note over Cfg, Ctx : o prazo vale com o aplicativo em segundo plano;\nse o aplicativo for fechado, o desbloqueio é sempre pedido.\nAo voltar depois do prazo, a tela "SpotMeet bloqueado" cobre as telas abertas,\nsem desmontá-las; ao desbloquear, a pessoa continua onde estava (RF02)
 end
 
 group Religar depois da troca de senha (RF14)
   note over Ctx : antes do logout da troca de senha, keepForPasswordChange()\nguardou a preferência (habilitada e prazo, sem token)
-  U -> Ctx : entrar de novo com a nova senha (evento signIn)
+  note over U, Auth : o usuário conclui o login com a nova senha (RF02);\nAuthContext.signIn publica o evento de sessão.
+  Auth -> Ctx : onSession(event)
+  note right of Ctx : callback inscrita em AuthContext, com event.reason igual a signIn
+  Ctx -> Sess : clearBiometricSession()
   Ctx -> Sess : takeBiometricRearm()
-  Sess --> Ctx : BiometricRearm (mesma conta e servidor)
-  Ctx -> Ctx : enable() com o prazo restaurado
-  Ctx -> Sess : authenticateBiometricDevice(true)
-  Sess -> Local : authenticateAsync(sem PIN do aparelho)
-  Local --> U : solicita a biometria
-  U --> Local : confirma a biometria
-  Local --> Sess : resultado
-  Sess --> Ctx : boolean
-  alt biometria confirmada
-    Ctx -> Filtro : GET /api/users/me (Authorization: Bearer novo token, prazo de 10 s)
-    Filtro -> Ctrl : getMyProfile(auth)
-    Ctrl -> Svc : getMyProfile(email)
-    Svc -> Repo : findByEmail(email)
-    Repo --> Svc : User
-    Svc --> Ctrl : UserProfileResponseDTO
-    Ctrl --> Ctx : 200 UserProfileResponseDTO
-    Ctx -> Sess : saveBiometricSession(session, config com o prazo restaurado)
-    Sess -> Store : setItemAsync(token, id do usuário e servidor)
-    Sess --> Ctx : true
-    Ctx --> U : biometria habilitada de novo, sem o convite
-  else biometria não confirmada
-    Ctx --> U : convite "Deseja habilitar a biometria?" com a mensagem do erro
+  Sess --> Ctx : BiometricRearm ou null
+  opt marcador da mesma conta e servidor
+    note right of Ctx : restaura o delay e o efeito chama enable(),\nque repete as verificações de disponibilidade do grupo anterior
+    Ctx -> Ctx : enable()
+    Ctx -> Sess : authenticateBiometricDevice(true)
+    Sess -> Local : authenticateAsync(options)
+    Local --> U : solicita a biometria, sem fallback para o PIN
+    U --> Local : confirma a biometria
+    Local --> Sess : LocalAuthenticationResult
+    Sess --> Ctx : boolean
+    alt biometria e sessão confirmadas
+      Ctx -> Ctx : confirmSession(session, operation)
+      Ctx -> Filtro : GET /api/users/me (Authorization: Bearer novo token, prazo de 10 s)
+      Filtro -> Ctrl : getMyProfile(authentication)
+      Ctrl -> Svc : getMyProfile(email)
+      Svc -> Repo : findByEmail(email)
+      Repo --> Svc : User
+      Svc --> Ctrl : UserProfileResponseDTO
+      Ctrl --> Ctx : 200 UserProfileResponseDTO
+      Ctx -> Sess : saveBiometricSession(session, next, () => current(operation))
+      Sess -> Store : setItemAsync(SESSION_KEY, JSON.stringify({ schema: 1, token: session.token, userId: session.userId, apiBaseUrl: session.apiBaseUrl }), STORE_OPTIONS)
+      note right of Sess : o mesmo helper grava a configuração no AsyncStorage, com o prazo restaurado
+      Sess --> Ctx : true
+      Ctx --> U : biometria habilitada de novo, sem o convite
+    else habilitação não concluída
+      Ctx --> U : convite "Deseja habilitar a biometria?" com a mensagem do erro
+    end
   end
 end
 
@@ -103,18 +134,26 @@ group Desabilitar o bloqueio biométrico
   U -> Cfg : tocar na chave "Bloqueio biométrico" (Habilitado)
   Cfg -> Ctx : disable()
   Ctx -> Sess : authenticateBiometricDevice(false)
-  Sess -> Local : authenticateAsync(aceita o PIN do aparelho)
-  Local --> U : solicita a biometria
-  U --> Local : confirma a biometria
-  Local --> Sess : resultado
+  Sess -> Local : authenticateAsync(options)
+  Local --> U : solicita biometria ou PIN do aparelho
+  U --> Local : confirma a autenticação
+  Local --> Sess : LocalAuthenticationResult
   Sess --> Ctx : boolean
-  alt biometria confirmada
+  alt autenticação confirmada
     Ctx -> Sess : clearBiometricSession()
-    Sess -> Store : deleteItemAsync()
-    Sess --> Ctx : true
-    Ctx --> Cfg : enabled = false
-    Cfg --> U : chave "Desligado"; a sessão guardada foi removida do aparelho
-  else biometria não confirmada
+    par remover a configuração
+      Sess -> Async : removeItem(CONFIG_KEY)
+    else remover a sessão segura (Android ou iOS)
+      Sess -> Store : deleteItemAsync(SESSION_KEY, STORE_OPTIONS)
+    end
+    Sess --> Ctx : boolean
+    alt exclusão concluída
+      Ctx --> Cfg : enabled = false
+      Cfg --> U : chave "Desligado"; a sessão guardada foi removida do aparelho
+    else falha na exclusão
+      Ctx --> Cfg : error ("Não foi possível remover a sessão guardada. Tente desabilitar novamente.")
+    end
+  else autenticação não confirmada
     Ctx --> Cfg : error ("A biometria continua habilitada.")
     Cfg --> U : exibe a mensagem; a chave continua "Habilitado"
   end

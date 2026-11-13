@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(presidente da comissão)" as U
@@ -18,15 +19,18 @@ participant ":JwtAuthFilter" as Filtro
 participant ":AttendanceListController" as Ctrl
 participant ":AttendanceListService" as Svc
 participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
+participant ":AttendanceListDTO" as DTO
 participant ":CommitteeMemberRepository" as CmRepo
 participant ":MeetingRepository" as MeetRepo
 participant ":MeetingParticipantRepository" as PartRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
 
-U -> Tela : abrir a reunião em andamento ou encerrada e tocar em "Gerar lista" (ou "Gerar de novo")
-Tela --> U : confirmação "Gerar lista de presença" (a lista usa os registros de agora ...)
+U -> Tela : abrir a reunião em andamento ou encerrada e tocar em "Gerar lista de presença" no cartão "Presença"\n(ou em "Gerar a lista de novo")
+Tela --> U : confirmação "Gerar lista de presença" (a lista usa os registros de agora)
 U -> Tela : confirmar com "Gerar"
 Tela -> Filtro : POST /api/meetings/{meetingId}/attendance-list
 Filtro -> Ctrl : generate(meetingId, auth)
@@ -35,30 +39,39 @@ activate Svc
 Svc -> Acc : findMeeting(meetingId)
 Acc --> Svc : Meeting
 Svc -> Acc : findUser(email)
-Acc --> Svc : User
-Svc -> Acc : requirePresident(president, committee)
-Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+Acc --> Svc : User president
+Svc -> Acc : requirePresident(president, meeting.getCommittee())
+Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+note right of Acc : user e committee são os parâmetros da conferência de vínculo do presidente
 CmRepo --> Acc : CommitteeMember
 Acc --> Svc : void
-Svc -> Svc : statusAt(now) não pode ser CANCELED nem SCHEDULED
+Svc -> Meeting : statusAt(now)
+Meeting --> Svc : MeetingStatus
+note right of Svc : não aceita CANCELED nem SCHEDULED
 alt presidente e reunião em andamento ou encerrada
-  Svc -> MeetRepo : save(Meeting com attendanceListGeneratedAt e attendanceListGeneratedBy)
+  note right of Svc : meeting recebe attendanceListGeneratedAt atual e attendanceListGeneratedBy = president
+  Svc -> MeetRepo : save(meeting)
   Svc -> Acc : audit(president, "MEETING_ATTENDANCE_LIST_GENERATED", meeting, "")
-  Acc -> AuditRepo : save(AuditLog)
+  Acc -> AuditRepo : save(new AuditLog(user, action, details))
   Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
   PartRepo --> Svc : List<MeetingParticipant>
-  Svc -> Svc : AttendanceListDTO.from(meeting, participants, now)
+  Svc -> DTO : from(meeting, participants, now)
+  note right of DTO : participants representa o parâmetro da fábrica estática from,\nrecebendo a consulta anterior diretamente; não é uma variável local de generate
+  DTO --> Svc : AttendanceListDTO
   Svc --> Ctrl : AttendanceListDTO
   Ctrl --> Tela : 200 AttendanceListDTO
   Tela --> U : aviso "Lista de presença gerada."
-  Tela -> Lista : exibir a lista (list)
+  Tela -> Tela : setAttendanceList(list)
+  Tela -> Tela : setView('list')
+  note right of Tela : renderiza AttendanceListView com list; notifica a sincronização de reuniões
   Lista --> U : presentes, ausentes e uma linha por convidado
-  Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+  Tela -> Tela : load()
 else não é presidente, reunião cancelada ou ainda não iniciada
-  Svc --> Ctrl : SecurityException ou IllegalStateException
+  Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
   Ctrl --> Handler : exceção propagada
   Handler --> Tela : 403 ou 409 {message}
   Tela --> U : exibe a mensagem de erro
 end
 deactivate Svc
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
 @enduml

@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 260
 autonumber "<b>0"
 
 actor "Usuário" as U
@@ -24,7 +25,8 @@ participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
 
-note over Tela, Ctrl : Rotas públicas (/api/auth/**): sem JwtAuthFilter.\n@Valid nos DTOs: se falhar, o método do controller não executa\ne GlobalExceptionHandler responde 400 {message, errors}.
+note over Tela, Ctrl : Rotas públicas (/api/auth/**): sem JwtAuthFilter no diagrama.\n@Valid nos DTOs: se falhar, o método do controller não executa\ne GlobalExceptionHandler responde 400 {message, errors}.
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom o e-mail da conta; não é uma variável local.
 
 group Etapa 1: solicitar o código
   U -> Tela : no login, tocar em "Esqueci minha senha", preencher\n"E-mail cadastrado" e tocar em "Enviar Código por E-mail"
@@ -33,23 +35,25 @@ group Etapa 1: solicitar o código
   Ctrl -> Svc : forgotPassword(dto)
   activate Svc
   note over Svc : transação
-  Svc -> Repo : findByEmailForUpdate(email em minúsculas)
+  Svc -> Repo : findByEmailForUpdate(dto.getEmail().trim().toLowerCase())
   Repo --> Svc : Optional<User>
-  Svc -> Svc : generateCode(hashAnterior)
-  Svc -> Enc : encode(código de 6 dígitos)
+  Svc -> Svc : generateCode(user != null ? user.getRecoveryToken() : null)
+  Svc -> Enc : encode(recoveryToken)
   Enc --> Svc : hash BCrypt (custo 12)
   opt a conta existe
-    Svc -> Repo : save(User com recovery_token e recovery_token_expires_at)
+    note right of Svc : user recebe recoveryToken em hash e validade de 5 minutos
+    Svc -> Repo : save(user)
     Repo --> Svc : User
-    Svc -> Mail : sendPasswordRecoveryEmail(email, nome, código, validade)
+    Svc -> Mail : sendPasswordRecoveryEmail(user.getEmail(), user.getName(), recoveryToken, user.getRecoveryTokenExpiresAt())
     Mail --> Svc : void (envio registrado para depois do commit)
-    Svc -> AuditRepo : save(AuditLog PASSWORD_RECOVERY_REQUESTED)
+    Svc -> AuditRepo : save(new AuditLog(user, "PASSWORD_RECOVERY_REQUESTED", details))
     AuditRepo --> Svc : AuditLog
   end
   Svc --> Ctrl : CodeDeliveryResultDTO
   deactivate Svc
   opt a conta existe
-    Mail ->> Entrega : sendEmail(destinatário, assunto, texto, código, validade)
+    Mail ->> Entrega : sendEmail(recipient, email, code, expiresAt)
+    note right of Entrega : email é EmailTemplate.Email, com assunto, HTML e texto
   end
   Ctrl --> Tela : 200 {success: true, message: "Verifique o seu e-mail."}
   deactivate Ctrl
@@ -62,13 +66,15 @@ group Etapa 2: validar o código sem consumi-lo
   activate Ctrl
   Ctrl -> Svc : verifyRecoveryCode(dto)
   activate Svc
-  Svc -> Tent : verify(RECOVERY, email, validação)
-  Tent -> Svc : validação.get() (validateRecoveryToken)
-  Svc -> Repo : findByEmailForUpdate(email)
+  Svc -> Svc : resolveRecoveryToken(dto.getEmail(), dto.getToken())
+  Svc -> Tent : verify(AuthenticationAttempts.Purpose.RECOVERY, email, verification)
+  note over Tent, Svc : Antes de executar verification, begin recusa a pausa já vigente com\nTooManyAttemptsException (429 e Retry-After), sem consultar matches.\nFora da pausa, verification representa o Supplier<T> da assinatura de verify:\nexecuta validateRecoveryToken(email, token), compara o hash e confere a expiração
+  Svc -> Svc : validateRecoveryToken(email, token)
+  Svc -> Repo : findByEmailForUpdate(email.trim().toLowerCase(Locale.ROOT))
   Repo --> Svc : Optional<User>
-  Svc -> Enc : matches(código, recovery_token)
+  Svc -> Enc : matches(code, hash)
   Enc --> Svc : boolean
-  Svc --> Tent : User, ou IllegalArgumentException\n(código incorreto, expirado ou conta inexistente)
+  note right of Enc : code e hash são parâmetros do helper matchesCode
   alt código correto e dentro dos 5 minutos
     Tent --> Svc : User
     Svc --> Ctrl : "Código validado. Defina a nova senha."
@@ -97,21 +103,23 @@ group Etapa 3: definir a nova senha
   Ctrl -> Svc : resetPassword(dto)
   activate Svc
   note over Svc : transação
-  Svc -> Tent : verify(RECOVERY, email, validação)
-  note right of Tent : mesma validação da Etapa 2 (findByEmailForUpdate, matches e expiração).\nA décima falha também resulta em TooManyAttemptsException e 429, como na Etapa 2
+  Svc -> Svc : resolveRecoveryToken(dto.getEmail(), dto.getToken())
+  Svc -> Tent : verify(AuthenticationAttempts.Purpose.RECOVERY, email, verification)
+  note right of Tent : mesmo Supplier da Etapa 2: busca a conta, compara o código e verifica a validade.\nA décima falha também resulta em TooManyAttemptsException e 429, como na Etapa 2
   Tent --> Svc : User, IllegalArgumentException ou TooManyAttemptsException
   alt código válido
-    Svc -> Enc : encode(novaSenha)
+    Svc -> Enc : encode(dto.getNewPassword())
     Enc --> Svc : hash BCrypt (custo 12)
-    Svc -> Repo : save(User com password, tokens_valid_after,\nrecovery_token nulo e email_verified verdadeiro)
+    note right of Svc : user recebe novo hash, tokensValidAfter atual, emailVerified true\ne recoveryToken e sua validade nulos
+    Svc -> Repo : save(user)
     Repo --> Svc : User
-    Svc -> Mail : sendPasswordChangedEmail(email)
+    Svc -> Mail : sendPasswordChangedEmail(user.getEmail(), user.getName(), EmailService.PasswordOrigin.RECOVERY)
     Mail --> Svc : void (envio registrado para depois do commit)
-    Svc -> AuditRepo : save(AuditLog PASSWORD_RESET)
+    Svc -> AuditRepo : save(new AuditLog(user, "PASSWORD_RESET", details))
     AuditRepo --> Svc : AuditLog
     Svc --> Ctrl : "Senha redefinida com sucesso! ..."
-    deactivate Svc
-    Mail ->> Entrega : sendPasswordChangedEmail(destinatário, assunto, texto)
+    Mail ->> Entrega : sendNotice(recipient, email)
+    note right of Entrega : depois do commit; email contém HTML e texto
     Ctrl --> Tela : 200 {success: true, message}
     Tela --> U : exibe o aviso "Sucesso" e volta ao login com os campos vazios
   else código incorreto ou expirado
@@ -119,6 +127,7 @@ group Etapa 3: definir a nova senha
     Ctrl --> Tela : 400 {success: false, message}
     Tela --> U : exibe a mensagem de erro no formulário
   end
+  deactivate Svc
   deactivate Ctrl
 end
 @enduml

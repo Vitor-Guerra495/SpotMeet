@@ -1,0 +1,96 @@
+@startuml Sequencia_RF45
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF45 (Encerrar Votação)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MeetingPolls" as Votacoes
+participant ":alerts" as Avisos
+participant ":apiRequest" as Api
+participant ":polls" as Util
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingPollController" as Ctrl
+participant ":MeetingPollService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingPollRepository" as PollRepo
+participant ":MeetingPoll" as Votacao
+participant ":Meeting" as Meeting
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+note over Svc, Meeting : sem esta requisição, a votação também fecha no fim da reunião:\nnada é gravado e não há tarefa agendada; a regra é aplicada na leitura (RF46)
+
+U -> Votacoes : na página "Votação" de uma votação aberta, tocar em "Encerrar Votação"
+Votacoes -> Votacoes : closePoll()
+Votacoes -> Avisos : confirmAction("Encerrar a votação?", message, onConfirm)
+note right of Avisos : message começa por "2 pessoas ainda não votaram." ou "Todos já votaram."\ne termina com "Depois de encerrada, ninguém mais vota e o resultado aparece para todos."
+Avisos --> U : confirmação "Encerrar a votação?", com "Cancelar" e "Confirmar"
+alt tocar em "Cancelar"
+  Avisos --> U : fecha a confirmação; a votação continua aberta
+else tocar em "Confirmar"
+  U -> Avisos : tocar em "Confirmar"
+  Votacoes -> Votacoes : send(path, body, title, message)
+  note right of Votacoes : chamado por onConfirm; body é undefined: a requisição não tem corpo
+  Votacoes -> Api : apiRequest(token, path, "POST", body)
+  Api -> Filtro : POST /api/meetings/{meetingId}/polls/{pollId}/close
+  Filtro -> Ctrl : closePoll(meetingId, pollId, auth)
+  Ctrl -> Svc : close(meetingId, pollId, email)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User president
+  Svc -> Acc : requirePresident(president, meeting.getCommittee())
+  Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+  note right of Acc : user e committee são os parâmetros da conferência de vínculo do presidente
+  CmRepo --> Acc : CommitteeMember
+  Acc --> Svc : void
+  Svc -> PollRepo : findForUpdate(meetingId, pollId)
+  PollRepo --> Svc : MeetingPoll (linha bloqueada)
+  note right of PollRepo : um voto enviado ao mesmo tempo é gravado antes\nou recusado depois com "Esta votação já foi encerrada."
+  Svc -> Votacao : isClosedAt(now)
+  Votacao -> Meeting : statusAt(now)
+  Meeting --> Votacao : MeetingStatus
+  Votacao --> Svc : boolean
+  alt presidente e votação aberta
+    note right of Svc : poll recebe closedAt atual e closedBy = president
+    Svc -> PollRepo : save(poll)
+    PollRepo --> Svc : MeetingPoll
+    Svc -> Acc : audit(president, "MEETING_POLL_CLOSED", meeting, " | Votação ID: " + pollId)
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
+    Svc -> Svc : view(meeting, president, now)
+    note right of Svc : monta a lista como no RF43; a votação encerrada já traz\ncontagem, votos, quem não votou e o resultado (RF46)
+    Svc --> Ctrl : List<PollResponseDTO>
+    Ctrl --> Api : 200 List<PollResponseDTO>
+    Api --> Votacoes : ApiResult (ok verdadeiro, data)
+    Votacoes -> Util : readPolls(result.data)
+    Util --> Votacoes : Poll[]
+    Votacoes -> Avisos : showAlert("Votação encerrada", "O resultado já aparece para todos.")
+    note right of Votacoes : notifySync("MEETINGS_MUTATED") avisa as outras telas
+    Votacoes -> Tela : onChanged()
+    note right of Tela : onChanged é o método refreshDetail
+    Votacoes --> U : selo "Encerrada", "Encerrada por nome às 14:30." e o resultado (RF46)
+  else não é presidente, votação inexistente ou já encerrada
+    Svc --> Ctrl : SecurityException, IllegalArgumentException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 403 ou 409 {message}
+    Api --> Votacoes : ApiResult (ok falso, error)
+    Votacoes --> U : exibe a mensagem, como "Esta votação já foi encerrada."
+  end
+  deactivate Svc
+end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+note over U : confirmAction usa requestConfirmation do módulo utils/confirmation.\nConfirmationHost apresenta o pedido e executa o callback onConfirm após a confirmação.
+@enduml

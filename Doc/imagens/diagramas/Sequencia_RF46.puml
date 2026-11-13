@@ -1,0 +1,134 @@
+@startuml Sequencia_RF46
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF46 (Consultar Resultado da Votação)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(integrante ativo ou líder)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MeetingPolls" as Votacoes
+participant ":apiRequest" as Api
+participant ":polls" as Util
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingPollController" as Ctrl
+participant ":MeetingPollService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingPollRepository" as PollRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":PollVoteRepository" as VoteRepo
+participant ":PollResponseDTO" as DTO
+participant ":MeetingPoll" as Votacao
+participant ":Meeting" as Meeting
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Consultar as votações da reunião
+  U -> Tela : abrir o detalhe de uma reunião em andamento ou encerrada
+  Tela -> Tela : openDetail(meeting)
+  Tela -> Tela : loadDetail(meetingId)
+  note right of Tela : o detalhe é recarregado a cada 10 segundos (load, useLiveSync) e depois\nde qualquer mudança em reuniões; cada novo detalhe dispara a leitura das votações
+  Tela -> Votacoes : exibir o cartão "Votações" (page = card)
+  note right of Votacoes : só com a reunião IN_PROGRESS ou ENDED;\nem reunião agendada ou cancelada, o componente não aparece
+  Votacoes -> Api : apiRequest(token, path)
+  Api -> Filtro : GET /api/meetings/{meetingId}/polls
+  Filtro -> Ctrl : listPolls(meetingId, auth)
+  Ctrl -> Svc : list(meetingId, email)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User user
+  Svc -> Acc : requireViewer(user, meeting.getCommittee())
+  Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+  note right of Acc : sem vínculo ativo, aceita o líder da organização (dono, vice-líder ou subdono)
+  CmRepo --> Acc : CommitteeMember
+  Acc --> Svc : void
+  alt integrante ativo ou líder
+    Svc -> Svc : view(meeting, user, now)
+    Svc -> PollRepo : findByMeetingIdOrderByOpenedAtAsc(meeting.getId())
+    PollRepo --> Svc : List<MeetingPoll>
+    note right of PollRepo : sem votação, view devolve a lista vazia
+    Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+    PartRepo --> Svc : List<MeetingParticipant>
+    Svc -> VoteRepo : findByPollIdInOrderByVotedAtAsc(pollIds)
+    note right of VoteRepo : pollIds representa os identificadores das votações da reunião;\nos votos são agrupados por votação
+    VoteRepo --> Svc : List<PollVote>
+    Svc -> Acc : isPresident(viewer, meeting.getCommittee())
+    note right of Acc : viewer é o parâmetro de view, aqui o usuário da consulta
+    Acc --> Svc : boolean
+    loop para cada votação, na ordem de abertura
+      Svc -> DTO : from(poll, participants, pollVotes, viewer.getId(), president, now)
+      activate DTO
+      DTO -> Votacao : isClosedAt(now)
+      Votacao -> Meeting : statusAt(now)
+      Meeting --> Votacao : MeetingStatus
+      Votacao --> DTO : boolean
+      note right of Votacao : encerrada quando closedAt está preenchido (RF45) ou quando a reunião está ENDED ou CANCELED;\nfechamento automático como regra de leitura, sem tarefa agendada
+      opt votação encerrada
+        DTO -> Votacao : closingTime()
+        Votacao --> DTO : LocalDateTime
+        note right of Votacao : closedAt; sem ele, canceledAt se a reunião foi cancelada antes do término;\nsenão, endsAt. closedAutomatically é verdadeiro quando closedAt é nulo
+      end
+      note right of DTO : eligible conta os participantes com entrada; myVote é o voto do usuário;\ncanVote exige votação aberta, nenhum voto do usuário e entrada registrada
+      opt votação encerrada ou usuário presidente
+        note right of DTO : yes, no e abstain contados; votes com nome e justificativa;\nnotVoted com os presentes sem voto (nulos para os demais com a votação aberta)
+      end
+      opt votação encerrada
+        note right of DTO : result: nenhum voto é NO_VOTES; Sim acima de Não é APPROVED;\nNão acima de Sim é REJECTED; Sim igual a Não, com ou sem abstenções, é TIE
+      end
+      DTO --> Svc : PollResponseDTO
+      deactivate DTO
+    end
+    Svc --> Ctrl : List<PollResponseDTO>
+    Ctrl --> Api : 200 List<PollResponseDTO>
+    Api --> Votacoes : ApiResult (ok verdadeiro, data)
+    Votacoes -> Util : readPolls(result.data)
+    Util --> Votacoes : Poll[]
+    Votacoes -> Votacoes : setPolls(polls)
+    opt votação encerrada
+      Votacoes -> Util : resultShort(poll)
+      Util --> Votacoes : string
+    end
+    Votacoes --> U : cartão "Votações": pergunta, selo "Aberta" ou "Encerrada" e resumo,\ncomo "Aprovada por 5 a 2, 1 abstenção", "3 de 5 votaram" (presidente) ou "Seu voto: Sim"
+  else não é integrante ativo nem líder, ou reunião inexistente
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 403 ou 409 {message}
+    Api --> Votacoes : ApiResult (ok falso, error)
+    note right of Votacoes : o cartão mantém os dados anteriores; a atualização seguinte tenta de novo
+  end
+  deactivate Svc
+end
+
+group Abrir a página "Votação"
+  U -> Votacoes : tocar numa votação do cartão "Votações"
+  Votacoes -> Tela : onPage(page)
+  note right of Tela : page é poll-{id}; a página faz a mesma leitura GET /api/meetings/{meetingId}/polls
+  alt votação aberta e usuário presidente
+    Votacoes -> Util : percentages(counts)
+    Util --> Votacoes : number[]
+    Votacoes --> U : "Aberta por você às 14:05. 3 de 5 votaram.", "CONTAGEM AO VIVO"\n(número e porcentagem), "QUEM VOTOU" e "FALTAM VOTAR"
+  else votação aberta e demais usuários
+    Votacoes --> U : só o próprio voto ("Seu voto: Sim") ou as opções para votar (RF44);\na contagem não é exibida
+  else votação encerrada (todos)
+    Votacoes -> Util : resultTitle(poll)
+    Util --> Votacoes : string
+    Votacoes -> Util : resultDetail(poll)
+    Util --> Votacoes : string
+    Votacoes -> Util : percentages(counts)
+    Util --> Votacoes : number[]
+    note right of Util : maior resto: cada porcentagem é arredondada para baixo e os pontos que faltam\npara somar 100 vão às maiores partes decimais (com partes iguais, na ordem Sim, Não e Abstenção);\n5, 2 e 1 votos dão 63, 25 e 12 por cento
+    Votacoes --> U : "Encerrada por nome às 14:30." ou "Encerrada automaticamente às 15:00, no fim da reunião.",\ncartão do resultado, "RESULTADO", "QUEM VOTOU EM QUÊ" e "NÃO VOTARAM"
+  end
+end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+@enduml

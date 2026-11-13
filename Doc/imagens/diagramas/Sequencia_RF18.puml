@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário" as U
@@ -27,32 +28,37 @@ participant ":AuditLogRepository" as AuditRepo
 end box
 
 note over Tela, Filtro : @Valid nos DTOs: se falhar, o método do controller não executa\ne GlobalExceptionHandler responde 400 {message, errors}.\nCada código de 6 dígitos nasce em UserService.generateCode (SecureRandom)\ne é gravado como hash, com PasswordEncoder.encode (BCrypt, custo 12).
+note over Tent : verification representa simbolicamente o Supplier<T> da assinatura de verify,\nque compara o código e confere a validade; não é uma variável local.
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom a etapa e os endereços envolvidos; não é uma variável local.
 
 group Etapa 1: enviar o código ao e-mail atual
-  U -> Tela : em "Ajustes", seção "Perfil", tocar em "Alterar" (campo "E-mail")
+  U -> Tela : em "Ajustes", abrir o Perfil pelo cartão do menu e tocar em "Alterar" (campo "E-mail")
   Tela -> Bio : confirmIdentity()
   note right of Bio : só pede a biometria se o bloqueio estiver habilitado (RF36);\nsem confirmação, exibe "Confirmação necessária" e não abre a folha
   Bio --> Tela : true
+  Tela --> U : abre a folha "Confirme seu e-mail atual" (ETAPA 1 DE 2), em carregamento
   Tela -> Filtro : POST /api/users/me/email-change/request
   Filtro -> Ctrl : requestEmailChange(authentication)
   activate Ctrl
   Ctrl -> Svc : requestEmailChange(email)
   activate Svc
   note over Svc : transação
-  Svc -> Repo : findByEmailForUpdate(email)
+  Svc -> Repo : findByEmailForUpdate(authenticatedEmail)
   Repo --> Svc : Optional<User>
-  Svc -> Repo : save(User com current_email_change_token e validade;\npending_new_email e new_email_token nulos)
+  note right of Svc : user recebe currentEmailChangeToken em hash e validade;\npendingNewEmail, newEmailToken e sua validade ficam nulos
+  Svc -> Repo : save(user)
   Repo --> Svc : User
-  Svc -> Mail : sendCurrentEmailChangeCode(email, nome, código, validade)
+  Svc -> Mail : sendCurrentEmailChangeCode(user.getEmail(), user.getName(), authorizationCode, user.getCurrentEmailChangeTokenExpiresAt())
   Mail --> Svc : void (envio registrado para depois do commit)
-  Svc -> AuditRepo : save(AuditLog LGPD_EMAIL_CHANGE_REQUESTED)
+  Svc -> AuditRepo : save(new AuditLog(user, "LGPD_EMAIL_CHANGE_REQUESTED", details))
   AuditRepo --> Svc : AuditLog
   Svc --> Ctrl : CodeDeliveryResultDTO
   deactivate Svc
-  Mail ->> Entrega : sendEmail(e-mail atual, assunto, texto, código, validade)
+  Mail ->> Entrega : sendEmail(recipient, email, code, expiresAt)
+  note right of Entrega : email é EmailTemplate.Email, com assunto, HTML e texto
   Ctrl --> Tela : 200 {success: true, message, currentEmail}
   deactivate Ctrl
-  Tela --> U : abre a folha "Confirme seu e-mail atual" (ETAPA 1 DE 2)\ne exibe o aviso "Código enviado"
+  Tela --> U : mantém a folha aberta e exibe o aviso "Código enviado"
 end
 
 group Etapa 2: confirmar o e-mail atual e enviar o código ao novo e-mail
@@ -63,23 +69,26 @@ group Etapa 2: confirmar o e-mail atual e enviar o código ao novo e-mail
   Ctrl -> Svc : confirmEmailChange(email, dto)
   activate Svc
   note over Svc : transação
-  Svc -> Repo : findByEmailForUpdate(email)
+  Svc -> Repo : findByEmailForUpdate(authenticatedEmail)
   Repo --> Svc : Optional<User>
-  Svc -> Tent : verify(CURRENT_EMAIL, "user:" + id, verificação)
-  note right of Tent : verificação: PasswordEncoder.matches(currentCode, current_email_change_token)\ne validade de 5 minutos. A décima falha em 15 minutos resulta em\nTooManyAttemptsException, relançada pelo controller, e em 429 (GlobalExceptionHandler).\nNovo e-mail igual ao atual também recusa (IllegalArgumentException, sem contar falha)
+  Svc -> Tent : verify(AuthenticationAttempts.Purpose.CURRENT_EMAIL, "user:" + user.getId(), verification)
+  note right of Tent : compara currentCode com currentEmailChangeToken e confere a validade de 5 minutos.\nA décima falha em 15 minutos resulta em TooManyAttemptsException e 429 (GlobalExceptionHandler).\nNovo e-mail igual ao atual é recusado antes, sem contar falha.
   Tent --> Svc : null, ou IllegalArgumentException (código incorreto ou expirado)
-  alt código correto e novo e-mail livre
-    Svc -> Repo : existsByEmail(novoEmail)
+  opt código correto
+    Svc -> Repo : existsByEmail(newEmail)
     Repo --> Svc : boolean
-    Svc -> Repo : save(User com pending_new_email e new_email_token;\ncurrent_email_change_token nulo)
+  end
+  alt código correto e novo e-mail livre
+    note right of Svc : user recebe pendingNewEmail e newEmailToken em hash;\ncurrentEmailChangeToken e sua validade ficam nulos
+    Svc -> Repo : save(user)
     Repo --> Svc : User
-    Svc -> Mail : sendNewEmailConfirmationCode(novoEmail, nome, código, validade)
+    Svc -> Mail : sendNewEmailConfirmationCode(newEmail, user.getName(), newEmailCode, user.getNewEmailTokenExpiresAt())
     Mail --> Svc : void (envio registrado para depois do commit)
-    Svc -> AuditRepo : save(AuditLog LGPD_EMAIL_CHANGE_STEP1_CONFIRMED)
+    Svc -> AuditRepo : save(new AuditLog(user, "LGPD_EMAIL_CHANGE_STEP1_CONFIRMED", details))
     AuditRepo --> Svc : AuditLog
     Svc --> Ctrl : CodeDeliveryResultDTO
-    deactivate Svc
-    Mail ->> Entrega : sendEmail(novo e-mail, assunto, texto, código, validade)
+    Mail ->> Entrega : sendEmail(recipient, email, code, expiresAt)
+    note right of Entrega : depois do commit; email contém HTML e texto
     Ctrl --> Tela : 200 {success: true, message, newEmail}
     Tela --> U : exibe "Verifique o novo e-mail" (ETAPA 2 DE 2) e o aviso "Código enviado"
   else código incorreto, expirado, ou novo e-mail igual ao atual ou já usado
@@ -87,8 +96,34 @@ group Etapa 2: confirmar o e-mail atual e enviar o código ao novo e-mail
     Ctrl --> Tela : 400 {success: false, message}
     Tela --> U : exibe a mensagem sob "Código do e-mail atual"
   end
+  deactivate Svc
   deactivate Ctrl
-  note over Tela, Svc : Reenvio ao novo e-mail ("Reenviar código para novo e-mail"):\nPOST /api/users/me/email-change/resend-new, UserController.resendNewEmailCode e\nUserService.resendNewEmailCode (findByEmailForUpdate, existsByEmail, save, EmailService.sendNewEmailConfirmationCode\ne AuditLog LGPD_EMAIL_CHANGE_CODE_RESENT), só para o pending_new_email já autorizado.\nSem troca autorizada, lança IllegalArgumentException e responde 400
+end
+
+group Reenviar o código ao novo e-mail já autorizado
+  U -> Tela : tocar em "Reenviar código para novo e-mail"
+  Tela -> Filtro : POST /api/users/me/email-change/resend-new
+  Filtro -> Ctrl : resendNewEmailCode(authentication)
+  Ctrl -> Svc : resendNewEmailCode(email)
+  activate Svc
+  Svc -> Repo : findByEmailForUpdate(authenticatedEmail)
+  Repo --> Svc : Optional<User>
+  Svc -> Repo : existsByEmail(newEmail)
+  Repo --> Svc : boolean
+  alt há pendingNewEmail autorizado, com token e ainda livre
+    note right of Svc : user recebe novo hash e nova validade para newEmailToken
+    Svc -> Repo : save(user)
+    Svc -> Mail : sendNewEmailConfirmationCode(newEmail, user.getName(), newCode, user.getNewEmailTokenExpiresAt())
+    Svc -> AuditRepo : save(new AuditLog(user, "LGPD_EMAIL_CHANGE_CODE_RESENT", details))
+    Svc --> Ctrl : CodeDeliveryResultDTO
+    Mail ->> Entrega : sendEmail(recipient, email, code, expiresAt)
+    note right of Entrega : depois do commit
+    Ctrl --> Tela : 200 {success: true, message, newEmail}
+  else sem troca autorizada ou endereço já cadastrado
+    Svc --> Ctrl : IllegalArgumentException
+    Ctrl --> Tela : 400 {success: false, message}
+  end
+  deactivate Svc
 end
 
 group Etapa 3: confirmar o novo e-mail
@@ -96,29 +131,36 @@ group Etapa 3: confirmar o novo e-mail
   Tela -> Filtro : POST /api/users/me/email-change/complete (CompleteEmailChangeDTO)
   Filtro -> Ctrl : completeEmailChange(dto, authentication, authorization)
   activate Ctrl
-  Ctrl -> Jwt : extractIssuedAt(jwt)
-  Jwt --> Ctrl : Instant
+  Ctrl -> Jwt : extractIssuedAt(authorization.substring(7))
+  Jwt --> Ctrl : Instant issuedAt
+  note right of Ctrl : preserva a emissão do JWT anterior, sem renovar sua barreira de revogação;\nissuedAt nulo ou JWT inválido responde 401
   Ctrl -> Svc : completeEmailChange(email, dto)
   activate Svc
   note over Svc : transação
-  Svc -> Repo : findByEmailForUpdate(email)
+  Svc -> Repo : findByEmailForUpdate(authenticatedEmail)
   Repo --> Svc : Optional<User>
-  Svc -> Tent : verify(NEW_EMAIL, "user:" + id, verificação)
-  note right of Tent : verificação: PasswordEncoder.matches(código, new_email_token) e validade de 5 minutos.\nA décima falha resulta em TooManyAttemptsException e 429, como na Etapa 2
+  Svc -> Tent : verify(AuthenticationAttempts.Purpose.NEW_EMAIL, "user:" + user.getId(), verification)
+  note right of Tent : compara newEmailCode com newEmailToken e confere a validade de 5 minutos.\nA décima falha resulta em TooManyAttemptsException e 429, como na Etapa 2
   Tent --> Svc : null, IllegalArgumentException ou TooManyAttemptsException
-  alt código correto e e-mail ainda livre
-    Svc -> Repo : existsByEmail(pending_new_email)
+  opt código correto
+    Svc -> Repo : existsByEmail(newEmail)
     Repo --> Svc : boolean
-    Svc -> Repo : save(User com o novo email, email_verified verdadeiro\ne colunas temporárias nulas)
-    Repo --> Svc : User
-    Svc -> AuditRepo : save(AuditLog LGPD_EMAIL_CHANGED)
+  end
+  alt código correto e e-mail ainda livre
+    note right of Svc : user recebe o novo email, emailVerified true e campos temporários nulos
+    Svc -> Repo : save(user)
+    Repo --> Svc : User updated
+    Svc -> Mail : sendEmailChangedEmail(oldEmail, updated.getName(), newEmail)
+    note right of Mail : aviso ao endereço anterior, depois do commit
+    Svc -> AuditRepo : save(new AuditLog(updated, "LGPD_EMAIL_CHANGED", details))
     AuditRepo --> Svc : AuditLog
-    Svc --> Ctrl : User
-    deactivate Svc
-    Ctrl -> Jwt : generateToken(novoEmail, role, issuedAt)
+    Svc --> Ctrl : User updatedUser
+    Mail ->> Entrega : sendNotice(recipient, email)
+    note right of Entrega : depois do commit; email contém HTML e texto
+    Ctrl -> Jwt : generateToken(updatedUser.getEmail(), updatedUser.getRole(), issuedAt)
     Jwt --> Ctrl : String (novo JWT)
     Ctrl --> Tela : 200 {success: true, message, newEmail, token}
-    Tela -> Auth : updateSession({token, email})
+    Tela -> Auth : updateSession({ token: data.token, email: data.newEmail })
     Auth --> Tela : void
     Tela --> U : fecha a folha, mostra o novo "E-mail" e exibe o aviso "E-mail atualizado com sucesso."
   else sem troca pendente, código incorreto ou expirado, ou e-mail já usado
@@ -126,6 +168,8 @@ group Etapa 3: confirmar o novo e-mail
     Ctrl --> Tela : 400 {success: false, message}
     Tela --> U : exibe a mensagem sob "Código do novo e-mail"
   end
+  deactivate Svc
   deactivate Ctrl
 end
+note over Svc : As validações são sequenciais: a primeira falha encerra a operação.\nAs chamadas seguintes só ocorrem se as anteriores forem aprovadas.
 @enduml

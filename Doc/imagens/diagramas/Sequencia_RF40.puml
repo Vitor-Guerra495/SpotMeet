@@ -1,0 +1,137 @@
+@startuml Sequencia_RF40
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF40 (Encerrar Aprovação da Ata)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MinutesSection" as Ata
+participant ":apiRequest" as Api
+participant ":minutes" as Min
+participant ":alerts" as Alerts
+participant ":ConfirmationHost" as Conf
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingMinutesController" as Ctrl
+participant ":MeetingMinutesService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":MeetingMinutesRepository" as MinRepo
+participant ":MinutesResponseRepository" as RespRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":MeetingText" as Txt
+participant ":EmailService" as Mail
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+
+group Acompanhar as respostas
+  U -> Ata : tocar em "Acompanhar Aprovação" no cartão "Ata" (Em aprovação)
+  Ata -> Ata : open("minutes-approval")
+  Ata -> Tela : openPage(page)
+  note right of Tela : setView('minutes-approval'): página "Aprovação da ata"
+  Ata -> Min : countText(minutes)
+  Min --> Ata : string
+  Ata --> U : contagem ("2 aprovaram, 1 reprovou, 1 sem resposta."), "Ver Ata" e "RESPOSTAS (N)",\numa linha por presente com "Aprovou", "Reprovou" ou "Sem resposta" e "Motivo: ..."
+  loop a cada 10 segundos, enquanto o detalhe está aberto (useLiveSync)
+    Tela -> Tela : load()
+    Tela -> Tela : loadDetail(meetingId)
+    note right of Tela : o detalhe renovado faz MinutesSection consultar a ata de novo
+    Ata -> Api : apiRequest(token, path)
+    Api -> Filtro : GET /api/meetings/{meetingId}/minutes
+    Filtro -> Ctrl : getMinutes(meetingId, auth)
+    Ctrl -> Svc : get(meetingId, email)
+    note right of Svc : view(meeting, user), como no RF42; answers só vai ao presidente
+    Svc --> Ctrl : MinutesResponseDTO
+    Ctrl --> Api : 200 MinutesResponseDTO
+    Api --> Ata : ApiResult
+    Ata -> Min : readMinutes(data)
+    Min --> Ata : Minutes
+    Ata --> U : respostas novas na lista, sem tocar em nada
+  end
+end
+
+group Encerrar a aprovação
+  U -> Ata : tocar em "Encerrar Aprovação"
+  Ata -> Ata : close()
+  Ata -> Alerts : confirmAction(title, message, onConfirm)
+  note over Alerts, Conf : title "Encerrar a aprovação?"; message "N pessoas ainda não responderam.\nO resultado vale pela maioria de quem respondeu." ou "Todos já responderam. ...";\nsem confirmText, o botão de confirmação é "Confirmar"
+  Conf --> U : diálogo com "Cancelar" e "Confirmar"
+  U -> Conf : tocar em "Confirmar"
+  Conf -> Ata : send(path, "POST", undefined, "Aprovação encerrada", "As pessoas presentes receberam o resultado por e-mail.")
+  note right of Ata : onConfirm chama send; path é /meetings/{meetingId}/minutes/close, sem corpo
+  Ata -> Api : apiRequest(token, path, method, body)
+  Api -> Filtro : POST /api/meetings/{meetingId}/minutes/close
+  Filtro -> Ctrl : close(meetingId, auth)
+  Ctrl -> Svc : close(meetingId, email)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User president
+  Svc -> Acc : requirePresident(president, meeting.getCommittee())
+  Acc --> Svc : void
+  Svc -> MinRepo : findForUpdate(meetingId)
+  MinRepo --> Svc : Optional<MeetingMinutes> (linha bloqueada)
+  alt presidente e ata com status IN_APPROVAL
+    Svc -> RespRepo : findByMinutesIdOrderByRespondedAtAsc(minutes.getId())
+    RespRepo --> Svc : List<MinutesResponse>
+    note right of Svc : approvals = respostas aprovadas; rejections = as demais;\naprovada só quando approvals > rejections (empate ou nenhuma resposta reprova).\nminutes recebe status APPROVED ou REJECTED e closedAt = now
+    Svc -> MinRepo : save(minutes)
+    Svc -> Svc : presentPeople(meeting)
+    Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+    PartRepo --> Svc : List<MeetingParticipant>
+    note right of Svc : present são os participantes com enteredAt;\npending = presentes menos quem escreveu, menos as respostas
+    Svc -> Svc : resultText(approvals, rejections, Math.max(0, pending))
+    note right of Svc : result, por exemplo "2 aprovaram, 1 reprovou, 1 sem resposta."
+    Svc -> Txt : mail(meeting, MeetingService.appLink(meeting.getId()))
+    Txt --> Svc : MeetingText.Mail
+    alt aprovada
+      loop cada person de present
+        Svc -> Mail : sendMinutesApprovedEmail(person.getEmail(), person.getName(), mail, result, now)
+      end
+    else reprovada
+      note right of Svc : reasons reúne nome e motivo de cada reprovação;\nwhy é "Ninguém respondeu.", "Houve empate entre as respostas."\nou "A maioria de quem respondeu reprovou."
+      loop cada person de present
+        Svc -> Acc : isPresident(person, meeting.getCommittee())
+        Acc --> Svc : boolean
+        Svc -> Mail : sendMinutesRejectedEmail(person.getEmail(), person.getName(), mail, result, why, reasons, now, isPresident)
+        note right of Mail : isPresident representa o booleano devolvido pela consulta anterior,\npassado ao parâmetro president de sendMinutesRejectedEmail,\ncom o valor de isPresident: o presidente recebe "O que fazer";\nos demais, "O que acontece agora"
+      end
+    end
+    note right of Mail : e-mails "Ata aprovada: título" ou "Ata reprovada: título" só para quem registrou entrada;\nenvio assíncrono, depois do commit
+    Svc -> Acc : audit(president, "MEETING_MINUTES_APPROVED", meeting, " | Aprovaram: " + approvals + " | Reprovaram: " + rejections)
+    note right of Acc : na reprovação, a ação é MEETING_MINUTES_REJECTED
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
+    Svc -> Svc : view(meeting, president)
+    note right of Svc : monta o MinutesResponseDTO, como no RF42
+    Svc --> Ctrl : MinutesResponseDTO
+    Ctrl --> Api : 200 MinutesResponseDTO
+    Api --> Ata : ApiResult
+    Ata -> Min : readMinutes(data)
+    Min --> Ata : Minutes
+    Ata --> U : aviso "Aprovação encerrada" (As pessoas presentes receberam o resultado por e-mail.)
+    Ata -> Tela : refreshDetail()
+    Ata -> Min : rejectionText(minutes)
+    Min --> Ata : string
+    note right of Min : usado só na reprovação: "Sem respostas, a ata não é aprovada.",\n"Houve empate entre as respostas." ou "A maioria de quem respondeu reprovou."
+    Ata --> U : "Ata aprovada" ("A maioria de quem respondeu aprovou." e "Esta ata não pode mais ser editada.")\nou "Ata reprovada", com o motivo do resultado e "Corrigir e Reenviar" (RF41)
+  else não é presidente ou ata fora de aprovação
+    Svc --> Ctrl : SecurityException ou IllegalStateException ("A ata não está em aprovação.")
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 403 ou 409 {message}
+    Api --> Ata : ApiResult (mensagem do erro)
+    Ata --> U : exibe a mensagem acima do botão
+  end
+  deactivate Svc
+end
+note over U : confirmAction usa requestConfirmation do módulo utils/confirmation.\nConfirmationHost apresenta o pedido e executa o callback onConfirm após a confirmação.
+@enduml

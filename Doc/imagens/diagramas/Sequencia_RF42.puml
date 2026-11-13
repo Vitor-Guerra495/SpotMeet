@@ -1,0 +1,125 @@
+@startuml Sequencia_RF42
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF42 (Consultar Ata)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MinutesSection" as Ata
+participant ":apiRequest" as Api
+participant ":minutes" as Min
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingController" as MCtrl
+participant ":MeetingService" as MSvc
+participant ":MeetingMinutesController" as Ctrl
+participant ":MeetingMinutesService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":MeetingMinutesRepository" as MinRepo
+participant ":MinutesResponseRepository" as RespRepo
+participant ":MinutesResponseDTO" as DTO
+participant ":MeetingResponseDTO" as RDTO
+participant ":GlobalExceptionHandler" as Handler
+end box
+
+group Atas para responder na aba "Reuniões" (a cada 10 s e depois de cada alteração)
+  U -> Tela : abrir a aba "Reuniões"
+  Tela -> Tela : load()
+  Tela -> Filtro : GET /api/meetings/mine
+  Filtro -> MCtrl : listMyMeetings(auth)
+  MCtrl -> MSvc : listMyMeetings(email)
+  note right of MSvc : reuniões em que o usuário é convidado (comissões com vínculo ativo)\ne as das comissões que preside, como no RF28
+  MSvc -> Acc : summaries(ordered, user, now)
+  Acc -> PartRepo : findByMeetingIdIn(ids)
+  PartRepo --> Acc : List<MeetingParticipant>
+  Acc -> MinRepo : findByMeetingIdIn(ids)
+  MinRepo --> Acc : List<MeetingMinutes>
+  Acc -> RespRepo : findByMinutesIdInAndUserId(inApproval, viewer.getId())
+  RespRepo --> Acc : List<MinutesResponse>
+  note right of Acc : inApproval são as atas IN_APPROVAL; toAnswer é verdadeiro quando a ata está em aprovação,\no usuário registrou entrada, não escreveu a ata e ainda não respondeu
+  loop cada reunião m
+    Acc -> RDTO : from(m, participants, viewer.getId(), includeParticipants, now)
+    RDTO --> Acc : MeetingResponseDTO dto
+    Acc -> RDTO : withMinutes(status, toAnswer)
+    RDTO --> Acc : MeetingResponseDTO
+  end
+  Acc --> MSvc : List<MeetingResponseDTO>
+  MSvc --> MCtrl : List<MeetingResponseDTO>
+  MCtrl --> Tela : 200 List<MeetingResponseDTO> (com minutesStatus e minutesToAnswer)
+  Tela --> U : selo "Ata para aprovar" na reunião e o aviso "Você tem 1 convite e 1 ata para responder."\ncom "Ver Pendências" (ou "Ver Ata" e "Ver Atas", sem convites)
+  opt tocar em "Ver Pendências"
+    U -> Tela : tocar em "Ver Pendências"
+    Tela --> U : página "Pendências": "ATAS PARA RESPONDER (N)" ("Toque em uma ata para ler e aprovar ou reprovar.")\ne "CONVITES PARA RESPONDER (N)"
+    U -> Tela : tocar numa ata
+    Tela -> Tela : openMinutes(meeting)
+    note right of Tela : abre o detalhe já na página "Ata da reunião" (RF39)
+  end
+end
+
+group Cartão "Ata" no detalhe da reunião
+  U -> Tela : tocar no cartão de uma reunião não cancelada
+  Tela -> Tela : openDetail(meeting)
+  note right of Tela : o detalhe (GET /api/meetings/{meetingId}, RF28) também passa por\nMeetingAccess.detail e traz minutesStatus e minutesToAnswer;\na folha renderiza MinutesSection com page 'card' (nada, se a reunião foi cancelada)
+  Ata -> Api : apiRequest(token, path)
+  note right of Api : path é /meetings/{meetingId}/minutes;\na consulta se repete a cada atualização do detalhe
+  Api -> Filtro : GET /api/meetings/{meetingId}/minutes
+  Filtro -> Ctrl : getMinutes(meetingId, auth)
+  Ctrl -> Svc : get(meetingId, email)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User user
+  Svc -> Acc : requireViewer(user, meeting.getCommittee())
+  Acc --> Svc : void
+  alt integrante ativo da comissão ou líder da organização
+    Svc -> Svc : view(meeting, user)
+    Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+    PartRepo --> Svc : List<MeetingParticipant>
+    Svc -> MinRepo : findByMeetingId(meeting.getId())
+    MinRepo --> Svc : Optional<MeetingMinutes>
+    opt a reunião tem ata
+      Svc -> RespRepo : findByMinutesIdOrderByRespondedAtAsc(minutes.getId())
+      RespRepo --> Svc : List<MinutesResponse>
+    end
+    Svc -> Acc : isPresident(viewer, meeting.getCommittee())
+    Acc --> Svc : boolean
+    Svc -> DTO : from(meetingId, minutes, participants, responses, viewerId, president)
+    note right of DTO : argumentos com os nomes dos parâmetros de from; president é o valor de isPresident.\npresent: convidados com enteredAt; absent: os demais.\nO texto do rascunho só vai ao presidente; answers só ao presidente;\nquem escreveu não entra na contagem nem responde
+    DTO --> Svc : MinutesResponseDTO
+    Svc --> Ctrl : MinutesResponseDTO
+    Ctrl --> Api : 200 MinutesResponseDTO
+    Api --> Ata : ApiResult
+    Ata -> Min : readMinutes(data)
+    Min --> Ata : Minutes
+    Ata --> U : cartão "Ata" com a situação ("Sem ata", "Rascunho", "Em aprovação", "Aprovada" ou "Reprovada"),\no texto do perfil e a ação ("Ver Ata", "Aprovar ou Reprovar", "Escrever Ata", "Editar Ata",\n"Acompanhar Aprovação" ou "Corrigir e Reenviar")
+  else sem vínculo ativo e não é líder da organização
+    Svc --> Ctrl : SecurityException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 403 {message}
+    Api --> Ata : ApiResult (mensagem do erro)
+    Ata --> U : "Não foi possível carregar a ata." (reunião encerrada)
+  end
+  deactivate Svc
+end
+
+group Ler a ata
+  U -> Ata : tocar em "Ver Ata" no cartão "Ata"
+  Ata -> Ata : open("minutes-read")
+  Ata -> Tela : openPage(page)
+  note right of Tela : setView('minutes-read'): página "Ata da reunião"
+  Ata -> Min : formatMoment(value)
+  Min --> Ata : string
+  note right of Min : "30 de outubro, às 11:20", para "Enviada em" e "Aprovada em"
+  Ata --> U : situação, título, "Comissão ... · escrita por ...", data e horário, "Enviada em ...",\n"ASSUNTOS TRATADOS", "DECISÕES TOMADAS" (numeradas), "OBSERVAÇÕES",\n"PRESENTES (N)" e "AUSENTES (N)"; quem não registrou entrada vê\n"Você não registrou entrada nesta reunião, então só pode ler a ata."
+end
+@enduml

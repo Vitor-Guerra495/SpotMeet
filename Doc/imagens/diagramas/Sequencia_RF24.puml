@@ -25,9 +25,10 @@ participant ":CommitteeMemberRepository" as CmRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom o ID da pessoa e nome da comissão; não é uma variável local.
 
 U -> Org : tocar em "Presidente" (ação "Presidente de <comissão>")
-Org -> Sheet : abrir a folha "Presidente da comissão"
+Org -> Sheet : PresidentSheet({ committee, onClose, onChanged })
 
 group Consultar integrantes ativos
   Sheet -> Filtro : GET /api/committees/{committeeId}/members
@@ -35,14 +36,14 @@ group Consultar integrantes ativos
   Ctrl -> Svc : listActiveMembers(committeeId, email)
   Svc -> ComRepo : findById(committeeId)
   ComRepo --> Svc : Committee
-  Svc -> UserRepo : findByEmail(email)
+  Svc -> UserRepo : findByEmail(userEmail)
   UserRepo --> Svc : User
-  Svc -> CmRepo : existsByUserIdAndCommitteeIdAndStatus(userId, committeeId, ACTIVE)
+  Svc -> CmRepo : existsByUserIdAndCommitteeIdAndStatus(user.getId(), committeeId, CommitteeMembershipStatus.ACTIVE)
   CmRepo --> Svc : boolean
   opt o usuário não é integrante ativo
-    Svc -> Svc : requireOrganizationLeader(user, organizationId)
+    Svc -> Svc : requireOrganizationLeader(user, committee.getOrganization().getId())
   end
-  Svc -> CmRepo : findByCommitteeIdAndStatus(committeeId, ACTIVE)
+  Svc -> CmRepo : findByCommitteeIdAndStatus(committeeId, CommitteeMembershipStatus.ACTIVE)
   CmRepo --> Svc : List<CommitteeMember>
   Svc --> Ctrl : List<CommitteeMemberResponseDTO>
   Ctrl --> Sheet : 200 List<CommitteeMemberResponseDTO>
@@ -57,28 +58,37 @@ group Designar o presidente
   activate Svc
   Svc -> ComRepo : findById(committeeId)
   ComRepo --> Svc : Committee
-  Svc -> UserRepo : findByEmail(email)
+  Svc -> UserRepo : findByEmail(leaderEmail)
   UserRepo --> Svc : User
-  Svc -> OrgRepo : findByIdForUpdate(organizationId)
+  Svc -> OrgRepo : findByIdForUpdate(committee.getOrganization().getId())
   OrgRepo --> Svc : Organization (linha bloqueada)
-  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
-  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  Svc -> Svc : requireOrganizationLeader(leader, committee.getOrganization().getId())
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leader.getId(), organizationId)
   OrgMemRepo --> Svc : OrganizationMember
+  opt liderança validada
+    Svc -> CmRepo : findByUserIdAndCommitteeId(targetUserId, committeeId)
+    CmRepo --> Svc : Optional<CommitteeMember> target
+  end
   alt é dono, vice ou subdono, e o escolhido é integrante ativo
-    Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
-    CmRepo --> Svc : CommitteeMember (ACTIVE)
-    Svc -> CmRepo : findByCommitteeIdAndRole(committeeId, COMMITTEE_ADMIN)
-    CmRepo --> Svc : presidentes atuais
-    loop cada presidente atual
-      Svc -> CmRepo : save(vínculo com role MEMBER)
+    alt target já tem papel COMMITTEE_ADMIN
+      note right of Svc : devolve o vínculo atual, sem gravar nem auditar de novo
+    else outro integrante escolhido
+      Svc -> CmRepo : findByCommitteeIdAndRole(committeeId, CommitteeRole.COMMITTEE_ADMIN)
+      CmRepo --> Svc : List<CommitteeMember>
+      loop cada presidente atual current
+        note right of Svc : current recebe papel MEMBER
+        Svc -> CmRepo : save(current)
+      end
+      note right of Svc : target recebe papel COMMITTEE_ADMIN
+      Svc -> CmRepo : save(target)
+      CmRepo --> Svc : CommitteeMember
+      Svc -> AuditRepo : save(new AuditLog(leader, "COMMITTEE_PRESIDENT_ASSIGNED", details))
     end
-    Svc -> CmRepo : save(vínculo do escolhido com role COMMITTEE_ADMIN)
-    CmRepo --> Svc : CommitteeMember
-    Svc -> AuditRepo : save(AuditLog COMMITTEE_PRESIDENT_ASSIGNED)
     Svc --> Ctrl : CommitteeMemberResponseDTO
     Ctrl --> Sheet : 200 CommitteeMemberResponseDTO
     Sheet --> U : aviso "Presidente definido." e lista atualizada
-    Sheet -> Org : onChanged(): recarrega as comissões ("Presidente: <nome>")
+    Sheet -> Org : onChanged()
+    note right of Org : recarrega as comissões, mostrando "Presidente: <nome>"
   else não é líder, ou o escolhido não é integrante ativo
     Svc --> Ctrl : SecurityException ou IllegalStateException
     Ctrl --> Handler : exceção propagada
@@ -87,4 +97,8 @@ group Designar o presidente
   end
   deactivate Svc
 end
+note over Svc : As validações são sequenciais: a primeira falha encerra a operação.\nAs chamadas seguintes só ocorrem se as anteriores forem aprovadas.
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+note over Svc : requireOrganizationLeader consulta OrganizationRepository.findById\nantes de conferir dono, vice-líder, subdono ou SYSADMIN.
+note over U : confirmAction usa requestConfirmation do módulo utils/confirmation.\nConfirmationHost apresenta o pedido e executa o callback onConfirm após a confirmação.
 @enduml

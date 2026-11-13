@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(presidente da comissão)" as U
@@ -18,61 +19,99 @@ participant ":JwtAuthFilter" as Filtro
 participant ":MeetingController" as Ctrl
 participant ":MeetingService" as Svc
 participant ":MeetingAccess" as Acc
-participant ":CommitteeMemberRepository" as CmRepo
+participant ":Meeting" as Meeting
+participant ":MeetingFileService" as FileSvc
 participant ":MeetingRepository" as MeetRepo
 participant ":MeetingParticipantRepository" as PartRepo
-participant ":AuditLogRepository" as AuditRepo
+participant ":EmailService" as Mail
 participant ":GlobalExceptionHandler" as Handler
 end box
 
-U -> Tela : abrir a reunião agendada e tocar em "Editar reunião"
+U -> Tela : abrir a reunião agendada ou em andamento e tocar em "Editar reunião"
 note right of Tela : o botão só fica ativo depois que o detalhe carregou os participantes
 Tela -> Form : abrir o modal "Editar reunião" com os dados atuais
+note over Form : frequência travada; avisos "Só esta reunião será alterada" (série)\ne "As alterações valem a partir de agora" (em andamento)
 U -> Form : alterar os campos e tocar em "Salvar alterações"
-Form -> Form : valida os campos (mesmas regras do RF25)
+Form -> Form : submit()
 Form -> Tela : onSubmit(payload)
+note right of Form : payload representa o objeto MeetingPayload do callback onSubmit
+note over Tela : um anexo novo é enviado antes, como no RF25
 Tela -> Filtro : PUT /api/meetings/{meetingId} (MeetingRequestDTO)
-Filtro -> Ctrl : updateMeeting(meetingId, dto, auth)
 alt corpo inválido (@Valid)
-  Ctrl --> Handler : MethodArgumentNotValidException
+  note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+  note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
   Handler --> Tela : 400 {message, errors}
 else corpo válido
+  Filtro -> Ctrl : updateMeeting(meetingId, dto, auth)
   Ctrl -> Svc : updateMeeting(meetingId, email, dto)
   activate Svc
   Svc -> Acc : findMeeting(meetingId)
   Acc --> Svc : Meeting
   Svc -> Acc : findUser(email)
-  Acc --> Svc : User
-  Svc -> Acc : requirePresident(user, committee)
-  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
-  CmRepo --> Acc : CommitteeMember
-  Acc --> Svc : void
-  Svc -> Svc : statusAt(now) deve ser SCHEDULED
-  Svc -> Svc : requireFutureStart(dto, now)
-  opt invitedUserIds informado
-    Svc -> Svc : resolveInvitees(committeeId, president, invitedUserIds)
+  Acc --> Svc : User president
+  Svc -> Acc : requirePresident(president, meeting.getCommittee())
+  Svc -> Meeting : statusAt(now)
+  Meeting --> Svc : MeetingStatus
+  note right of Svc : O término normalizado precisa ser depois de agora;\nse não for, IllegalStateException (409).
+  opt início alterado
+    Svc -> Svc : requireFutureStart(dto, now)
   end
+  opt dto.invitedUserIds informado
+    Svc -> Svc : resolveInvitees(meeting.getCommittee().getId(), president, dto.getInvitedUserIds())
+  end
+  Svc -> FileSvc : resolve(dto.getAttachmentFileId(), meeting.getCommittee(), president, previousFile)
+  FileSvc --> Svc : MeetingFile
   alt regra violada (403 ou 409)
-    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
     Ctrl --> Handler : exceção propagada
     Handler --> Tela : 403 ou 409 {message}
-    Tela --> Form : error (mensagem exibida, formulário continua aberto)
+    Tela --> Form : error
   else dados aceitos
-    Svc -> MeetRepo : save(Meeting com os novos campos)
-    opt invitedUserIds informado
+    note right of Svc : aplica os campos e o anexo ao objeto meeting
+    Svc -> MeetRepo : save(meeting)
+    opt dto.invitedUserIds informado
       Svc -> Svc : syncInvitees(meeting, invitees)
-      Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
-      PartRepo --> Svc : participantes atuais
-      Svc -> PartRepo : deleteAll(removidos) e saveAll(adicionados)
+      Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+      PartRepo --> Svc : List<MeetingParticipant>
+      note right of Svc : removed contém os retirados; quem já registrou entrada não pode sair.\nadded contém User dos novos convidados; respostas dos mantidos são preservadas.
+      break removed contém alguém com entrada registrada
+        Svc --> Ctrl : IllegalStateException
+        Ctrl --> Handler : exceção propagada
+        Handler --> Tela : 409 {message}
+        note right of Svc : a transação é desfeita; nenhum convite é retirado
+      end
+      Svc -> PartRepo : deleteAll(removed)
+      Svc -> PartRepo : saveAll(added.stream().map(u -> new MeetingParticipant(meeting, u)).toList())
+    end
+    opt anexo trocado
+      Svc -> FileSvc : deleteIfUnused(previousFile)
+      note right of FileSvc : só apaga se nenhuma Meeting e nenhuma MeetingSeries apontar para o arquivo
+    end
+    Svc -> Acc : invalidateList(meeting)
+    opt havia lista de presença gerada
+      note right of Acc : limpa attendanceListGeneratedAt e attendanceListGeneratedBy
+      Acc -> MeetRepo : save(meeting)
     end
     Svc -> Acc : audit(president, "MEETING_UPDATED", meeting, "")
-    Acc -> AuditRepo : save(AuditLog)
+    Svc -> Svc : emailChanges(meeting, before, added, president)
+    loop cada novo convidado guest, exceto o presidente
+      Svc -> Mail : sendMeetingInvitationEmail(guest.getEmail(), guest.getName(), after, president.getName())
+    end
+    opt changes não vazio (título, data, horário, modalidade, local, link, pauta ou anexo)
+      Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+      PartRepo --> Svc : List<MeetingParticipant>
+      loop cada convidado guest mantido, exceto o presidente
+        Svc -> Mail : sendMeetingChangedEmail(guest.getEmail(), guest.getName(), after, president.getName(), changes)
+      end
+    end
+    note right of Mail : after é MeetingText.Mail; envios assíncronos, depois do commit
     Svc -> Acc : detail(meeting, president, now)
     Acc --> Svc : MeetingResponseDTO
     Svc --> Ctrl : MeetingResponseDTO
     Ctrl --> Tela : 200 MeetingResponseDTO
-    Tela --> U : aviso "Reunião atualizada." e abre o detalhe
-    Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+    Tela --> U : aviso "Reunião atualizada. Os convidados recebem um e-mail com o que mudou." e abre o detalhe
+    Tela -> Tela : load()
+    note right of Tela : notifica a sincronização de reuniões e recarrega a lista
   end
   deactivate Svc
 end

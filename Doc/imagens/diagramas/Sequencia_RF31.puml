@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(convidado ou presidente)" as U
@@ -18,16 +19,22 @@ participant ":JwtAuthFilter" as Filtro
 participant ":MeetingAttendanceController" as Ctrl
 participant ":MeetingAttendanceService" as Svc
 participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
 participant ":CommitteeMemberRepository" as CmRepo
 participant ":MeetingParticipantRepository" as PartRepo
 participant ":MeetingRepository" as MeetRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
 
 group Entrada individual (a própria, ou a de outra pessoa pelo presidente)
-  U -> Painel : tocar em "Registrar minha entrada" ou, em outra pessoa, "Registrar entrada"
-  Painel -> Tela : onEntry(userId)
+  alt registrar a própria entrada
+    U -> Painel : tocar em "Registrar entrada" no cartão "Presença" ou "Acontecendo agora"
+    Painel -> Tela : onEntry(userId)
+  else presidente registra outra pessoa
+    U -> Tela : tocar em "Registrar entrada" na linha da pessoa em "Convidados"
+  end
   Tela -> Filtro : POST /api/meetings/{meetingId}/participants/{userId}/entry
   Filtro -> Ctrl : registerEntry(meetingId, userId, auth)
   Ctrl -> Svc : registerEntry(meetingId, userId, email)
@@ -35,31 +42,38 @@ group Entrada individual (a própria, ou a de outra pessoa pelo presidente)
   Svc -> Acc : findMeeting(meetingId)
   Acc --> Svc : Meeting
   Svc -> Acc : findUser(email)
-  Acc --> Svc : User
-  Svc -> Svc : lockParticipantForRecord(meeting, actor, userId, now)
+  Acc --> Svc : User actor
+  Svc -> Svc : lockParticipantForRecord(meeting, actor, targetUserId, now)
   alt o usuário registra a própria entrada
     Svc -> Acc : requireActiveMember(actor, committee)
   else o usuário registra a de outra pessoa
     Svc -> Acc : requirePresident(actor, committee)
   end
-  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+  note right of Acc : user é o executor actor recebido pela conferência de vínculo ativo, não o alvo
   CmRepo --> Acc : CommitteeMember
   Svc -> Svc : requireInProgress(meeting, now)
-  Svc -> PartRepo : findForUpdate(meetingId, userId)
+  Svc -> Meeting : statusAt(now)
+  Meeting --> Svc : MeetingStatus
+  Svc -> PartRepo : findForUpdate(meeting.getId(), targetUserId)
   PartRepo --> Svc : MeetingParticipant (linha bloqueada)
   alt permitido, reunião em andamento e sem entrada registrada
-    Svc -> PartRepo : save(participant com enteredAt = agora e enteredBy = quem registrou)
+    note right of Svc : participant recebe enteredAt atual e enteredBy = actor
+    Svc -> PartRepo : save(participant)
     Svc -> Acc : invalidateList(meeting)
-    Acc -> MeetRepo : save(Meeting sem o carimbo da lista de presença)
-    Svc -> Acc : audit(actor, "MEETING_ENTRY_REGISTERED", meeting, " | Usuário ID: ...")
-    Acc -> AuditRepo : save(AuditLog)
+    opt havia lista gerada
+      note right of Acc : limpa attendanceListGeneratedAt e attendanceListGeneratedBy
+      Acc -> MeetRepo : save(meeting)
+    end
+    Svc -> Acc : audit(actor, "MEETING_ENTRY_REGISTERED", meeting, " | Usuário ID: " + targetUserId)
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
     Svc -> Acc : detail(meeting, actor, now)
     Acc --> Svc : MeetingResponseDTO
     Svc --> Ctrl : MeetingResponseDTO
     Ctrl --> Tela : 200 MeetingResponseDTO
     Tela --> U : aviso "Entrada registrada." e painel "Presença" atualizado
   else sem permissão, fora do horário, não convidado ou entrada já registrada
-    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
     Ctrl --> Handler : exceção propagada
     Handler --> Tela : 403 ou 409 {message}
     Tela --> U : exibe a mensagem de erro
@@ -76,25 +90,39 @@ group Entrada de todos que aceitaram (presidente)
   Filtro -> Ctrl : registerAllEntries(meetingId, auth)
   Ctrl -> Svc : registerAllEntries(meetingId, email)
   activate Svc
-  Svc -> Acc : requirePresident(president, committee)
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User president
+  Svc -> Acc : requirePresident(president, meeting.getCommittee())
   Svc -> Svc : requireInProgress(meeting, now)
+  Svc -> Meeting : statusAt(now)
+  Meeting --> Svc : MeetingStatus
   Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
-  PartRepo --> Svc : participantes
-  note right of Svc : separa quem aceitou o convite e ainda não tem entrada
+  PartRepo --> Svc : List<MeetingParticipant>
+  note right of Svc : pending contém quem aceitou e ainda não tem entrada;\nesses participantes recebem enteredAt atual e enteredBy = president
   alt presidente e reunião em andamento
-    Svc -> PartRepo : saveAll(pendentes com enteredAt = agora e enteredBy = presidente)
-    opt ao menos uma pessoa registrada
+    Svc -> PartRepo : saveAll(pending)
+    opt pending não vazio
       Svc -> Acc : invalidateList(meeting)
+      opt havia lista gerada
+        Acc -> MeetRepo : save(meeting)
+      end
     end
-    Svc -> Acc : audit(president, "MEETING_ENTRIES_REGISTERED_BULK", meeting, " | Pessoas: n")
+    Svc -> Acc : audit(president, "MEETING_ENTRIES_REGISTERED_BULK", meeting, " | Pessoas: " + pending.size())
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
+    Svc -> Acc : detail(meeting, president, now)
+    Acc --> Svc : MeetingResponseDTO
     Svc --> Ctrl : MeetingResponseDTO
     Ctrl --> Tela : 200 MeetingResponseDTO
     Tela --> U : aviso "Entradas registradas."
   else não é presidente ou a reunião não está em andamento
-    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
     Ctrl --> Handler : exceção propagada
     Handler --> Tela : 403 ou 409 {message}
   end
   deactivate Svc
 end
+note over Svc : As validações são sequenciais: a primeira falha encerra a operação.\nAs chamadas seguintes só ocorrem se as anteriores forem aprovadas.
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
 @enduml

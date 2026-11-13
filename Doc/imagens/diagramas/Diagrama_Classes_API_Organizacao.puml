@@ -1,101 +1,172 @@
 @startuml Diagrama_Classes_API_Organizacao
 !pragma layout smetana
 title
-SpotMeet - Diagrama de classes da API: Organização (RF03 a RF08)
+SpotMeet - Classes da API: Organização (RF03 a RF07)
 end title
 hide circle
 skinparam classAttributeIconSize 0
-skinparam packageStyle rectangle
-package "API (backend)" {
+skinparam shadowing false
+skinparam defaultFontSize 11
+skinparam nodesep 25
+skinparam ranksep 35
 class OrganizationController <<controller>> {
-  +createOrganization()
-  +listMyOrganizations()
-  +updateOrganization()
-  +resubmitOrganization()
-  +deleteOrganization()
+  +createOrganization(dto: OrganizationRequestDTO, authentication: Authentication): ResponseEntity<?>
+  +listMyOrganizations(authentication: Authentication): ResponseEntity<?>
+  +updateOrganization(organizationId: Long, dto: OrganizationRequestDTO, authentication: Authentication): ResponseEntity<?>
+  +resubmitOrganization(organizationId: Long, body: OrganizationResubmitDTO, authentication: Authentication): ResponseEntity<?>
+  +deleteOrganization(organizationId: Long, authentication: Authentication): ResponseEntity<?>
 }
 class MembershipController <<controller>> {
-  +requestAccess()
-  +previewOrganization()
-  +approveAccess()
-  +rejectAccess()
-  +revokeAccess()
-  +listPendingRequests()
-  +listMembers()
-  +promoteMember()
-  +demoteMember()
+  +requestAccess(body: AccessRequestDTO, accessKey: String, authentication: Authentication): ResponseEntity<?>
+  +previewOrganization(accessKey: String, authentication: Authentication): ResponseEntity<?>
+  +listedOrganizations(authentication: Authentication): ResponseEntity<?>
+  +approveAccess(requestId: Long, authentication: Authentication): ResponseEntity<?>
+  +rejectAccess(requestId: Long, authentication: Authentication): ResponseEntity<?>
+  +revokeAccess(organizationId: Long, memberId: Long, authentication: Authentication): ResponseEntity<?>
+  +listPendingRequests(organizationId: Long, authentication: Authentication): ResponseEntity<?>
+  +listMembers(organizationId: Long, authentication: Authentication): ResponseEntity<?>
+  +promoteMember(organizationId: Long, userId: Long, authentication: Authentication): ResponseEntity<?>
+  +demoteMember(organizationId: Long, userId: Long, authentication: Authentication): ResponseEntity<?>
 }
 class OrganizationInvitationController <<controller>> {
-  +invalidRequest()
-  +invite()
-  +candidates()
-  +listMine()
-  +respond()
+  +invalidRequest(): ResponseEntity<?>
+  +invite(organizationId: Long, dto: OrganizationInvitationRequestDTO, authentication: Authentication): ResponseEntity<?>
+  +candidates(organizationId: Long, q: String, authentication: Authentication): ResponseEntity<?>
+  +listMine(authentication: Authentication): ResponseEntity<?>
+  +respond(invitationId: Long, dto: RespondOrganizationInvitationDTO, authentication: Authentication): ResponseEntity<?>
 }
 class OrganizationLeadershipController <<controller>> {
-  +invalidIdentifier()
-  +transfer()
+  +invalidIdentifier(): ResponseEntity<?>
+  +transfer(organizationId: Long, userId: Long, authentication: Authentication): ResponseEntity<?>
 }
 class OrganizationService <<service>> {
-  +createOrganization()
-  +listMyOrganizations()
-  +updateOrganization()
-  +resubmitOrganization()
-  +deleteOrganization()
+  +createOrganization(ownerEmail: String, dto: OrganizationRequestDTO): OrganizationResponseDTO
+  +listMyOrganizations(userEmail: String): List<OrganizationResponseDTO>
+  +updateOrganization(organizationId: Long, executorEmail: String, dto: OrganizationRequestDTO): OrganizationResponseDTO
+  +resubmitOrganization(organizationId: Long, executorEmail: String, justification: String): OrganizationResponseDTO
+  +deleteOrganization(organizationId: Long, executorEmail: String): void
 }
 class MembershipService <<service>> {
-  +requireOrganizationMember()
-  +requireOwnerOrViceOwner()
-  +requireOwner()
-  +requestAccess()
-  +previewByKey()
-  +approveAccess()
-  +rejectAccess()
-  +promoteMember()
-  +demoteMember()
-  +transferLeadership()
-  +revokeAccess()
-  +listPendingRequests()
-  +listMembers()
+  +requireOrganizationMember(executor: User, organizationId: Long): void
+  +requireOwnerOrViceOwner(executor: User, organizationId: Long): void
+  +requireOwner(executor: User, organizationId: Long): void
+  +previewByKey(accessKey: String): OrganizationPreviewDTO
+  +listListed(userEmail: String): List<ListedOrganizationDTO>
+  +requestAccess(requesterEmail: String, accessKey: String): AccessRequestResponseDTO
+  +approveAccess(requestId: Long, leaderEmail: String): AccessRequestResponseDTO
+  +rejectAccess(requestId: Long, leaderEmail: String): AccessRequestResponseDTO
+  +promoteMember(organizationId: Long, targetUserId: Long, executorEmail: String): OrganizationResponseDTO.MemberDTO
+  +demoteMember(organizationId: Long, targetUserId: Long, executorEmail: String): OrganizationResponseDTO.MemberDTO
+  +transferLeadership(organizationId: Long, targetUserId: Long, executorEmail: String): OrganizationLeadershipResponseDTO
+  +revokeAccess(memberId: Long, organizationId: Long, executorEmail: String): void
+  +listPendingRequests(organizationId: Long, executorEmail: String): List<AccessRequestResponseDTO>
+  +listMembers(organizationId: Long, executorEmail: String): List<OrganizationResponseDTO.MemberDTO>
 }
 class OrganizationInvitationService <<service>> {
-  +invite()
-  +findCandidates()
-  +listMine()
-  +respond()
+  +invite(organizationId: Long, dto: OrganizationInvitationRequestDTO, executorEmail: String): OrganizationInvitationResponseDTO
+  +findCandidates(organizationId: Long, query: String, executorEmail: String): List<InviteCandidateDTO>
+  +listMine(email: String): List<OrganizationInvitationResponseDTO>
+  +respond(invitationId: Long, accept: boolean, email: String): OrganizationInvitationResponseDTO
 }
-interface AccessRequestRepository <<repository>>
-interface AuditLogRepository <<repository>>
-interface CommitteeMemberRepository <<repository>>
-interface CommitteeRepository <<repository>>
-interface OrganizationInvitationRepository <<repository>>
-interface OrganizationMemberRepository <<repository>>
-interface OrganizationRepository <<repository>>
-interface UserRepository <<repository>>
+class EmailService <<service>> {
+
 }
-OrganizationController --> OrganizationService
+interface AccessRequestRepository <<repository>> {
+  +findOrganizationIdById(id: Long): Optional<Long>
+  +findByOrganizationIdAndStatus(organizationId: Long, status: AccessRequestStatus): List<AccessRequest>
+  +existsByUserIdAndOrganizationIdAndStatus(userId: Long, organizationId: Long, status: AccessRequestStatus): boolean
+  +findByUserIdAndOrganizationId(userId: Long, organizationId: Long): List<AccessRequest>
+  +findByUserId(userId: Long): List<AccessRequest>
+  +findByOrganizationId(organizationId: Long): List<AccessRequest>
+}
+interface AuditLogRepository <<repository>> {
+
+}
+interface CommitteeMemberRepository <<repository>> {
+  +findByUserIdAndCommitteeId(userId: Long, committeeId: Long): Optional<CommitteeMember>
+  +existsByUserIdAndCommitteeId(userId: Long, committeeId: Long): boolean
+  +existsByUserIdAndCommitteeIdAndStatus(userId: Long, committeeId: Long, status: CommitteeMembershipStatus): boolean
+  +findByCommitteeId(committeeId: Long): List<CommitteeMember>
+  +findByCommitteeIdAndStatus(committeeId: Long, status: CommitteeMembershipStatus): List<CommitteeMember>
+  +findByCommitteeIdAndRole(committeeId: Long, role: CommitteeRole): List<CommitteeMember>
+  +findByUserId(userId: Long): List<CommitteeMember>
+  +findByUserIdAndStatus(userId: Long, status: CommitteeMembershipStatus): List<CommitteeMember>
+  +findByUserIdAndCommitteeOrganizationId(userId: Long, organizationId: Long): List<CommitteeMember>
+  +findByUserIdAndCommitteeOrganizationIdAndStatus(userId: Long, organizationId: Long, status: CommitteeMembershipStatus): List<CommitteeMember>
+  +findByCommitteeOrganizationIdAndStatus(organizationId: Long, status: CommitteeMembershipStatus): List<CommitteeMember>
+  +countByCommitteeIdAndStatus(committeeId: Long, status: CommitteeMembershipStatus): long
+}
+interface CommitteeRepository <<repository>> {
+  +existsByNormalizedName(organizationId: Long, name: String, spaces: String, excludedId: Long): boolean
+  +findByOrganization(organization: Organization): List<Committee>
+  +findByOrganizationId(organizationId: Long): List<Committee>
+  +findByOrganizationIdOrderByNameAsc(organizationId: Long): List<Committee>
+  +findByIdAndOrganizationId(id: Long, organizationId: Long): Optional<Committee>
+  +existsByOrganizationIdAndName(organizationId: Long, name: String): boolean
+  +findByOrganizationIdAndName(organizationId: Long, name: String): Optional<Committee>
+}
+interface OrganizationInvitationRepository <<repository>> {
+  +findByOrganizationIdAndUserId(organizationId: Long, userId: Long): Optional<OrganizationInvitation>
+  +findOrganizationIdForRecipient(id: Long, userId: Long): Optional<Long>
+  +findPendingForRecipient(userId: Long, status: InvitationStatus, now: Instant): List<OrganizationInvitation>
+  +deleteByOrganizationId(organizationId: Long): void
+  +deleteByOrganizationIdAndUserId(organizationId: Long, userId: Long): void
+}
+interface OrganizationMemberRepository <<repository>> {
+  +findByUserIdAndOrganizationId(userId: Long, organizationId: Long): Optional<OrganizationMember>
+  +findByOrganizationId(organizationId: Long): List<OrganizationMember>
+  +findByUserId(userId: Long): List<OrganizationMember>
+  +findByOrganizationIdAndRole(organizationId: Long, role: OrganizationRole): List<OrganizationMember>
+  +existsByUserIdAndOrganizationId(userId: Long, organizationId: Long): boolean
+  +countByOrganizationId(organizationId: Long): long
+}
+interface OrganizationRepository <<repository>> {
+  +findByIdForUpdate(id: Long): Optional<Organization>
+  +lockForWrite(): void
+  +findLockedById(id: Long): Optional<Organization>
+  +lockForUniquenessCheck(): void
+  +existsByNormalizedName(name: String, spaces: String, excludedId: Long): boolean
+  +existsByNormalizedAccessKey(accessKey: String, spaces: String, excludedId: Long): boolean
+  +existsByCnpjExcludingId(cnpj: String, excludedId: Long): boolean
+  +findIdsByAccessKeyIgnoreCase(accessKey: String, spaces: String): List<Long>
+  +findAllWithOwner(): List<Organization>
+  +findByApprovedTrueAndListedTrueOrderByNameAsc(): List<Organization>
+}
+interface UserRepository <<repository>> {
+
+}
 MembershipController --> MembershipService
+MembershipService --> AccessRequestRepository
+MembershipService --> AuditLogRepository
+MembershipService --> CommitteeMemberRepository
+MembershipService --> EmailService
+MembershipService --> OrganizationInvitationRepository
+MembershipService --> OrganizationMemberRepository
+MembershipService --> OrganizationRepository
+MembershipService --> UserRepository
+OrganizationController --> OrganizationService
 OrganizationInvitationController --> OrganizationInvitationService
+OrganizationInvitationService --> AccessRequestRepository
+OrganizationInvitationService --> AuditLogRepository
+OrganizationInvitationService --> EmailService
+OrganizationInvitationService --> OrganizationInvitationRepository
+OrganizationInvitationService --> OrganizationMemberRepository
+OrganizationInvitationService --> OrganizationRepository
+OrganizationInvitationService --> UserRepository
 OrganizationLeadershipController --> MembershipService
-OrganizationService ..> AccessRequestRepository
-OrganizationService ..> AuditLogRepository
-OrganizationService ..> CommitteeMemberRepository
-OrganizationService ..> CommitteeRepository
-OrganizationService ..> OrganizationInvitationRepository
-OrganizationService ..> OrganizationMemberRepository
-OrganizationService ..> OrganizationRepository
-OrganizationService ..> UserRepository
-MembershipService ..> AccessRequestRepository
-MembershipService ..> AuditLogRepository
-MembershipService ..> CommitteeMemberRepository
-MembershipService ..> OrganizationInvitationRepository
-MembershipService ..> OrganizationMemberRepository
-MembershipService ..> OrganizationRepository
-MembershipService ..> UserRepository
-OrganizationInvitationService ..> AccessRequestRepository
-OrganizationInvitationService ..> AuditLogRepository
-OrganizationInvitationService ..> OrganizationInvitationRepository
-OrganizationInvitationService ..> OrganizationMemberRepository
-OrganizationInvitationService ..> OrganizationRepository
-OrganizationInvitationService ..> UserRepository
+OrganizationService --> AccessRequestRepository
+OrganizationService --> AuditLogRepository
+OrganizationService --> CommitteeMemberRepository
+OrganizationService --> CommitteeRepository
+OrganizationService --> OrganizationInvitationRepository
+OrganizationService --> OrganizationMemberRepository
+OrganizationService --> OrganizationRepository
+OrganizationService --> UserRepository
+OrganizationController -[hidden]down-> OrganizationLeadershipController
+OrganizationService -[hidden]down-> EmailService
+AccessRequestRepository -[hidden]down-> CommitteeRepository
+AuditLogRepository -[hidden]down-> OrganizationInvitationRepository
+CommitteeMemberRepository -[hidden]down-> OrganizationMemberRepository
+CommitteeRepository -[hidden]down-> OrganizationRepository
+OrganizationInvitationRepository -[hidden]down-> UserRepository
 @enduml

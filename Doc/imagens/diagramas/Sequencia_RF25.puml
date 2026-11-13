@@ -6,66 +6,130 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(presidente da comissão)" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
 participant ":MeetingsScreen" as Tela
 participant ":MeetingForm" as Form
+participant ":FrequencySheet" as Freq
 end box
 box "API (backend)" #F6FFF4
 participant ":JwtAuthFilter" as Filtro
+participant ":MeetingFileController" as FileCtrl
+participant ":MeetingFileService" as FileSvc
 participant ":MeetingController" as Ctrl
 participant ":MeetingService" as Svc
 participant ":MeetingAccess" as Acc
-participant ":CommitteeMemberRepository" as CmRepo
+participant ":MeetingFileRepository" as FileRepo
+participant ":MeetingSeriesRepository" as SeriesRepo
 participant ":MeetingRepository" as MeetRepo
 participant ":MeetingParticipantRepository" as PartRepo
-participant ":AuditLogRepository" as AuditRepo
+participant ":EmailService" as Mail
 participant ":GlobalExceptionHandler" as Handler
 end box
 
-note over Tela : o botão "Agendar reunião" só aparece quando\nGET /api/committees/presided devolve ao menos uma comissão (RF28)
-U -> Tela : tocar em "Agendar reunião"
+note over Tela : o botão "+" só aparece quando\nGET /api/committees/presided devolve ao menos uma comissão (RF28)
+U -> Tela : tocar em "+"
 Tela -> Form : abrir o modal "Agendar reunião"
-note over Form : a lista de convidados vem de\nGET /api/committees/{id}/members (RF29)
-U -> Form : informar título, início, término, local, link, pauta,\nprioridade e convidados e tocar em "Agendar reunião"
-Form -> Form : valida os campos (obrigatórios, data real, início futuro,\ntérmino depois do início, até 24 h, link http ou https)
+note over Form : convidados vêm de GET /api/committees/{id}/members (RF29);\ndatas e horas pelo seletor do celular (DateTimeField)
+opt reunião que se repete
+  U -> Form : tocar em "Frequência"
+  Form -> Freq : abrir a folha "Frequência"
+  U -> Freq : escolher a opção ou "Personalizar..." e tocar em "Concluir"
+  alt opção da lista
+    Freq --> Form : onDone(choice)
+  else frequência personalizada válida
+    Freq --> Form : onDone(custom)
+  end
+end
+U -> Form : preencher e tocar em "Agendar reunião"
+Form -> Form : submit()
 Form -> Tela : onSubmit(payload)
+note right of Form : payload representa o objeto MeetingPayload do callback onSubmit
+opt documento anexado à pauta
+  Tela -> Filtro : POST /api/committees/{committeeId}/meeting-files (file)
+  Filtro -> FileCtrl : upload(committeeId, file, auth)
+  FileCtrl -> FileSvc : upload(committeeId, email, file)
+  FileSvc -> Acc : findCommittee(committeeId)
+  Acc --> FileSvc : Committee
+  FileSvc -> Acc : findUser(email)
+  Acc --> FileSvc : User president
+  FileSvc -> Acc : requirePresident(president, committee)
+  note right of FileSvc : confere permissão, bytes e tipo do upload (até 10 MB).
+  break upload recusado ou falha de conexão
+    FileCtrl --> Tela : resposta de erro, quando há resposta HTTP
+    Tela --> Form : error
+    note right of Tela : o fluxo para; POST de criação da reunião não é enviado
+  end
+  FileSvc -> FileRepo : deleteUnusedBefore(LocalDateTime.now().minusDays(1))
+  note right of FileRepo : limpa arquivos criados há mais de 24 horas e sem referência\nem Meeting nem MeetingSeries, somente no próximo upload válido; não é uma tarefa periódica
+  FileSvc -> FileRepo : save(file)
+  FileRepo --> FileSvc : MeetingFile
+  FileSvc --> FileCtrl : AttachmentDTO
+  FileCtrl --> Tela : 201 AttachmentDTO
+end
 Tela -> Filtro : POST /api/committees/{committeeId}/meetings (MeetingRequestDTO)
-Filtro -> Ctrl : createMeeting(committeeId, dto, auth)
 alt corpo inválido (@Valid)
-  Ctrl --> Handler : MethodArgumentNotValidException
+  note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+  note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
   Handler --> Tela : 400 {message, errors}
 else corpo válido
+  Filtro -> Ctrl : createMeeting(committeeId, dto, auth)
   Ctrl -> Svc : createMeeting(committeeId, email, dto)
   activate Svc
   Svc -> Acc : findCommittee(committeeId)
   Acc --> Svc : Committee
   Svc -> Acc : findUser(email)
-  Acc --> Svc : User
-  Svc -> Acc : requirePresident(user, committee)
-  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
-  CmRepo --> Acc : CommitteeMember
-  Acc --> Svc : void
+  Acc --> Svc : User president
+  Svc -> Acc : requirePresident(president, committee)
+  note right of Svc : antes de continuar, a organização deve estar aprovada;\ncaso contrário, IllegalStateException (409), sem gravar a reunião.
   Svc -> Svc : requireFutureStart(dto, now)
-  Svc -> Svc : resolveInvitees(committeeId, president, invitedUserIds)
-  note right of Svc : confere a organização aprovada e escolhe os\nconvidados, conforme o RF29
+  Svc -> Svc : resolveInvitees(committeeId, president, dto.getInvitedUserIds())
+  Svc -> FileSvc : resolve(dto.getAttachmentFileId(), committee, president, null)
+  FileSvc --> Svc : MeetingFile
   alt regra violada (403 ou 409)
-    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
     Ctrl --> Handler : exceção propagada
     Handler --> Tela : 403 ou 409 {message}
-    Tela --> Form : error (mensagem exibida, formulário continua aberto)
+    Tela --> Form : error
   else dados aceitos
-    Svc -> MeetRepo : save(Meeting)
-    MeetRepo --> Svc : Meeting
-    Svc -> PartRepo : saveAll(List<MeetingParticipant>)
-    Svc -> Acc : audit(president, "MEETING_CREATED", meeting, extra)
-    Acc -> AuditRepo : save(AuditLog)
+    alt sem repetição
+      note right of Svc : meeting recebe campos, datas normalizadas e anexo
+      Svc -> MeetRepo : save(meeting)
+      MeetRepo --> Svc : Meeting saved
+      Svc -> Svc : invite(saved, invitees.values(), Set.of(president.getId()), now)
+      Svc -> PartRepo : saveAll(participants)
+      Svc -> Acc : audit(president, "MEETING_CREATED", saved, " | Convidados: " + participants.size())
+      Svc -> Svc : emailInvitations(saved, invitees.values(), president)
+    else com repetição
+      Svc -> Svc : createSeries(committee, president, dto, invitees, attachment, now)
+      note right of Svc : applyRule recusa término antes do início e duas formas de terminar;\nfrequência sem datas ou sobreposição também interrompem a transação com 409.
+      Svc -> SeriesRepo : save(series)
+      SeriesRepo --> Svc : MeetingSeries saved
+      Svc -> Svc : extend(saved, now, true)
+      note right of Svc : MeetingRecurrence.window calcula as datas dos próximos 3 meses.\nextend recebe saved como series e cria uma reunião e seus participantes por data;\nsobreposição causa IllegalStateException no agendamento.
+      loop cada data da janela
+        Svc -> MeetRepo : save(meeting)
+        MeetRepo --> Svc : Meeting saved
+        Svc -> Svc : invite(saved, invitees.values(), presidents, now)
+        Svc -> PartRepo : saveAll(participants)
+      end
+      Svc -> SeriesRepo : save(series)
+      note right of Svc : range normaliza dia inteiro para 00:00 e 23:59:59.\nNa série, durationMinutes guarda minutos inteiros e extend repõe os 59 segundos\nfinais: as ocorrências de dia inteiro também terminam às 23:59:59.
+      Svc -> Acc : audit(president, "MEETING_CREATED", first, " | Série: " + created.size() + " reuniões criadas")
+      Svc -> Svc : emailInvitations(first, invitees.values(), president)
+    end
+    loop cada guest do helper emailInvitations, exceto sender
+      Svc -> Mail : sendMeetingInvitationEmail(guest.getEmail(), guest.getName(), mail, sender.getName())
+    end
+    note right of Mail : mail é MeetingText.Mail; sender é o presidente recebido pelo helper.\nEnvio assíncrono, depois do commit, apenas sobre a primeira reunião da série.
     Svc --> Ctrl : MeetingResponseDTO
     Ctrl --> Tela : 201 MeetingResponseDTO
-    Tela --> U : aviso "Reunião agendada." e abre o detalhe da reunião
-    Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+    Tela --> U : aviso "Reunião agendada. Os convidados recebem um e-mail." e abre o detalhe
+    Tela -> Tela : load()
+    note right of Tela : notifica a sincronização de reuniões e recarrega a lista
   end
   deactivate Svc
 end

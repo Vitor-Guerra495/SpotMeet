@@ -1,96 +1,190 @@
 @startuml Diagrama_Classes_API_Reunioes
 !pragma layout smetana
 title
-SpotMeet - Diagrama de classes da API: Reuniões e presença (RF25 a RF35)
+SpotMeet - Classes da API: Reuniões e presença (RF25 a RF35)
 end title
 hide circle
 skinparam classAttributeIconSize 0
-skinparam packageStyle rectangle
-package "API (backend)" {
+skinparam shadowing false
+skinparam defaultFontSize 11
+skinparam nodesep 25
+skinparam ranksep 35
 class MeetingController <<controller>> {
-  +createMeeting()
-  +listCommitteeMeetings()
-  +listMyMeetings()
-  +getMeeting()
-  +updateMeeting()
-  +cancelMeeting()
+  +createMeeting(committeeId: Long, dto: MeetingRequestDTO, auth: Authentication): ResponseEntity<MeetingResponseDTO>
+  +listCommitteeMeetings(committeeId: Long, auth: Authentication): ResponseEntity<List<MeetingResponseDTO>>
+  +listMyMeetings(auth: Authentication): ResponseEntity<List<MeetingResponseDTO>>
+  +countPendingInvitations(auth: Authentication): ResponseEntity<Map<String, Long>>
+  +getMeeting(meetingId: Long, auth: Authentication): ResponseEntity<MeetingResponseDTO>
+  +updateMeeting(meetingId: Long, dto: MeetingRequestDTO, auth: Authentication): ResponseEntity<MeetingResponseDTO>
+  +cancelMeeting(meetingId: Long, body: MeetingCancelDTO, auth: Authentication): ResponseEntity<MeetingResponseDTO>
 }
 class MeetingInvitationController <<controller>> {
-  +respond()
+  +respond(meetingId: Long, accept: boolean, answer: MeetingAnswerDTO, auth: Authentication): ResponseEntity<MeetingResponseDTO>
 }
 class MeetingAttendanceController <<controller>> {
-  +registerEntry()
-  +registerExit()
-  +registerAllEntries()
-  +registerAllExits()
-  +resetAttendance()
+  +registerEntry(meetingId: Long, userId: Long, auth: Authentication): ResponseEntity<MeetingResponseDTO>
+  +registerExit(meetingId: Long, userId: Long, auth: Authentication): ResponseEntity<MeetingResponseDTO>
+  +registerAllEntries(meetingId: Long, auth: Authentication): ResponseEntity<MeetingResponseDTO>
+  +registerAllExits(meetingId: Long, auth: Authentication): ResponseEntity<MeetingResponseDTO>
+  +resetAttendance(meetingId: Long, userId: Long, auth: Authentication): ResponseEntity<MeetingResponseDTO>
 }
 class AttendanceListController <<controller>> {
-  +generate()
-  +get()
+  +generate(meetingId: Long, auth: Authentication): ResponseEntity<AttendanceListDTO>
+  +get(meetingId: Long, auth: Authentication): ResponseEntity<AttendanceListDTO>
+}
+class MeetingFileController <<controller>> {
+  +upload(committeeId: Long, file: MultipartFile, auth: Authentication): ResponseEntity<AttachmentDTO>
+  +download(meetingId: Long, auth: Authentication): ResponseEntity<byte[]>
+  +missingFile(): ResponseEntity<?>
+  +oversizedFile(): ResponseEntity<?>
+}
+class MeetingLinkController <<controller>> {
+  +open(meetingId: Long): ResponseEntity<String>
 }
 class MeetingService <<service>> {
-  +createMeeting()
-  +listCommitteeMeetings()
-  +listMyMeetings()
-  +getMeeting()
-  +updateMeeting()
-  +cancelMeeting()
+  +createMeeting(committeeId: Long, email: String, dto: MeetingRequestDTO): MeetingResponseDTO
+  +extendSeries(): void
+  +listCommitteeMeetings(committeeId: Long, email: String): List<MeetingResponseDTO>
+  +listMyMeetings(email: String): List<MeetingResponseDTO>
+  +countPendingInvitations(email: String): long
+  +getMeeting(meetingId: Long, email: String): MeetingResponseDTO
+  +updateMeeting(meetingId: Long, email: String, dto: MeetingRequestDTO): MeetingResponseDTO
+  +cancelMeeting(meetingId: Long, email: String): MeetingResponseDTO
+  +cancelMeeting(meetingId: Long, email: String, reason: String): MeetingResponseDTO
 }
 class MeetingInvitationService <<service>> {
-  +respond()
+  +respond(meetingId: Long, email: String, accept: boolean, comment: String): MeetingResponseDTO
 }
 class MeetingAttendanceService <<service>> {
-  +registerEntry()
-  +registerExit()
-  +registerAllEntries()
-  +registerAllExits()
-  +resetAttendance()
+  +registerEntry(meetingId: Long, targetUserId: Long, email: String): MeetingResponseDTO
+  +registerExit(meetingId: Long, targetUserId: Long, email: String): MeetingResponseDTO
+  +registerAllEntries(meetingId: Long, email: String): MeetingResponseDTO
+  +registerAllExits(meetingId: Long, email: String): MeetingResponseDTO
+  +resetAttendance(meetingId: Long, targetUserId: Long, email: String): MeetingResponseDTO
 }
 class AttendanceListService <<service>> {
-  +generate()
-  +get()
+  +generate(meetingId: Long, email: String): AttendanceListDTO
+  +get(meetingId: Long, email: String): AttendanceListDTO
+}
+class MeetingFileService <<service>> {
+  +upload(committeeId: Long, email: String, upload: MultipartFile): AttachmentDTO
+  +download(meetingId: Long, email: String): Download
 }
 class MeetingAccess <<service>> {
-  +findUser()
-  +findCommittee()
-  +findMeeting()
-  +activeMembership()
-  +requireViewer()
-  +requireActiveMember()
-  +requirePresident()
-  +clean()
-  +audit()
-  +detail()
-  +summaries()
-  +invalidateList()
+  +findUser(email: String): User
+  +findCommittee(committeeId: Long): Committee
+  +findMeeting(meetingId: Long): Meeting
+  +activeMembership(user: User, committee: Committee): Optional<CommitteeMember>
+  +requireViewer(user: User, committee: Committee): void
+  +requireActiveMember(user: User, committee: Committee): void
+  +president(committee: Committee): Optional<User>
+  +isPresident(user: User, committee: Committee): boolean
+  +requirePresident(user: User, committee: Committee): void
+  +clean(value: String): String
+  +audit(user: User, action: String, meeting: Meeting, extra: String): void
+  +detail(meeting: Meeting, viewer: User, now: LocalDateTime): MeetingResponseDTO
+  +summaries(meetings: List<Meeting>, viewer: User, now: LocalDateTime): List<MeetingResponseDTO>
+  +invalidateList(meeting: Meeting): void
 }
-interface AuditLogRepository <<repository>>
-interface CommitteeMemberRepository <<repository>>
-interface CommitteeRepository <<repository>>
-interface MeetingParticipantRepository <<repository>>
-interface MeetingRepository <<repository>>
-interface UserRepository <<repository>>
+class EmailService <<service>> {
+
 }
-MeetingController --> MeetingService
-MeetingInvitationController --> MeetingInvitationService
-MeetingAttendanceController --> MeetingAttendanceService
+interface AuditLogRepository <<repository>> {
+
+}
+interface CommitteeMemberRepository <<repository>> {
+
+}
+interface CommitteeRepository <<repository>> {
+
+}
+interface MeetingFileRepository <<repository>> {
+  +deleteUnusedBefore(before: LocalDateTime): int
+}
+interface MeetingMinutesRepository <<repository>> {
+  +findByMeetingId(meetingId: Long): Optional<MeetingMinutes>
+  +findByMeetingIdIn(meetingIds: Collection<Long>): List<MeetingMinutes>
+  +findForUpdate(meetingId: Long): Optional<MeetingMinutes>
+}
+interface MeetingParticipantRepository <<repository>> {
+  +findByMeetingIdOrderByUserNameAsc(meetingId: Long): List<MeetingParticipant>
+  +findByMeetingIdIn(meetingIds: Collection<Long>): List<MeetingParticipant>
+  +findByMeetingIdAndUserId(meetingId: Long, userId: Long): Optional<MeetingParticipant>
+  +findForUpdate(meetingId: Long, userId: Long): Optional<MeetingParticipant>
+  +findActiveByUser(userId: Long, status: CommitteeMembershipStatus): List<MeetingParticipant>
+  +findEnteredByUser(userId: Long): List<MeetingParticipant>
+  +countPending(userId: Long, pending: MeetingParticipant.InvitationResponse, now: LocalDateTime, status: CommitteeMembershipStatus): long
+}
+interface MeetingRepository <<repository>> {
+  +findByCommitteeIdOrderByStartsAtDesc(committeeId: Long): List<Meeting>
+  +findBySeriesIdOrderByStartsAtAsc(seriesId: Long): List<Meeting>
+  +existsByAttachmentId(fileId: Long): boolean
+}
+interface MeetingSeriesRepository <<repository>> {
+  +findByFinishedFalse(): List<MeetingSeries>
+  +existsByAttachmentId(fileId: Long): boolean
+}
+interface MinutesResponseRepository <<repository>> {
+  +findByMinutesIdOrderByRespondedAtAsc(minutesId: Long): List<MinutesResponse>
+  +findByMinutesIdInAndUserId(minutesIds: Collection<Long>, userId: Long): List<MinutesResponse>
+  +existsByMinutesIdAndUserId(minutesId: Long, userId: Long): boolean
+  +deleteByMinutesId(minutesId: Long): void
+}
+interface OrganizationMemberRepository <<repository>> {
+
+}
+interface UserRepository <<repository>> {
+
+}
 AttendanceListController --> AttendanceListService
-MeetingService ..> CommitteeMemberRepository
-MeetingService --> MeetingAccess
-MeetingService ..> MeetingParticipantRepository
-MeetingService ..> MeetingRepository
-MeetingInvitationService --> MeetingAccess
-MeetingInvitationService ..> MeetingParticipantRepository
-MeetingAttendanceService --> MeetingAccess
-MeetingAttendanceService ..> MeetingParticipantRepository
 AttendanceListService --> MeetingAccess
-AttendanceListService ..> MeetingParticipantRepository
-AttendanceListService ..> MeetingRepository
-MeetingAccess ..> AuditLogRepository
-MeetingAccess ..> CommitteeMemberRepository
-MeetingAccess ..> CommitteeRepository
-MeetingAccess ..> MeetingParticipantRepository
-MeetingAccess ..> MeetingRepository
-MeetingAccess ..> UserRepository
+AttendanceListService --> MeetingParticipantRepository
+AttendanceListService --> MeetingRepository
+MeetingAccess --> AuditLogRepository
+MeetingAccess --> CommitteeMemberRepository
+MeetingAccess --> CommitteeRepository
+MeetingAccess --> MeetingMinutesRepository
+MeetingAccess --> MeetingParticipantRepository
+MeetingAccess --> MeetingRepository
+MeetingAccess --> MinutesResponseRepository
+MeetingAccess --> UserRepository
+MeetingAttendanceController --> MeetingAttendanceService
+MeetingAttendanceService --> MeetingAccess
+MeetingAttendanceService --> MeetingMinutesRepository
+MeetingAttendanceService --> MeetingParticipantRepository
+MeetingController --> MeetingService
+MeetingFileController --> MeetingFileService
+MeetingFileService --> MeetingAccess
+MeetingFileService --> MeetingFileRepository
+MeetingFileService --> MeetingRepository
+MeetingFileService --> MeetingSeriesRepository
+MeetingInvitationController --> MeetingInvitationService
+MeetingInvitationService --> EmailService
+MeetingInvitationService --> MeetingAccess
+MeetingInvitationService --> MeetingParticipantRepository
+MeetingService --> CommitteeMemberRepository
+MeetingService --> CommitteeRepository
+MeetingService --> EmailService
+MeetingService --> MeetingAccess
+MeetingService --> MeetingFileService
+MeetingService --> MeetingParticipantRepository
+MeetingService --> MeetingRepository
+MeetingService --> MeetingSeriesRepository
+MeetingService --> OrganizationMemberRepository
+MeetingController -[hidden]down-> AttendanceListController
+MeetingInvitationController -[hidden]down-> MeetingFileController
+MeetingAttendanceController -[hidden]down-> MeetingLinkController
+MeetingService -[hidden]down-> AttendanceListService
+MeetingInvitationService -[hidden]down-> MeetingFileService
+MeetingAttendanceService -[hidden]down-> MeetingAccess
+AttendanceListService -[hidden]down-> EmailService
+AuditLogRepository -[hidden]down-> MeetingFileRepository
+CommitteeMemberRepository -[hidden]down-> MeetingMinutesRepository
+CommitteeRepository -[hidden]down-> MeetingParticipantRepository
+MeetingFileRepository -[hidden]down-> MeetingRepository
+MeetingMinutesRepository -[hidden]down-> MeetingSeriesRepository
+MeetingParticipantRepository -[hidden]down-> MinutesResponseRepository
+MeetingRepository -[hidden]down-> OrganizationMemberRepository
+MeetingSeriesRepository -[hidden]down-> UserRepository
+note bottom of MeetingLinkController : Gera a página pública de abertura do app;\neste endpoint não chama um serviço nem consulta dados da reunião.
 @enduml

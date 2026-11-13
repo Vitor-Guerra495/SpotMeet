@@ -1,0 +1,100 @@
+@startuml Sequencia_RF37
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF37 (Escrever e Salvar Rascunho da Ata)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MinutesSection" as Ata
+participant ":apiRequest" as Api
+participant ":minutes" as Min
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingMinutesController" as Ctrl
+participant ":MeetingMinutesService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
+participant ":MeetingMinutesRepository" as MinRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+
+group Abrir a página "Escrever ata"
+  note over Tela, Ata : o cartão "Ata" do detalhe já carregou a ata com GET /api/meetings/{meetingId}/minutes (RF42)
+  U -> Ata : tocar em "Escrever Ata" (Sem ata) ou "Editar Ata" (Rascunho) no cartão "Ata" da reunião encerrada
+  Ata -> Ata : open("minutes-write")
+  Ata -> Tela : openPage(page)
+  note right of Tela : setView('minutes-write'); a folha renderiza MinutesSection com essa página,\ncom o título "Escrever ata"; os campos recebem o texto do rascunho salvo
+  Ata --> U : página "Escrever ata": "Assuntos tratados", "Decisões tomadas", "Observações (opcional)",\n"PRESENTES E AUSENTES" ("Vem da lista de presença. Não dá para editar."),\n"Enviar para Aprovação" e "Salvar Rascunho"
+end
+
+group Salvar o rascunho
+  U -> Ata : preencher os campos e tocar em "Salvar Rascunho"
+  Ata -> Ata : saveDraft()
+  alt topics, decisions e notes vazios após trim
+    Ata -> Ata : setError("Escreva algo na ata antes de salvar o rascunho.")
+    Ata --> U : aviso acima dos botões; nenhuma requisição
+  else algum texto preenchido
+  Ata -> Ata : send(path, "PUT", body, "Rascunho salvo", "Só você vê o rascunho até enviar.")
+  note right of Ata : path é /meetings/{meetingId}/minutes; body contém topics, decisions e notes;\no aparelho exige pelo menos um campo com texto e permite rascunho parcial
+  Ata -> Api : apiRequest(token, path, method, body)
+  Api -> Filtro : PUT /api/meetings/{meetingId}/minutes (MinutesRequestDTO)
+  Filtro -> Ctrl : saveDraft(meetingId, dto, auth)
+  note right of Ctrl : @Valid: topics e decisions até 4000 caracteres e notes até 2000;\nexcesso devolve 400 pelo GlobalExceptionHandler
+  Ctrl -> Svc : saveDraft(meetingId, email, dto)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User president
+  Svc -> Acc : requirePresident(president, meeting.getCommittee())
+  Acc --> Svc : void
+  Svc -> Svc : requireEnded(meeting, now)
+  Svc -> Meeting : statusAt(now)
+  Meeting --> Svc : MeetingStatus
+  note right of Svc : CANCELED: "Reunião cancelada não tem ata."\ndiferente de ENDED: "A ata só pode ser escrita depois que a reunião terminar."
+  Svc -> MinRepo : findForUpdate(meetingId)
+  MinRepo --> Svc : Optional<MeetingMinutes> (linha bloqueada)
+  note right of Svc : sem ata, cria new MeetingMinutes(meeting, president), com status DRAFT
+  note right of Svc : após conferir permissão, reunião e DRAFT, aplica e normaliza os textos.
+  Svc -> Svc : applyText(minutes, dto)
+  loop topics, decisions e notes
+    Svc -> Acc : clean(value)
+    Acc --> Svc : String ou null
+  end
+  alt algum campo preenchido após normalizar
+    note right of Svc : minutes recebe writtenBy = president e updatedAt = now
+    Svc -> MinRepo : save(minutes)
+    Svc -> Acc : audit(president, "MEETING_MINUTES_DRAFT_SAVED", meeting, "")
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
+    Svc -> Svc : view(meeting, president)
+    note right of Svc : monta o MinutesResponseDTO com presentes, ausentes e o texto do rascunho (detalhado no RF42)
+    Svc --> Ctrl : MinutesResponseDTO
+    Ctrl --> Api : 200 MinutesResponseDTO
+    Api --> Ata : ApiResult
+    Ata -> Min : readMinutes(data)
+    Min --> Ata : Minutes
+    Ata --> U : aviso "Rascunho salvo" (Só você vê o rascunho até enviar.); a página continua aberta
+    Ata -> Tela : refreshDetail()
+    note right of Tela : antes, notifySync("MEETINGS_MUTATED");\nrefreshDetail chama loadDetail e load; o cartão passa a "Rascunho salvo em ..."
+  else não é presidente, reunião não encerrada ou cancelada, ata enviada ou aprovada, ou campos vazios
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 403 ou 409 {message}
+    Api --> Ata : ApiResult (mensagem do erro)
+    Ata --> U : exibe a mensagem acima dos botões
+  end
+  deactivate Svc
+  end
+end
+note over Svc : As validações são sequenciais: a primeira falha encerra a operação.\nAs chamadas seguintes só ocorrem se as anteriores forem aprovadas.
+@enduml

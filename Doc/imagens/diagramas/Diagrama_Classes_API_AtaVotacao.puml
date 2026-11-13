@@ -1,0 +1,113 @@
+@startuml Diagrama_Classes_API_AtaVotacao
+!pragma layout smetana
+title
+SpotMeet - Classes da API: Ata, votação e relatório individual (RF37 a RF47)
+end title
+hide circle
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam defaultFontSize 11
+skinparam nodesep 25
+skinparam ranksep 35
+class MeetingMinutesController <<controller>> {
+  +getMinutes(meetingId: Long, auth: Authentication): ResponseEntity<MinutesResponseDTO>
+  +saveDraft(meetingId: Long, dto: MinutesRequestDTO, auth: Authentication): ResponseEntity<MinutesResponseDTO>
+  +submit(meetingId: Long, dto: MinutesRequestDTO, auth: Authentication): ResponseEntity<MinutesResponseDTO>
+  +answer(meetingId: Long, dto: MinutesAnswerDTO, auth: Authentication): ResponseEntity<MinutesResponseDTO>
+  +close(meetingId: Long, auth: Authentication): ResponseEntity<MinutesResponseDTO>
+}
+class MeetingPollController <<controller>> {
+  +listPolls(meetingId: Long, auth: Authentication): ResponseEntity<List<PollResponseDTO>>
+  +openPoll(meetingId: Long, dto: PollRequestDTO, auth: Authentication): ResponseEntity<List<PollResponseDTO>>
+  +vote(meetingId: Long, pollId: Long, dto: PollVoteDTO, auth: Authentication): ResponseEntity<List<PollResponseDTO>>
+  +closePoll(meetingId: Long, pollId: Long, auth: Authentication): ResponseEntity<List<PollResponseDTO>>
+}
+class AttendanceReportController <<controller>> {
+  +getReport(from: LocalDate, to: LocalDate, committeeId: Long, auth: Authentication): ResponseEntity<AttendanceReportDTO>
+}
+class MeetingMinutesService <<service>> {
+  +get(meetingId: Long, email: String): MinutesResponseDTO
+  +saveDraft(meetingId: Long, email: String, dto: MinutesRequestDTO): MinutesResponseDTO
+  +submit(meetingId: Long, email: String, dto: MinutesRequestDTO): MinutesResponseDTO
+  +answer(meetingId: Long, email: String, dto: MinutesAnswerDTO): MinutesResponseDTO
+  +close(meetingId: Long, email: String): MinutesResponseDTO
+}
+class MeetingPollService <<service>> {
+  +list(meetingId: Long, email: String): List<PollResponseDTO>
+  +open(meetingId: Long, email: String, dto: PollRequestDTO): List<PollResponseDTO>
+  +vote(meetingId: Long, pollId: Long, email: String, dto: PollVoteDTO): List<PollResponseDTO>
+  +close(meetingId: Long, pollId: Long, email: String): List<PollResponseDTO>
+}
+class AttendanceReportService <<service>> {
+  +report(email: String, from: LocalDate, to: LocalDate, committeeId: Long): AttendanceReportDTO
+}
+class MeetingAccess <<service>> {
+
+}
+class EmailService <<service>> {
+
+}
+interface AuditLogRepository <<repository>> {
+
+}
+interface CommitteeMemberRepository <<repository>> {
+
+}
+interface CommitteeRepository <<repository>> {
+
+}
+interface MeetingMinutesRepository <<repository>> {
+
+}
+interface MeetingParticipantRepository <<repository>> {
+
+}
+interface MeetingPollRepository <<repository>> {
+  +findByMeetingIdOrderByOpenedAtAsc(meetingId: Long): List<MeetingPoll>
+  +findForUpdate(meetingId: Long, pollId: Long): Optional<MeetingPoll>
+}
+interface MeetingRepository <<repository>> {
+
+}
+interface MinutesResponseRepository <<repository>> {
+
+}
+interface PollVoteRepository <<repository>> {
+  +findByPollIdInOrderByVotedAtAsc(pollIds: Collection<Long>): List<PollVote>
+  +existsByPollIdAndUserId(pollId: Long, userId: Long): boolean
+}
+interface UserRepository <<repository>> {
+
+}
+AttendanceReportController --> AttendanceReportService
+AttendanceReportService --> MeetingAccess
+AttendanceReportService --> MeetingParticipantRepository
+MeetingAccess --> AuditLogRepository
+MeetingAccess --> CommitteeMemberRepository
+MeetingAccess --> CommitteeRepository
+MeetingAccess --> MeetingMinutesRepository
+MeetingAccess --> MeetingParticipantRepository
+MeetingAccess --> MeetingRepository
+MeetingAccess --> MinutesResponseRepository
+MeetingAccess --> UserRepository
+MeetingMinutesController --> MeetingMinutesService
+MeetingMinutesService --> EmailService
+MeetingMinutesService --> MeetingAccess
+MeetingMinutesService --> MeetingMinutesRepository
+MeetingMinutesService --> MeetingParticipantRepository
+MeetingMinutesService --> MinutesResponseRepository
+MeetingPollController --> MeetingPollService
+MeetingPollService --> MeetingAccess
+MeetingPollService --> MeetingParticipantRepository
+MeetingPollService --> MeetingPollRepository
+MeetingPollService --> PollVoteRepository
+MeetingMinutesService -[hidden]down-> MeetingAccess
+MeetingPollService -[hidden]down-> EmailService
+AuditLogRepository -[hidden]down-> MeetingMinutesRepository
+CommitteeMemberRepository -[hidden]down-> MeetingParticipantRepository
+CommitteeRepository -[hidden]down-> MeetingPollRepository
+MeetingMinutesRepository -[hidden]down-> MeetingRepository
+MeetingParticipantRepository -[hidden]down-> MinutesResponseRepository
+MeetingPollRepository -[hidden]down-> PollVoteRepository
+MeetingRepository -[hidden]down-> UserRepository
+@enduml

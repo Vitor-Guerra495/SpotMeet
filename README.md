@@ -2,124 +2,106 @@
 
 ![Logo do SpotMeet](Doc/imagens/design/ícones.png)
 
-O **SpotMeet** é um aplicativo mobile voltado ao gerenciamento e à organização de reuniões. A proposta é centralizar informações importantes do fluxo de uma reunião, facilitando o acompanhamento de agenda, pautas, participantes, registros e atas em uma interface simples e organizada.
+O **SpotMeet** é um aplicativo mobile para organizar as reuniões de organizações e comissões. Ele reúne num só lugar o agendamento, os convites, a pauta, a presença dos participantes e os avisos por e-mail.
 
-O projeto é desenvolvido para **Android e iOS** e utiliza uma arquitetura cliente-servidor, com separação entre o aplicativo mobile, o backend e a persistência dos dados.
+O projeto é desenvolvido para **Android e iOS** e usa uma arquitetura cliente-servidor, com o aplicativo mobile, o servidor (backend) e o banco de dados separados.
 
-## Objetivo
+## Funcionalidades
 
-O SpotMeet busca oferecer uma solução centralizada para apoiar a organização das reuniões, permitindo que usuários consultem compromissos, organizem pautas e mantenham registros relacionados às reuniões de forma estruturada.
-
-A interface foi planejada com foco em:
-
-- facilidade de uso;
-- organização das informações;
-- navegação simples;
-- responsividade;
-- compatibilidade com Android e iOS;
-- identidade visual consistente;
-- segurança no armazenamento e no acesso aos dados.
+- Cadastro com confirmação do e-mail por código, login com e-mail e senha e login com Google (APK Android).
+- Organizações e comissões, com pedidos de acesso pela chave ou pela lista de organizações, convites e aprovação pelo administrador do sistema.
+- Agendamento de reuniões com data e hora pelo seletor do celular, dia inteiro, vários dias, repetição (diária, semanal, mensal, anual, dias úteis ou personalizada), modalidade presencial, online ou híbrida e anexo da pauta.
+- Convites com aceite ou recusa, aviso dos convites sem resposta na aba Reuniões, recusas avisadas ao presidente no aplicativo e por e-mail e e-mails de convite, alteração e cancelamento.
+- Registro de entrada e saída e lista de presença.
+- Ata da reunião escrita pelo presidente, com aprovação ou reprovação pelos presentes e e-mails do resultado.
+- Votação durante a reunião (Sim, Não ou Abstenção), com contagem ao vivo para o presidente e resultado nominal.
+- Relatório individual com as reuniões em que o usuário registrou entrada, por período e comissão.
+- Manual de utilização dentro do aplicativo (Ajustes, Ajuda), com busca por tópico.
+- Configurações do usuário em menu: perfil com foto, nome, e-mail e tema claro ou escuro, troca de senha, bloqueio biométrico e status de presença.
+- Informações do sistema para o administrador: aprovação de organizações, monitoramento, relatórios e controles.
 
 ## Tecnologias
 
 ### Aplicativo Mobile
 
-- **React Native**
-- **TypeScript**
+- **React Native** 0.88.1
+- **Expo SDK 58**
+- **TypeScript** 6.0
+- **React Navigation** 7
 
-O React Native permite o desenvolvimento para Android e iOS utilizando uma única base de código. O TypeScript adiciona tipagem estática e auxilia na legibilidade, manutenção e identificação de erros durante o desenvolvimento.
+O React Native permite desenvolver para Android e iOS com uma única base de código. O Expo permite testar no celular pelo Expo Go e gerar o APK do Android pelo EAS Build. O TypeScript adiciona tipagem estática ao código.
 
 ### Backend
 
 - **Java 21**
-- **Spring Boot**
-- **Spring Web**
-- **Spring Data JPA**
-- **Spring Security**
+- **Spring Boot** 3.3.5 (Spring Web, Spring Data JPA, Spring Security, Validation, Mail e Actuator)
+- **JJWT** 0.12.6
 
-O backend concentra as regras de negócio, autenticação, autorização, validação dos dados e comunicação com a camada de persistência.
+O servidor concentra as regras de negócio, a autenticação, a autorização, a validação dos dados, o envio dos e-mails e o acesso ao banco.
 
 ### Banco de Dados
 
-- **PostgreSQL**
-
-O PostgreSQL será utilizado para persistência dos dados do sistema e executado localmente durante o desenvolvimento.
+- **PostgreSQL** 18, executado localmente.
 
 ### Comunicação
 
-A comunicação entre o aplicativo mobile e o backend será realizada por meio de:
+O aplicativo e o servidor se comunicam por HTTP, numa API REST com JSON.
 
-- HTTP;
-- API REST;
-- JSON.
+A descrição da arquitetura e das bibliotecas está no [Doc/02](Doc/02-arquitetura-tecnologias.md).
 
 ## Arquitetura
 
-A arquitetura geral do SpotMeet segue o modelo cliente-servidor:
-
 ```text
 Aplicativo Mobile
-React Native + TypeScript
+React Native + Expo + TypeScript
         |
         | HTTP / REST / JSON
         v
-Backend
-Java 21 + Spring Boot
+Backend                        ---> Gmail (SMTP): e-mails
+Java 21 + Spring Boot          ---> Google: chaves públicas do login
         |
-        | Persistência
+        | Spring Data JPA
         v
 PostgreSQL
 ```
 
-O aplicativo mobile é responsável pela interface e interação com o usuário. O backend concentra as regras de negócio, validações, autenticação, autorização e acesso aos dados.
-
 ## Segurança e Qualidade
 
-O projeto estabelece práticas de segurança e qualidade desde a documentação inicial, incluindo:
-
-- armazenamento seguro de senhas por meio de função de hash apropriada;
-- autenticação controlada pelo backend;
-- autorização por operação e por recurso;
-- proteção contra BOLA e IDOR;
-- validação de dados recebidos pela API;
-- prevenção de Mass Assignment;
+- senhas e códigos de verificação guardados com BCrypt (custo 12);
+- autenticação por token JWT, controlada pelo servidor;
+- autorização por operação e por recurso, conferida no servidor, sem confiar nos identificadores enviados pelo aplicativo;
+- validação dos dados recebidos e uso de DTOs para limitar os campos aceitos;
 - consultas parametrizadas;
-- tratamento adequado de conteúdo textual;
-- controle de informações sensíveis em logs;
-- proibição de credenciais e secrets no repositório;
-- estratégia de testes unitários, de integração, API, funcionais, segurança, usabilidade e compatibilidade.
+- bloqueio temporário depois de 10 tentativas erradas de login ou de código;
+- rotas do Actuator restritas ao administrador do sistema, exceto `/actuator/health` e `/actuator/info`;
+- senha do banco, senha do e-mail e chave JWT configuradas no arquivo `backend/.env`, que não é versionado;
+- testes automatizados do servidor (JUnit e Spring Boot Test) e do aplicativo (`node:test`).
 
 ## Design e UI/UX
 
-A identidade visual do SpotMeet utiliza tons de violeta e roxo, com foco em uma interface moderna, organizada e consistente.
+O aplicativo usa o anil `#5C6BC0` como cor principal; a logo mantém o roxo `#901ECE`. A interface tem:
 
-O aplicativo prevê:
+- tema claro e tema escuro, escolhidos em Ajustes e salvos no perfil;
+- abas inferiores Reuniões, Organização e Ajustes para o usuário;
+- abas Aprovações, Organizações, Monitoramento e Controles para o administrador do sistema;
+- cartões de reunião com selos de situação e prioridade;
+- formulários e detalhes de reuniões que abrem como folhas a partir da parte de baixo da tela;
+- seletores de data e hora do próprio celular.
 
-- modo claro;
-- modo escuro;
-- acompanhamento do tema definido pelo sistema;
-- cards de reunião;
-- badges de status;
-- criação rápida por Bottom Sheet;
-- telas adaptáveis a diferentes tamanhos de dispositivos.
-
-A frase de apoio utilizada na tela de login é:
-
-> **Organize suas reuniões em um só lugar.**
+A frase de apoio da tela de login é **Conecte-se com sua equipe em qualquer lugar**, e a do cadastro, **Organize suas reuniões em um só lugar**.
 
 ## Documentação
-
-A documentação inicial do projeto está dividida nos seguintes arquivos:
 
 | Documento | Conteúdo |
 |---|---|
 | [01 - Análise de Mercado e RNF](Doc/01-analise-mercado-rnf.md) | Avaliação de concorrentes e requisitos não funcionais |
-| [02 - Arquitetura e Tecnologias](Doc/02-arquitetura-tecnologias.md) | Arquitetura cliente-servidor, tecnologias e segurança |
+| [02 - Arquitetura e Tecnologias](Doc/02-arquitetura-tecnologias.md) | Arquitetura cliente-servidor, tecnologias, bibliotecas e segurança |
 | [03 - Padrões e Qualidade](Doc/03-padroes-qualidade.md) | Nomenclatura, práticas de programação, Git e estratégia de testes |
 | [04 - Design e UI/UX](Doc/04-design.md) | Identidade visual, cores, tipografia, componentes e telas |
-| [05 - Documento de Requisitos dos Incrementos 1 e 2](Doc/05-documento-requisitos.md) | Requisitos funcionais e não funcionais, diagramas de casos de uso, classes, relacional e sequência, dicionário de dados e testes |
+| [05 - Documento de Requisitos dos Incrementos 1 a 3](Doc/05-documento-requisitos.md) | Requisitos funcionais e não funcionais, diagramas de casos de uso, classes, relacional e sequência, dicionários e testes |
+| [06 - Manual de Uso](Doc/06-manual-de-uso.md) | Como usar o aplicativo, por perfil: o mesmo texto da Ajuda do aplicativo |
 
-## Estrutura da Documentação
+## Estrutura do Repositório
 
 ```text
 SpotMeet/
@@ -132,15 +114,10 @@ SpotMeet/
     |-- 03-padroes-qualidade.md
     |-- 04-design.md
     |-- 05-documento-requisitos.md
+    |-- 06-manual-de-uso.md
     `-- imagens/
-        |-- design/
-        |   |-- ícones.png
-        |   |-- Tela_Login.jpeg
-        |   |-- Tela_Agenda.jpg
-        |   |-- Tela_Calendario.jpg
-        |   |-- Tela_Atas.jpg
-        |   `-- Tela_Ajuste.jpg
-        `-- diagramas/    # diagramas dos Incrementos 1 e 2 (PNG e fonte PlantUML)
+        |-- design/       # imagens do Doc/04
+        `-- diagramas/    # diagramas do Doc/05 (PNG e fonte PlantUML)
 ```
 
 ## Como Executar
@@ -151,48 +128,44 @@ SpotMeet/
 |---|---|
 | JDK | 21 |
 | PostgreSQL | 18 |
-| Node.js | 20 ou superior |
-| Expo Go | Instalado no celular (Android ou iOS) |
+| Node.js | 22.13 ou superior |
+| Expo Go | Versão para o Expo SDK 58, instalada no celular (Android 7.0 ou superior, iOS 16.4 ou superior) |
 
-O computador e o celular precisam estar na mesma rede Wi-Fi.
+O computador e o celular precisam estar na mesma rede Wi-Fi. O login com Google e o envio de e-mails exigem internet no computador e no celular.
 
 ### 1. Banco de dados
 
-Criar o banco `spotmeet_db` no PostgreSQL:
-
-```bash
-psql -U postgres -c "CREATE DATABASE spotmeet_db;"
-```
-
-As tabelas são criadas automaticamente na primeira execução do servidor.
+Basta o PostgreSQL estar em execução. Na primeira execução, o servidor cria o banco `spotmeet_db`, se ele ainda não existir (o usuário configurado precisa ter permissão para criar bancos), e todas as tabelas. Nas versões seguintes, as tabelas novas são acrescentadas sem apagar os dados.
 
 ### 2. Configuração do servidor
 
 Copiar `backend/.env.example` para `backend/.env` e preencher:
 
-- `DB_PASSWORD`: senha do usuário `postgres`;
+- `DB_PASSWORD`: senha do usuário `postgres` (endereço e usuário podem ser alterados em `DB_URL` e `DB_USERNAME`);
 - `JWT_SECRET`: chave em Base64 com pelo menos 32 bytes. No Linux ou macOS: `openssl rand -base64 48`. No PowerShell:
 
 ```powershell
 $b = New-Object byte[] 48; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)
 ```
 
-- `MAIL_USERNAME` e `MAIL_PASSWORD`: conta do Gmail e senha de app, usadas para enviar os códigos de verificação. Se ficarem vazios, o código é exibido na própria tela do aplicativo.
+- `MAIL_USERNAME` e `MAIL_PASSWORD`: conta do Gmail e senha de app, usadas para enviar os códigos de verificação e os avisos. Se ficarem vazios, nenhum e-mail é enviado e o código de verificação aparece no console do servidor, na linha `[SpotMeet-Email] Código local de QA`.
+
+O login com Google já vem configurado com o ID de cliente do projeto da equipe no Google Cloud; não é preciso preencher `GOOGLE_CLIENT_ID`.
 
 ### 3. Servidor
 
 ```bash
 cd backend
-./mvnw spring-boot:run        # Windows: mvnw.cmd spring-boot:run
+./mvnw spring-boot:run        # Windows: .\mvnw.cmd spring-boot:run
 ```
 
-O servidor inicia na porta 8080. Na primeira execução é criada a conta do administrador do sistema:
+O servidor inicia na porta 8080. Na primeira execução é criada a conta do administrador do sistema, cuja senha pode ser trocada depois na aba Controles:
 
 | E-mail | Senha |
 |---|---|
 | `sysadmin@spotmeet.com` | `Admin@123` |
 
-### 4. Aplicativo
+### 4. Aplicativo pelo Expo Go
 
 Em outro terminal:
 
@@ -202,16 +175,33 @@ npm install
 npx expo start
 ```
 
-Ler o QR code exibido com o Expo Go (Android) ou com a câmera (iOS). O aplicativo localiza o servidor automaticamente pelo endereço do computador. Se não localizar, informar o IP do computador na opção "Servidor" da tela de login.
+Ler o QR code exibido com o Expo Go (Android) ou com a câmera (iOS). O aplicativo usa o endereço do computador que está rodando o Expo. Se não encontrar o servidor, informar o IP do computador na opção "Servidor" da tela de login.
 
 No Windows, liberar no firewall as portas 8080 (servidor) e 8081 (Expo) para que o celular consiga acessar o computador.
 
+### 5. Aplicativo pelo APK (Android)
+
+O APK é gerado pelo EAS Build, serviço de compilação do Expo, com o comando abaixo (exige uma conta Expo com acesso ao projeto):
+
+```bash
+cd SpotMeetApp
+npx eas-cli build --platform android --profile preview
+```
+
+Depois de instalar o APK, só é preciso o servidor em execução (passos 1 a 3); o Expo não precisa estar aberto.
+
+Algumas funções dependem de código nativo e só funcionam no APK:
+
+- **Login com Google:** o Google aceita só o aplicativo assinado com a chave registrada no projeto da equipe. No Expo Go e no iPhone, o botão avisa que o recurso não está disponível.
+- **Botão "Abrir no SpotMeet" dos e-mails:** abre o aplicativo na reunião. No Expo Go, a reunião pode ser aberta pela aba Reuniões.
+- **Face ID no iPhone:** o Expo Go não tem acesso ao Face ID; o bloqueio biométrico funciona no Android e em builds próprias de iOS.
+
 ## Padrões de Desenvolvimento
 
-O código-fonte utilizará identificadores em inglês, enquanto a documentação, a interface do usuário, os nomes de branches e as mensagens de commit serão mantidos em português.
+O código-fonte (classes, funções, variáveis, rotas e banco de dados) e os comentários do código são escritos em inglês. A documentação, a interface do usuário, os e-mails, os nomes de branches e as mensagens de commit são escritos em português.
 
-As alterações deverão ser desenvolvidas em branches específicas e revisadas antes da integração à branch `main`.
+As alterações são desenvolvidas em branches específicas e revisadas antes da integração à branch `main`.
 
 ## Projeto Acadêmico
 
-O SpotMeet está sendo desenvolvido como projeto acadêmico de software, com documentação e implementação organizadas de forma incremental ao longo do desenvolvimento.
+O SpotMeet é desenvolvido como projeto acadêmico da disciplina Projeto e Desenvolvimento de Sistemas II do IFSP, com documentação e implementação organizadas de forma incremental.

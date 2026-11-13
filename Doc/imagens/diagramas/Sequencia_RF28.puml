@@ -6,10 +6,12 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":usePendingInvitations" as Badge
 participant ":MeetingsScreen" as Tela
 end box
 box "API (backend)" #F6FFF4
@@ -17,13 +19,33 @@ participant ":JwtAuthFilter" as Filtro
 participant ":MeetingController" as Ctrl
 participant ":MeetingService" as Svc
 participant ":MeetingAccess" as Acc
+participant ":MeetingFileController" as FileCtrl
+participant ":MeetingFileService" as FileSvc
+participant ":MeetingLinkController" as LinkCtrl
 participant ":CommitteeController" as ComCtrl
 participant ":CommitteeService" as ComSvc
 participant ":CommitteeMemberRepository" as CmRepo
+participant ":OrganizationMemberRepository" as OrgMemRepo
+participant ":CommitteeRepository" as ComRepo
 participant ":MeetingRepository" as MeetRepo
 participant ":MeetingParticipantRepository" as PartRepo
+participant ":MeetingMinutesRepository" as MinRepo
+participant ":MinutesResponseRepository" as RespRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+
+group Número de convites na aba "Reuniões" (a cada 30 s e depois de qualquer mudança em reuniões)
+  Badge -> Filtro : GET /api/meetings/invitations/pending
+  Filtro -> Ctrl : countPendingInvitations(auth)
+  Ctrl -> Svc : countPendingInvitations(email)
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
+  Svc -> PartRepo : countPending(user.getId(), InvitationResponse.PENDING, LocalDateTime.now(), CommitteeMembershipStatus.ACTIVE)
+  PartRepo --> Svc : long
+  Svc --> Ctrl : long
+  Ctrl --> Badge : 200 {count}
+  Badge --> U : número sobre o ícone da aba "Reuniões"
+end
 
 group Abrir a aba "Reuniões" (e a cada 10 s, ao puxar para atualizar ou ao tocar em "Atualizar reuniões")
   U -> Tela : abrir a aba "Reuniões"
@@ -32,30 +54,44 @@ group Abrir a aba "Reuniões" (e a cada 10 s, ao puxar para atualizar ou ao toca
   Ctrl -> Svc : listMyMeetings(email)
   Svc -> Acc : findUser(email)
   Acc --> Svc : User
-  Svc -> PartRepo : findActiveByUser(userId, ACTIVE)
+  Svc -> PartRepo : findActiveByUser(user.getId(), CommitteeMembershipStatus.ACTIVE)
   PartRepo --> Svc : List<MeetingParticipant>
-  Svc -> CmRepo : findByUserIdAndStatus(userId, ACTIVE)
+  Svc -> CmRepo : findByUserIdAndStatus(user.getId(), CommitteeMembershipStatus.ACTIVE)
   CmRepo --> Svc : List<CommitteeMember>
-  loop cada comissão em que o usuário é COMMITTEE_ADMIN
-    Svc -> MeetRepo : findByCommitteeIdOrderByStartsAtDesc(committeeId)
+  loop cada vínculo m com papel COMMITTEE_ADMIN
+    Svc -> MeetRepo : findByCommitteeIdOrderByStartsAtDesc(m.getCommittee().getId())
     MeetRepo --> Svc : List<Meeting>
   end
-  note right of Svc : junta as reuniões sem repetir, da mais recente para a mais antiga;\no presidente vê também as reuniões para as quais não foi convidado
-  Svc -> Acc : summaries(meetings, user, now)
-  Acc -> PartRepo : findByMeetingIdIn(meetingIds)
+  Svc -> OrgMemRepo : findByUserId(user.getId())
+  OrgMemRepo --> Svc : List<OrganizationMember>
+  loop cada vínculo de dono, vice-líder ou subdono (papel diferente de MEMBER)
+    Svc -> ComRepo : findByOrganizationId(m.getOrganization().getId())
+    ComRepo --> Svc : List<Committee>
+    loop cada comissão c da organização
+      Svc -> MeetRepo : findByCommitteeIdOrderByStartsAtDesc(c.getId())
+      MeetRepo --> Svc : List<Meeting>
+    end
+  end
+  note right of Svc : junta sem repetir e monta ordered, da mais recente para a mais antiga;\no presidente vê também reuniões para as quais não foi convidado,\ne o líder, as de todas as comissões da organização (myResponse vazio)
+  Svc -> Acc : summaries(ordered, user, LocalDateTime.now())
+  Acc -> PartRepo : findByMeetingIdIn(meetings.stream().map(Meeting::getId).toList())
+  note right of Acc : meetings é o parâmetro List<Meeting> recebido por summaries
   PartRepo --> Acc : List<MeetingParticipant>
+  Acc -> CmRepo : findByUserIdAndStatus(viewer.getId(), CommitteeMembershipStatus.ACTIVE)
+  CmRepo --> Acc : List<CommitteeMember>
+  note right of Acc : nas comissões que o viewer preside (papel COMMITTEE_ADMIN),\no resumo recebe withDeclines com os participantes DECLINED
   Acc --> Svc : List<MeetingResponseDTO> (sem a lista de participantes)
   Svc --> Ctrl : List<MeetingResponseDTO>
   Ctrl --> Tela : 200 List<MeetingResponseDTO>
   Tela -> Filtro : GET /api/committees/presided
   Filtro -> ComCtrl : listPresidedCommittees(auth)
   ComCtrl -> ComSvc : listPresidedCommittees(email)
-  ComSvc -> CmRepo : findByUserIdAndStatus(userId, ACTIVE)
+  ComSvc -> CmRepo : findByUserIdAndStatus(user.getId(), CommitteeMembershipStatus.ACTIVE)
   CmRepo --> ComSvc : List<CommitteeMember>
   note right of ComSvc : mantém só os vínculos com role COMMITTEE_ADMIN
   ComSvc --> ComCtrl : List<CommitteeMemberResponseDTO>
   ComCtrl --> Tela : 200 List<CommitteeMemberResponseDTO>
-  Tela --> U : cartões em "Próximas" e "Anteriores", "CONVITES PARA RESPONDER" e, para o presidente, o botão "Agendar reunião"
+  Tela --> U : aviso de pendências (convites, atas e, para o presidente, recusas), filtros "Todas", "Próximas" e "Passadas",\nseções "Acontecendo agora", "Próximas" e "Anteriores", os selos "1 recusou" ou "N recusaram" e "Só visualização"\ne, para o presidente, o botão "+"
 end
 
 group Abrir o detalhe de uma reunião
@@ -67,38 +103,84 @@ group Abrir o detalhe de uma reunião
   Acc --> Svc : Meeting
   Svc -> Acc : findUser(email)
   Acc --> Svc : User
-  Svc -> Acc : requireViewer(user, committee)
-  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  Svc -> Acc : requireViewer(user, meeting.getCommittee())
+  Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+  note right of Acc : committee é o parâmetro recebido por requireViewer
   CmRepo --> Acc : CommitteeMember
   opt o usuário não é integrante ativo
-    Acc -> ComSvc : requireOrganizationLeader(user, organizationId)
+    Acc -> ComSvc : requireOrganizationLeader(user, committee.getOrganization().getId())
     ComSvc --> Acc : void ou SecurityException
   end
   alt integrante ativo ou líder da organização
-    Svc -> Acc : detail(meeting, user, now)
-    Acc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
+    Svc -> Acc : detail(meeting, user, LocalDateTime.now())
+    Acc -> Acc : summarize(List.of(meeting), user, now, true)
+    note right of Acc : ids contém o identificador da reunião; now é o instante recebido por detail.
+    Acc -> PartRepo : findByMeetingIdIn(ids)
     PartRepo --> Acc : List<MeetingParticipant>
+    Acc -> MinRepo : findByMeetingIdIn(ids)
+    MinRepo --> Acc : List<MeetingMinutes>
+    opt ata em aprovação
+      Acc -> RespRepo : findByMinutesIdInAndUserId(inApproval, viewer.getId())
+      RespRepo --> Acc : List<MinutesResponse>
+    end
+    note right of Acc : viewer é o usuário recebido por summarize; confere as comissões presididas,\nordena participantes por nome e completa declines, minutesStatus e minutesToAnswer.
     Acc --> Svc : MeetingResponseDTO (com os participantes)
     Svc --> Ctrl : MeetingResponseDTO
     Ctrl --> Tela : 200 MeetingResponseDTO
-    Tela --> U : modal "Reunião" com datas, local, link, pauta e contadores de convidados
+    Tela --> U : modal "Detalhe da reunião" com datas, horário, frequência, local, link, pauta,\nanexo, "Seu convite", "Presença" e convidados com a resposta;\no presidente vê recusas e o líder sem participação vê "Só visualização", sem ações de participação
   else sem permissão, ou reunião inexistente
     Svc --> Ctrl : SecurityException ou IllegalArgumentException
     Ctrl --> Handler : exceção propagada
     Handler --> Tela : 403 ou 409 {message}
-    Tela --> U : fecha o detalhe e recarrega a lista
+    Tela --> U : exibe o erro e fecha o detalhe (setDetail(null)); não recarrega a lista nesse ramo
   end
+end
+
+group Baixar o anexo da pauta
+  U -> Tela : tocar no anexo
+  Tela -> Filtro : GET /api/meetings/{meetingId}/attachment
+  Filtro -> FileCtrl : download(meetingId, auth)
+  FileCtrl -> FileSvc : download(meetingId, email)
+  FileSvc -> Acc : findMeeting(meetingId)
+  Acc --> FileSvc : Meeting
+  FileSvc -> Acc : findUser(email)
+  Acc --> FileSvc : User
+  FileSvc -> Acc : requireViewer(user, meeting.getCommittee())
+  alt acesso permitido e anexo existente
+    FileSvc --> FileCtrl : Download
+    FileCtrl --> Tela : 200 conteúdo do arquivo
+    Tela --> U : abre o arquivo com o aplicativo do celular (expo-sharing)
+  else sem acesso ou anexo inexistente
+    FileSvc --> FileCtrl : SecurityException ou IllegalArgumentException
+    FileCtrl --> Handler : exceção propagada
+    Handler --> Tela : 403 ou 409 {message}
+    Tela --> U : exibe erro ao baixar; não abre o arquivo
+  end
+end
+
+group Abrir a reunião pelo botão "Abrir no SpotMeet" do e-mail
+  U -> LinkCtrl : GET /abrir/reuniao/{meetingId} (rota pública, no navegador)
+  LinkCtrl --> U : página que redireciona para spotmeet://reunioes/{meetingId}
+  U -> Tela : o celular abre o aplicativo na aba "Reuniões"
+  Tela -> Filtro : GET /api/meetings/{meetingId}
+  note right of Tela : mesmo fluxo de "Abrir o detalhe de uma reunião"
 end
 
 group Consultar as reuniões de uma comissão (rota da API, o aplicativo usa /api/meetings/mine)
   Tela -> Filtro : GET /api/committees/{committeeId}/meetings
   Filtro -> Ctrl : listCommitteeMeetings(committeeId, auth)
   Ctrl -> Svc : listCommitteeMeetings(committeeId, email)
+  Svc -> Acc : findCommittee(committeeId)
+  Acc --> Svc : Committee
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User
   Svc -> Acc : requireViewer(user, committee)
   Svc -> MeetRepo : findByCommitteeIdOrderByStartsAtDesc(committeeId)
   MeetRepo --> Svc : List<Meeting>
-  Svc -> Acc : summaries(meetings, user, now)
+  Svc -> Acc : summaries(meetings, user, LocalDateTime.now())
+  note right of Svc : meetings representa a lista retornada pela consulta, passada diretamente a summaries
   Svc --> Ctrl : List<MeetingResponseDTO>
   Ctrl --> Tela : 200 List<MeetingResponseDTO>
 end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
 @enduml

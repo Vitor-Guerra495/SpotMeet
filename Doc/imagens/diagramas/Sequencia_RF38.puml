@@ -1,0 +1,100 @@
+@startuml Sequencia_RF38
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF38 (Enviar Ata para Aprovação)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(presidente da comissão)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MinutesSection" as Ata
+participant ":apiRequest" as Api
+participant ":minutes" as Min
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingMinutesController" as Ctrl
+participant ":MeetingMinutesService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
+participant ":MeetingMinutesRepository" as MinRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":MeetingText" as Txt
+participant ":EmailService" as Mail
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+
+note over U, Ata : na página "Escrever ata" (RF37), quando ninguém além do presidente registrou entrada,\no aviso "Não dá para enviar: ninguém além de você registrou entrada nesta reunião."\naparece e o botão "Enviar para Aprovação" fica desabilitado
+U -> Ata : tocar em "Enviar para Aprovação" na página "Escrever ata"
+Ata -> Ata : submit()
+Ata -> Ata : validate()
+alt "Assuntos tratados" ou "Decisões tomadas" vazio
+  Ata --> U : "Registre os assuntos tratados." ou "Registre as decisões tomadas." abaixo do campo; nada é enviado
+else campos obrigatórios preenchidos
+  Ata -> Ata : send(path, "POST", body, "Ata enviada para aprovação", "As pessoas presentes foram avisadas por e-mail.")
+  note right of Ata : path é /meetings/{meetingId}/minutes/submit; body contém topics, decisions e notes
+  Ata -> Api : apiRequest(token, path, method, body)
+  Api -> Filtro : POST /api/meetings/{meetingId}/minutes/submit (MinutesRequestDTO)
+  Filtro -> Ctrl : submit(meetingId, dto, auth)
+  Ctrl -> Svc : submit(meetingId, email, dto)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User president
+  Svc -> Acc : requirePresident(president, meeting.getCommittee())
+  Acc --> Svc : void
+  Svc -> Svc : requireEnded(meeting, now)
+  Svc -> Meeting : statusAt(now)
+  Meeting --> Svc : MeetingStatus
+  Svc -> MinRepo : findForUpdate(meetingId)
+  MinRepo --> Svc : Optional<MeetingMinutes> (linha bloqueada)
+  note right of Svc : sem ata, cria new MeetingMinutes(meeting, president);\nIN_APPROVAL: "A ata já está em aprovação.";\nAPPROVED: "Uma ata aprovada não pode mais ser editada."
+  Svc -> Svc : applyText(minutes, dto)
+  note right of Svc : topics nulo: "Registre os assuntos tratados.";\ndecisions nulo: "Registre as decisões tomadas."
+  Svc -> Svc : presentPeople(meeting)
+  Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+  PartRepo --> Svc : List<MeetingParticipant>
+  note right of Svc : presentes são os participantes com enteredAt;\nreaders são os presentes menos o presidente
+  alt presidente, reunião encerrada, ata inexistente ou em DRAFT, texto completo e readers não vazio
+    note right of Svc : status DRAFT, então não é reenvio (o reenvio da ata REJECTED é o RF41).\nminutes recebe writtenBy = president, status IN_APPROVAL,\nupdatedAt e submittedAt = now e closedAt nulo
+    Svc -> MinRepo : save(minutes)
+    Svc -> Txt : mail(meeting, MeetingService.appLink(meeting.getId()))
+    Txt --> Svc : MeetingText.Mail
+    note right of Txt : appLink é o método estático MeetingService.appLink,\nque monta o endereço /abrir/reuniao/{meetingId} do botão "Abrir no SpotMeet"
+    loop cada reader
+      Svc -> Mail : sendMinutesForApprovalEmail(reader.getEmail(), reader.getName(), mail, president.getName(), now)
+    end
+    note right of Mail : e-mail "Ata para aprovar: título da reunião";\nenvio assíncrono, depois do commit
+    Svc -> Acc : audit(president, "MEETING_MINUTES_SUBMITTED", meeting, " | Pessoas avisadas: " + readers.size())
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
+    Svc -> Svc : view(meeting, president)
+    note right of Svc : monta o MinutesResponseDTO, como no RF42
+    Svc --> Ctrl : MinutesResponseDTO
+    Ctrl --> Api : 200 MinutesResponseDTO
+    Api --> Ata : ApiResult
+    Ata -> Min : readMinutes(data)
+    Min --> Ata : Minutes
+    Ata --> U : aviso "Ata enviada para aprovação" (As pessoas presentes foram avisadas por e-mail.)
+    Ata -> Tela : refreshDetail()
+    Ata -> Tela : openPage(page)
+    note right of Tela : page é 'card': volta ao detalhe da reunião
+    Tela --> U : cartão "Ata" com "Em aprovação", a contagem e "Acompanhar Aprovação";\nem "Convidados", "Limpar registros" some e aparece\n"A presença não pode mais ser corrigida porque a ata já foi enviada."
+    note over Tela, Svc : a partir daqui, MeetingAttendanceService.resetAttendance recusa a correção\nda presença (RF33) com 409, porque a ata existe com status diferente de DRAFT
+  else não é presidente, reunião não encerrada, ata em aprovação ou aprovada, texto incompleto ou ninguém além do presidente presente
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 403 ou 409 {message}
+    Api --> Ata : ApiResult (mensagem do erro)
+    Ata --> U : exibe a mensagem acima dos botões
+  end
+  deactivate Svc
+end
+@enduml

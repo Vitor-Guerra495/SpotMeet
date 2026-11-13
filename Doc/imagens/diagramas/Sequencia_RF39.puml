@@ -1,0 +1,132 @@
+@startuml Sequencia_RF39
+!pragma layout smetana
+title
+SpotMeet - Sequência do RF39 (Aprovar ou Reprovar Ata)
+end title
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
+autonumber "<b>0"
+
+actor "Usuário\n(presente na reunião)" as U
+box "Aplicativo (SpotMeetApp)" #F4F6FF
+participant ":MeetingsScreen" as Tela
+participant ":MinutesSection" as Ata
+participant ":alerts" as Alertas
+participant ":apiRequest" as Api
+participant ":minutes" as Min
+end box
+box "API (backend)" #F6FFF4
+participant ":JwtAuthFilter" as Filtro
+participant ":MeetingMinutesController" as Ctrl
+participant ":MeetingMinutesService" as Svc
+participant ":MeetingAccess" as Acc
+participant ":MeetingMinutesRepository" as MinRepo
+participant ":MeetingParticipantRepository" as PartRepo
+participant ":MinutesResponseRepository" as RespRepo
+participant ":AuditLogRepository" as AuditRepo
+participant ":GlobalExceptionHandler" as Handler
+end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
+
+group Abrir a ata para responder
+  U -> Tela : tocar numa ata em "ATAS PARA RESPONDER" (página "Pendências") ou em "Ver Ata" no aviso do topo
+  Tela -> Tela : openMinutes(meeting)
+  Tela -> Tela : openDetail(meeting)
+  note right of Tela : openMinutes abre o detalhe e chama setView('minutes-read');\npelo detalhe, o botão "Aprovar ou Reprovar" do cartão "Ata" leva à mesma página
+  note right of Ata : ao ser exibido, MinutesSection consulta a ata (path /meetings/{meetingId}/minutes)
+  Ata -> Api : apiRequest(token, path)
+  Api -> Filtro : GET /api/meetings/{meetingId}/minutes
+  Filtro -> Ctrl : getMinutes(meetingId, auth)
+  Ctrl -> Svc : get(meetingId, email)
+  note right of Svc : requireViewer e view(meeting, user), como no RF42
+  Svc --> Ctrl : MinutesResponseDTO
+  Ctrl --> Api : 200 MinutesResponseDTO
+  Api --> Ata : ApiResult
+  Ata -> Min : readMinutes(data)
+  Min --> Ata : Minutes
+  Ata --> U : página "Ata da reunião" com o texto, presentes e ausentes,\n"Você registrou entrada, então pode responder. A ata vale pela maioria de quem responder."\ne os botões "Reprovar" e "Aprovar" (canAnswer verdadeiro)
+end
+
+group Escolher a resposta
+  alt aprovar
+    U -> Ata : tocar em "Aprovar"
+    Ata -> Ata : approve()
+    Ata -> Alertas : confirmAction("Aprovar a ata?", message, onConfirm, "Aprovar")
+    Alertas --> U : "Depois de enviada, a resposta não pode ser trocada." com "Cancelar" e "Aprovar"
+    U -> Alertas : tocar em "Aprovar"
+    Ata -> Ata : send(path, "POST", body, "Resposta enviada", "Você aprovou a ata.")
+    note right of Ata : chamado por onConfirm; body é { approved: true }
+  else reprovar
+    U -> Ata : tocar em "Reprovar"
+    Ata -> Tela : openPage(page)
+    note right of Tela : page é 'minutes-reject': página "Reprovar ata"
+    Ata --> U : campo "Motivo" (até 300 caracteres),\n"O presidente recebe o motivo com o seu nome e corrige a ata.",\n"Reprovar Ata" e "Voltar"
+    U -> Ata : escrever o motivo e tocar em "Reprovar Ata"
+    Ata -> Ata : reject()
+    opt motivo vazio
+      Ata --> U : "Informe o motivo da reprovação." abaixo do campo; nada é enviado
+    end
+    Ata -> Ata : send(path, "POST", body, "Resposta enviada", "Você reprovou a ata.")
+    note right of Ata : body é { approved: false, reason }
+  end
+end
+
+group Gravar a resposta
+  note right of Ata : path é /meetings/{meetingId}/minutes/answer
+  Ata -> Api : apiRequest(token, path, method, body)
+  Api -> Filtro : POST /api/meetings/{meetingId}/minutes/answer (MinutesAnswerDTO)
+  Filtro -> Ctrl : answer(meetingId, dto, auth)
+  note right of Ctrl : @Valid: approved obrigatório ("Informe se aprova ou reprova a ata.")\ne reason até 300 caracteres; falha devolve 400
+  Ctrl -> Svc : answer(meetingId, email, dto)
+  activate Svc
+  Svc -> Acc : findMeeting(meetingId)
+  Acc --> Svc : Meeting
+  Svc -> Acc : findUser(email)
+  Acc --> Svc : User user
+  Svc -> Acc : requireViewer(user, meeting.getCommittee())
+  Acc --> Svc : void
+  note right of Acc : integrante ativo da comissão ou líder da organização; senão, SecurityException
+  Svc -> MinRepo : findForUpdate(meetingId)
+  MinRepo --> Svc : Optional<MeetingMinutes> (linha bloqueada)
+  note right of Svc : só segue com status IN_APPROVAL: "A ata não está em aprovação.";\nquem escreveu: "Você não responde à sua própria ata."
+  Svc -> PartRepo : findByMeetingIdAndUserId(meetingId, user.getId())
+  PartRepo --> Svc : Optional<MeetingParticipant>
+  note right of Svc : sem enteredAt: "Só quem registrou entrada na reunião pode responder à ata."
+  Svc -> RespRepo : existsByMinutesIdAndUserId(minutes.getId(), user.getId())
+  RespRepo --> Svc : boolean
+  note right of Svc : já respondeu: "Você já respondeu a esta ata."
+  Svc -> Acc : clean(dto.getReason())
+  Acc --> Svc : String ou null
+  alt ata em aprovação, não escreveu, tem entrada, ainda não respondeu e, na reprovação, informou o motivo
+    Svc -> RespRepo : save(new MinutesResponse(minutes, user, approved, reason, respondedAt))
+    note right of RespRepo : reason fica nulo na aprovação; respondedAt é o momento atual;\na restrição uq_minutes_response impede duas respostas da mesma pessoa
+    Svc -> Acc : audit(user, "MEETING_MINUTES_APPROVED_BY_MEMBER", meeting, "")
+    note right of Acc : na reprovação, a ação é MEETING_MINUTES_REJECTED_BY_MEMBER
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
+    Svc -> Svc : view(meeting, user)
+    note right of Svc : monta o MinutesResponseDTO, como no RF42, com myAnswer preenchido e canAnswer falso
+    Svc --> Ctrl : MinutesResponseDTO
+    Ctrl --> Api : 200 MinutesResponseDTO
+    Api --> Ata : ApiResult
+    Ata -> Min : readMinutes(data)
+    Min --> Ata : Minutes
+    Ata --> U : aviso "Resposta enviada" (Você aprovou a ata. ou Você reprovou a ata.)
+    Ata -> Tela : refreshDetail()
+    opt reprovação
+      Ata -> Tela : openPage(page)
+      note right of Tela : page é 'minutes-read'; o motivo digitado é limpo
+    end
+    Ata --> U : quadro "Você aprovou esta ata" ou "Você reprovou esta ata", com "Respondida em ..."\ne, na reprovação, "SEU MOTIVO"; na lista, o selo "Ata para aprovar" deixa de aparecer
+  else sem acesso, ata fora de aprovação, quem escreveu, sem entrada, já respondeu ou reprovação sem motivo
+    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Api : 403 ou 409 {message}
+    Api --> Ata : ApiResult (mensagem do erro)
+    Ata --> U : exibe a mensagem acima dos botões
+  end
+  deactivate Svc
+end
+note over U : confirmAction usa requestConfirmation do módulo utils/confirmation.\nConfirmationHost apresenta o pedido e executa o callback onConfirm após a confirmação.
+@enduml

@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 260
 autonumber "<b>0"
 
 actor "Administrador\ndo sistema" as A
@@ -22,18 +23,21 @@ participant ":SystemMonitoring\nService" as Mon
 participant ":DataSource" as DS
 participant ":Connection" as Conn
 participant ":MeterRegistry" as Reg
+participant ":Search" as Search
 end box
 
 group Consultar o status
   A -> Tela : tocar na aba "Monitoramento"
-  Live -> Tela : loadData(silent = true) a cada 4 s, em foco
+  Tela -> Tela : loadData()
+  note right of Tela : carga inicial pelo useFocusEffect; depois, useLiveSync chama loadData(true).
+  note right of Tela : atualização periódica a cada 4 segundos, em foco; argumento silent true.\nO mesmo ciclo envia GET /api/admin/reports (RF21).
   Tela -> Filtro : GET /api/admin/system/status
-  note right of Tela : o mesmo ciclo envia GET /api/admin/reports (RF21)
   Filtro -> Ctrl : getSystemStatus(authentication)
   activate Ctrl
   Ctrl -> Svc : getSystemStatus(email)
   activate Svc
-  Svc -> Repo : findByEmail(email)
+  Svc -> Svc : validateSysAdmin(executorEmail)
+  Svc -> Repo : findByEmail(executorEmail)
   Repo --> Svc : Optional<User>
   alt executor com perfil ADMIN ou SYSADMIN
     Svc -> Mon : getVersion()
@@ -48,7 +52,7 @@ group Consultar o status
     note right of Svc : testa 127.0.0.1:SERVER_PORT (1 s)\ne lista os IPv4 das placas ativas
     Svc -> Mon : collectResources()
     Mon --> Svc : MemoryInfo
-    Svc -> Mon : getOverallStatus(banco, rede, recursos)
+    Svc -> Mon : getOverallStatus(dbInfo.getStatus(), netInfo.getStatus(), resources.getStatus())
     Mon --> Svc : "OPERATIONAL" ou "DEGRADED"
     Svc --> Ctrl : SystemStatusDTO
     Ctrl --> Tela : 200 SystemStatusDTO
@@ -73,7 +77,8 @@ group Consultar os detalhes de Banco de dados, Recursos ou API
   activate Ctrl
   Ctrl -> Svc : getSystemDetails(email)
   activate Svc
-  Svc -> Repo : findByEmail(email)
+  Svc -> Svc : validateSysAdmin(executorEmail)
+  Svc -> Repo : findByEmail(executorEmail)
   Repo --> Svc : Optional<User>
   Svc -> Mon : collect()
   activate Mon
@@ -82,8 +87,11 @@ group Consultar os detalhes de Banco de dados, Recursos ou API
   Mon -> Conn : createStatement()
   Conn --> Mon : Statement
   note right of Mon : duas consultas fixas de leitura (latência e resumo do banco),\ncada uma com limite de 3 s
-  Mon -> Reg : find("http.server.requests").timers()
-  Reg --> Mon : Collection<Timer>
+  Mon -> Reg : find("http.server.requests")
+  Reg --> Mon : Search
+  Mon -> Search : timers()
+  Search --> Mon : Collection<Timer>
+  note right of Search : desdobramento da cadeia de chamadas do MeterRegistry
   Mon -> Mon : collectResources()
   Mon --> Svc : SystemDetailsDTO
   deactivate Mon

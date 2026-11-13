@@ -28,9 +28,10 @@ end box
 actor "Administrador\ndo sistema" as A
 
 group Iniciar o servidor
-  A -> Main : iniciar o servidor (mvnw spring-boot:run): main(args)
+  A -> Main : main(args)
+  note right of Main : início do servidor, por exemplo com mvnw spring-boot:run
   activate Main
-  Main -> Criador : createIfMissing(environment)
+  Main -> Criador : createIfMissing(event.getEnvironment())
   note right of Criador : ouvinte de ApplicationEnvironmentPreparedEvent: roda depois de ler\no .env e antes de abrir o pool de conexões, com DB_URL, DB_USERNAME e DB_PASSWORD
   alt o banco não existe
     note right of Criador : cria o banco e escreve "Banco <nome> criado." no console
@@ -38,15 +39,16 @@ group Iniciar o servidor
     note right of Criador : escreve "Nao foi possivel verificar o banco <nome>" e segue
   end
   Criador --> Main : void
-  note over Main : SpringApplication.run(args) abre o pool; o Hibernate (ddl-auto=update)\ncria tabelas e colunas ausentes, sem apagar dados
-  Main -> Repo : findByEmail("sysadmin@spotmeet.com") (ApplicationRunner sysAdminBootstrap)
+  note over Main : SpringApplication.run abre o pool; o Hibernate (ddl-auto=update)\ncria tabelas e colunas ausentes, sem apagar dados.\nO ApplicationRunner retornado por sysAdminBootstrap consulta a conta padrão.
+  Main -> Repo : findByEmail(SYSADMIN_EMAIL)
   Repo --> Main : Optional<User>
   alt conta ausente
     Main -> Enc : encode("Admin@123")
     Enc --> Main : hash BCrypt (custo 12)
-    Main -> Repo : save(User SYSADMIN, e-mail verificado)
+    note right of Main : admin recebe role SYSADMIN, e-mail verificado\ne endereço sysadmin@spotmeet.com
+    Main -> Repo : save(admin)
     Repo --> Main : User
-    Main --> A : console: "[SpotMeet] SysAdmin Provisionado", com e-mail e senha padrão
+    Main --> A : console: "[SpotMeet] Conta do administrador criada", com o e-mail e o aviso para trocar a senha
   else conta existente
     note over Main : nada é alterado
   end
@@ -62,14 +64,14 @@ group Abrir o aplicativo e localizar o servidor
   Api --> App : boolean
   opt sem host salvo, sem EXPO_PUBLIC_API_HOST e sem servidor do Expo
     App --> U : exibe "Procurando o servidor na rede..."
-    App -> Disc : discoverBackendHost(onProgress)
+    App -> Disc : discoverBackendHost((scanned, total) => setStatusText(`Procurando o servidor na rede... ${scanned}/${total}`))
     loop host em cache e depois a sub-rede /24, em lotes de 64, até achar
       Disc -> Disc : isSpotMeetBackend(host)
       Disc -> Info : GET /actuator/info (limite de 1,2 s)
       Info --> Disc : 200 {app: {name: "SpotMeet"}}
     end
     Disc --> App : DiscoveryResult {host, ownIp, fromCache}
-    App -> Api : setDiscoveredHost(host)
+    App -> Api : setDiscoveredHost(result.host)
     Api --> App : void
   end
   App --> U : exibe a tela de login ("Acessar conta") e o rodapé "Servidor: <host>:<porta> (<origem>)"
@@ -79,16 +81,24 @@ end
 group Configurar o endereço do servidor
   U -> Srv : tocar em "Servidor: <host>:<porta>"
   Srv --> U : exibe o campo de IP e os botões "Procurar na rede", "Salvar" e "Automático"
-  alt tocar em "Salvar" ou "Automático"
-    Srv -> Api : setApiHost(IP digitado ou null)
-    Api --> Srv : void (grava ou remove "@spotmeet/api-host")
+  alt tocar em "Salvar"
+    Srv -> Api : setApiHost(draft)
+    Api --> Srv : void (grava "@spotmeet/api-host")
+  else tocar em "Automático"
+    Srv -> Api : setApiHost(null)
+    Api --> Srv : void (remove "@spotmeet/api-host")
   else tocar em "Procurar na rede"
-    Srv -> Disc : discoverBackendHost(onProgress)
+    Srv -> Disc : clearDiscoveryCache()
+    Srv -> Disc : discoverBackendHost((scanned, total) => setScanProgress(`${scanned}/${total}`))
     Disc -> Info : GET /actuator/info (em cada host candidato)
     Info --> Disc : 200 {app: {name: "SpotMeet"}}
     Disc --> Srv : DiscoveryResult
-    Srv -> Api : setDiscoveredHost(host)
+    Srv -> Api : setDiscoveredHost(result.host)
     Api --> Srv : void
+    opt servidor encontrado
+      Srv -> Api : setApiHost(null)
+      Api --> Srv : void
+    end
   end
   Srv --> U : atualiza o rodapé "Servidor: <host>:<porta> (<origem>)"
 end

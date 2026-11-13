@@ -26,8 +26,9 @@ participant ":EmailDeliveryService" as Entrega
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom o e-mail do próprio usuário; não é uma variável local.
 
-U -> Tela : na aba "Ajustes", seção "Segurança", preencher\n"Senha atual", "Nova senha" e "Confirmar nova senha"\ne tocar em "Alterar Senha"
+U -> Tela : na aba "Ajustes", tocar em "Segurança" no menu, preencher\n"Senha atual", "Nova senha" e "Confirmar nova senha"\ne tocar em "Alterar Senha"
 alt campo vazio, nova senha fora de PASSWORD_REGEX,\nconfirmação diferente ou nova igual à atual
   Tela --> U : exibe a mensagem sob o campo, sem enviar a requisição
 else campos válidos no aplicativo
@@ -42,29 +43,30 @@ else campos válidos no aplicativo
   Ctrl -> Svc : changePassword(email, dto)
   activate Svc
   note over Svc : transação
-  Svc -> Repo : findByEmailForUpdate(email)
+  Svc -> Repo : findByEmailForUpdate(authenticatedEmail)
   Repo --> Svc : Optional<User>
-  Svc -> Tent : verify(CURRENT_PASSWORD, "user:" + id, verificação)
-  Tent -> Svc : verificação.get()
-  Svc -> Enc : matches(senhaAtual, hash)
+  Svc -> Tent : verify(AuthenticationAttempts.Purpose.CURRENT_PASSWORD, "user:" + user.getId(), verification)
+  note over Tent, Svc : Antes de executar verification, begin recusa a pausa já vigente com\nTooManyAttemptsException (429 e Retry-After), sem consultar matches.\nFora da pausa, verification representa o Supplier<T> da assinatura de verify:\ncompara a senha atual e lança IllegalArgumentException quando ela não confere
+  Svc -> Enc : matches(dto.getCurrentPassword(), user.getPassword())
   Enc --> Svc : boolean
-  Svc --> Tent : null, ou IllegalArgumentException\n("A senha atual está incorreta.")
   alt senha atual correta
     Tent --> Svc : null
-    Svc -> Enc : matches(novaSenha, hash)
+    Svc -> Enc : matches(dto.getNewPassword(), user.getPassword())
     Enc --> Svc : boolean
     alt nova senha diferente da atual
-      Svc -> Enc : encode(novaSenha)
+      Svc -> Enc : encode(dto.getNewPassword())
       Enc --> Svc : hash BCrypt (custo 12)
-      Svc -> Repo : save(User com password e tokens_valid_after)
+      note right of Svc : user recebe novo hash e tokensValidAfter atual
+      Svc -> Repo : save(user)
       Repo --> Svc : User
-      Svc -> Mail : sendPasswordChangedEmail(email)
+      Svc -> Mail : sendPasswordChangedEmail(user.getEmail(), user.getName(), EmailService.PasswordOrigin.APP)
       Mail --> Svc : void (envio registrado para depois do commit)
-      Svc -> AuditRepo : save(AuditLog PASSWORD_CHANGED)
+      Svc -> AuditRepo : save(new AuditLog(user, "PASSWORD_CHANGED", details))
       AuditRepo --> Svc : AuditLog
       Svc --> Ctrl : "Senha alterada com sucesso!"
       note over Svc : commit da transação
-      Mail ->> Entrega : sendPasswordChangedEmail(destinatário, assunto, texto)
+      Mail ->> Entrega : sendNotice(recipient, email)
+      note right of Entrega : email é EmailTemplate.Email, com assunto, HTML e texto
       Ctrl --> Tela : 200 {success: true, message}
       Tela -> Bio : keepForPasswordChange()
       note right of Bio : com a biometria habilitada, guarda só a preferência\n(saveBiometricRearm, sem token) para o próximo login

@@ -6,11 +6,14 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(presidente da comissão)" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
 participant ":MeetingForm" as Form
+participant ":InviteesSheet" as Folha
+participant ":MeetingsScreen" as Tela
 end box
 box "API (backend)" #F6FFF4
 participant ":JwtAuthFilter" as Filtro
@@ -28,44 +31,68 @@ group Escolher os convidados no formulário
   Form -> Filtro : GET /api/committees/{committeeId}/members
   Filtro -> ComCtrl : listActiveMembers(committeeId, auth)
   ComCtrl -> ComSvc : listActiveMembers(committeeId, email)
-  ComSvc -> CmRepo : findByCommitteeIdAndStatus(committeeId, ACTIVE)
+  note right of ComSvc : valida que quem consulta é integrante ativo ou líder, como no RF24
+  ComSvc -> CmRepo : findByCommitteeIdAndStatus(committeeId, CommitteeMembershipStatus.ACTIVE)
   CmRepo --> ComSvc : List<CommitteeMember>
   ComSvc --> ComCtrl : List<CommitteeMemberResponseDTO>
   ComCtrl --> Form : 200 List<CommitteeMemberResponseDTO>
-  Form --> U : "CONVIDADOS (n de m)" com todos marcados e o presidente fixo, com a etiqueta "Presidente"
-  U -> Form : marcar ou desmarcar integrantes
+  Form --> U : "Convidados: n de m selecionados" e os primeiros nomes, com todos marcados
+  U -> Form : tocar em "Convidados"
+  Form -> Folha : abrir a folha "Convidados"
+  Folha --> U : busca, "Selecionar todos" e cada integrante com a foto ou as iniciais;\no presidente fixo, com a etiqueta "Presidente"
+  U -> Folha : buscar, marcar ou desmarcar e tocar em "Concluir (n)"
+  Folha --> Form : onDone(draft)
 end
 
 group Gravar os convidados (no envio do formulário, RF25 ou RF26)
-  Form -> Filtro : POST /api/committees/{committeeId}/meetings ou PUT /api/meetings/{meetingId}\n(invitedUserIds no MeetingRequestDTO)
-  Filtro -> Ctrl : createMeeting(...) ou updateMeeting(...)
-  Ctrl -> Svc : createMeeting(...) ou updateMeeting(...)
+  Form -> Tela : onSubmit(payload)
+  note right of Form : payload representa o objeto MeetingPayload do callback, com invitedUserIds no body
+  alt agendamento
+    Tela -> Filtro : POST /api/committees/{committeeId}/meetings (MeetingRequestDTO)
+    Filtro -> Ctrl : createMeeting(committeeId, dto, auth)
+    Ctrl -> Svc : createMeeting(committeeId, email, dto)
+    Svc -> Svc : resolveInvitees(committeeId, president, dto.getInvitedUserIds())
+  else edição
+    Tela -> Filtro : PUT /api/meetings/{meetingId} (MeetingRequestDTO)
+    Filtro -> Ctrl : updateMeeting(meetingId, dto, auth)
+    Ctrl -> Svc : updateMeeting(meetingId, email, dto)
+    opt dto.invitedUserIds informado
+      Svc -> Svc : resolveInvitees(meeting.getCommittee().getId(), president, dto.getInvitedUserIds())
+    end
+  end
   activate Svc
-  Svc -> Svc : resolveInvitees(committeeId, president, invitedUserIds)
-  Svc -> CmRepo : findByCommitteeIdAndStatus(committeeId, ACTIVE)
-  CmRepo --> Svc : integrantes ativos
-  alt invitedUserIds ausente
-    note right of Svc : todos os integrantes ativos são convidados
-  else todos os ids são de integrantes ativos
-    note right of Svc : convidados = ids informados + o presidente
-  else algum id não é de integrante ativo
+  opt agendamento ou edição com dto.invitedUserIds informado
+    Svc -> CmRepo : findByCommitteeIdAndStatus(committeeId, CommitteeMembershipStatus.ACTIVE)
+    CmRepo --> Svc : integrantes ativos
+    note right of Svc : no agendamento, invitedUserIds ausente convida todos os ativos;\nquando informado, escolhe apenas IDs ativos e acrescenta o presidente.\nNa edição, campo ausente preserva a lista, sem chamar resolveInvitees.
+  end
+  alt algum ID informado não é de integrante ativo
     Svc --> Ctrl : IllegalStateException
     Ctrl --> Handler : exceção propagada
-    Handler --> Form : 409 "Só integrantes ativos da comissão podem ser convidados."
+    Handler --> Tela : 409 "Só integrantes ativos da comissão podem ser convidados."
+    Tela --> Form : error
+  else seleção válida
+    alt agendamento (RF25)
+      Svc -> Svc : invite(saved, invitees.values(), Set.of(president.getId()), now)
+      Svc -> PartRepo : saveAll(participants)
+      note right of PartRepo : participants contém um MeetingParticipant por convidado, response PENDING;\no presidente entra ACCEPTED. Na série, o conjunto presidents define os aceites iniciais.
+    else edição com dto.invitedUserIds informado (RF26)
+      Svc -> Svc : syncInvitees(meeting, invitees)
+      Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meeting.getId())
+      PartRepo --> Svc : participantes atuais
+      break removed contém alguém com entrada registrada
+        Svc --> Ctrl : IllegalStateException
+        Ctrl --> Handler : exceção propagada
+        Handler --> Tela : 409 {message}
+        note right of Svc : a transação é desfeita; nenhum convite é retirado
+      end
+      Svc -> PartRepo : deleteAll(removed)
+      Svc -> PartRepo : saveAll(added.stream().map(u -> new MeetingParticipant(meeting, u)).toList())
+      note right of Svc : removed contém os retirados, que não podem ter entrada registrada.\nadded contém User dos novos convidados, com response inicial PENDING;\nquem continua mantém a resposta e o comentário.
+    end
+    Svc --> Ctrl : MeetingResponseDTO (totalInvited, totalAccepted, totalDeclined, totalPending)
+    Ctrl --> Tela : 201 ou 200 MeetingResponseDTO
   end
-  alt agendamento (RF25)
-    Svc -> PartRepo : saveAll(um MeetingParticipant por convidado)
-    note right of PartRepo : response = PENDING; o presidente já entra como ACCEPTED
-  else edição (RF26)
-    Svc -> Svc : syncInvitees(meeting, invitees)
-    Svc -> PartRepo : findByMeetingIdOrderByUserNameAsc(meetingId)
-    PartRepo --> Svc : participantes atuais
-    Svc -> PartRepo : deleteAll(quem saiu da lista)
-    Svc -> PartRepo : saveAll(novos convidados com response = PENDING)
-    note right of Svc : quem continua convidado mantém a resposta e o comentário
-  end
-  Svc --> Ctrl : MeetingResponseDTO (totalInvited, totalAccepted, totalDeclined, totalPending)
   deactivate Svc
-  Ctrl --> Form : 201 ou 200 MeetingResponseDTO
 end
 @enduml

@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário\n(convidado)" as U
@@ -18,54 +19,80 @@ participant ":JwtAuthFilter" as Filtro
 participant ":MeetingInvitationController" as Ctrl
 participant ":MeetingInvitationService" as Svc
 participant ":MeetingAccess" as Acc
+participant ":Meeting" as Meeting
 participant ":CommitteeMemberRepository" as CmRepo
 participant ":MeetingParticipantRepository" as PartRepo
 participant ":AuditLogRepository" as AuditRepo
+participant ":MeetingText" as Txt
+participant ":EmailService" as Mail
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : user e action são os parâmetros recebidos por MeetingAccess.audit;\ndetails representa simbolicamente o texto formado com reunião, comissão e extra.
 
+note over Acoes : cartão "Seu convite"; numa série, "Sua resposta vale só para esta data";\nos convites sem resposta também estão em "Convites para responder" (RF28)
 U -> Acoes : abrir o detalhe da reunião e tocar em "Aceitar", ou em "Recusar"
-opt recusa
-  Acoes --> U : campo "Motivo (opcional)", até 200 caracteres
+alt aceitar
+  Acoes -> Tela : onAccept()
+else recusar
+  Acoes --> U : campo "Motivo (opcional)" na largura do cartão, com o contador "n/200";\nao abrir o teclado, a folha rola até o campo
   U -> Acoes : informar o motivo e tocar em "Confirmar recusa"
+  Acoes -> Tela : onDecline(comment)
 end
-Acoes -> Tela : onAccept() ou onDecline(comment)
 Tela -> Filtro : POST /api/meetings/{meetingId}/respond?accept=true|false (MeetingAnswerDTO)
-Filtro -> Ctrl : respond(meetingId, accept, answer, auth)
 alt comentário com mais de 200 caracteres (@Valid)
-  Ctrl --> Handler : MethodArgumentNotValidException
+  note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+  note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
   Handler --> Tela : 400 {message, errors}
 else corpo válido ou ausente
+  Filtro -> Ctrl : respond(meetingId, accept, answer, auth)
   Ctrl -> Svc : respond(meetingId, email, accept, comment)
   activate Svc
   Svc -> Acc : findMeeting(meetingId)
   Acc --> Svc : Meeting
   Svc -> Acc : findUser(email)
   Acc --> Svc : User
-  Svc -> Acc : requireActiveMember(user, committee)
-  Acc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  Svc -> Acc : requireActiveMember(user, meeting.getCommittee())
+  Acc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committee.getId())
+  note right of Acc : committee é o parâmetro recebido na conferência de vínculo ativo
   CmRepo --> Acc : CommitteeMember (ACTIVE)
   Acc --> Svc : void
-  Svc -> Svc : statusAt(now) não pode ser CANCELED nem ENDED
-  Svc -> PartRepo : findForUpdate(meetingId, userId)
+  Svc -> Meeting : statusAt(now)
+  Meeting --> Svc : MeetingStatus
+  note right of Svc : não aceita CANCELED nem ENDED
+  Svc -> PartRepo : findForUpdate(meetingId, user.getId())
   PartRepo --> Svc : MeetingParticipant (linha bloqueada)
+  note right of Svc : newRefusal é verdadeiro quando accept é false e a resposta anterior não era DECLINED
   alt integrante ativo, convidado e reunião ainda aberta
-    Svc -> PartRepo : save(participant com response, responseComment e respondedAt)
-    note right of PartRepo : o comentário só é guardado na recusa
-    Svc -> Acc : audit(user, "MEETING_INVITATION_ANSWERED", meeting, " | Resposta: ...")
-    Acc -> AuditRepo : save(AuditLog)
+    note right of Svc : participant recebe response, responseComment e respondedAt atual;\no comentário só é guardado na recusa
+    Svc -> PartRepo : save(participant)
+    Svc -> Acc : audit(user, "MEETING_INVITATION_ANSWERED", meeting, " | Resposta: " + participant.getResponse())
+    Acc -> AuditRepo : save(new AuditLog(user, action, details))
+    opt newRefusal
+      Svc -> Acc : president(meeting.getCommittee())
+      Acc -> CmRepo : findByCommitteeIdAndRole(committee.getId(), CommitteeRole.COMMITTEE_ADMIN)
+      CmRepo --> Acc : List<CommitteeMember>
+      Acc --> Svc : Optional<User> (presidente ativo)
+      opt há presidente e não foi ele quem recusou
+        Svc -> Txt : mail(meeting, MeetingService.appLink(meeting.getId()))
+        Txt --> Svc : MeetingText.Mail
+        Svc -> Mail : sendInvitationDeclinedEmail(president.getEmail(), president.getName(), mail, user.getName(), participant.getResponseComment())
+        note right of Mail : e-mail "Convite recusado: título da reunião", com quem recusou,\na data, o horário, o motivo e o botão "Abrir no SpotMeet";\nenvio assíncrono, depois do commit
+      end
+    end
     Svc -> Acc : detail(meeting, user, now)
     Acc --> Svc : MeetingResponseDTO
     Svc --> Ctrl : MeetingResponseDTO
     Ctrl --> Tela : 200 MeetingResponseDTO
     Tela --> U : aviso "Presença confirmada." ou "Recusa enviada." e detalhe atualizado
-    Tela -> Tela : broadcastSync("MEETINGS_MUTATED") e load()
+    Tela -> Tela : load()
+    note right of Tela : notifica a sincronização de reuniões e recarrega a lista
   else não é integrante ativo, não foi convidado ou a reunião não aceita respostas
-    Svc --> Ctrl : SecurityException ou IllegalStateException
+    Svc --> Ctrl : SecurityException, IllegalStateException ou IllegalArgumentException
     Ctrl --> Handler : exceção propagada
     Handler --> Tela : 403 ou 409 {message}
     Tela --> U : exibe a mensagem de erro
   end
   deactivate Svc
 end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
 @enduml

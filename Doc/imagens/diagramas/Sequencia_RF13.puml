@@ -11,6 +11,7 @@ autonumber "<b>0"
 actor "Usuário\n(líder da organização)" as U
 box "Aplicativo (SpotMeetApp)" #F4F6FF
 participant ":OrganizationScreen" as Tela
+participant ":alerts" as Alerts
 participant ":ConfirmationHost" as Conf
 end box
 box "API (backend)" #F6FFF4
@@ -25,27 +26,28 @@ participant ":CommitteeMemberRepository" as CmRepo
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom a comissão e o ID da pessoa removida; não é uma variável local.
 
 group Consultar as comissões de um integrante
   U -> Tela : tocar em "Membros", no integrante e em "Comissões do integrante"
-  Tela -> Tela : loadMemberLinks(userId)
+  Tela -> Tela : loadMemberLinks(memberId)
   Tela -> Filtro : GET /api/organizations/{organizationId}/members/{userId}/committees
   Filtro -> Ctrl : listUserCommitteeLinks(organizationId, userId, auth)
   Ctrl -> Svc : listUserCommitteeLinks(organizationId, userId, email)
   activate Svc
-  Svc -> UserRepo : findByEmail(email)
+  Svc -> UserRepo : findByEmail(executorEmail)
   UserRepo --> Svc : User (quem consulta)
-  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(executorId, organizationId)
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(executor.getId(), organizationId)
   OrgMemRepo --> Svc : boolean
-  Svc -> UserRepo : findById(userId)
+  Svc -> UserRepo : findById(targetUserId)
   UserRepo --> Svc : User (integrante consultado)
-  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(target.getId(), organizationId)
   OrgMemRepo --> Svc : boolean
   alt quem consulta e o consultado pertencem à organização
     Svc -> ComRepo : findByOrganizationIdOrderByNameAsc(organizationId)
     ComRepo --> Svc : List<Committee>
-    loop cada comissão da organização
-      Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+    loop cada comissão c da organização
+      Svc -> CmRepo : findByUserIdAndCommitteeId(target.getId(), c.getId())
       CmRepo --> Svc : Optional<CommitteeMember>
     end
     Svc --> Ctrl : List<UserCommitteeLinkDTO>
@@ -62,32 +64,32 @@ end
 
 group Remover o vínculo do integrante com a comissão
   U -> Tela : tocar em "Remover vínculo" (vínculo ativo ou convite aguardando aceite)
-  Tela -> Conf : confirmAction("Remover vínculo", "Remover o vínculo de <integrante> com <comissão>?", "Remover")
+  Tela -> Alerts : confirmAction(title, message, execute, label, destructive, finish)
+  note over Alerts, Conf : utilitário alerts encaminha a configuração ao ConfirmationHost;\ntítulo "Remover vínculo", label "Remover", destructive true;\nexecute e finish são callbacks definidos na tela
   Conf --> U : exibe o diálogo com "Cancelar" e "Remover"
   U -> Conf : tocar em "Remover"
-  Conf -> Tela : executa a ação confirmada
-  Tela -> Tela : mutate("/committees/{committeeId}/members/{userId}", "DELETE")
+  Conf -> Tela : execute()
   Tela -> Filtro : DELETE /api/committees/{committeeId}/members/{userId}
   Filtro -> Ctrl : removeUserFromCommittee(committeeId, userId, auth)
   Ctrl -> Svc : removeUserFromCommittee(committeeId, userId, email)
   activate Svc
   Svc -> ComRepo : findById(committeeId)
   ComRepo --> Svc : Committee
-  Svc -> UserRepo : findByEmail(email)
+  Svc -> UserRepo : findByEmail(leaderEmail)
   UserRepo --> Svc : User (líder)
-  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+  Svc -> Svc : requireOrganizationLeader(leader, committee.getOrganization().getId())
   Svc -> OrgRepo : findById(organizationId)
   OrgRepo --> Svc : Organization
-  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leader.getId(), organizationId)
   OrgMemRepo --> Svc : Optional<OrganizationMember>
-  Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  Svc -> CmRepo : findByUserIdAndCommitteeId(targetUserId, committeeId)
   CmRepo --> Svc : Optional<CommitteeMember>
   alt é dono, vice ou subdono e o vínculo existe
-    Svc -> CmRepo : delete(CommitteeMember)
-    Svc -> AuditRepo : save(AuditLog COMMITTEE_MEMBER_REMOVED)
+    Svc -> CmRepo : delete(cm)
+    Svc -> AuditRepo : save(new AuditLog(leader, "COMMITTEE_MEMBER_REMOVED", details))
     Svc --> Ctrl : void
-    Ctrl --> Tela : 200 "Acesso a comissao revogado com sucesso."
-    Tela --> U : aviso "Sucesso": "Vínculo removido." e a janela atualizada ("Convidar para <comissão>")
+    Ctrl --> Tela : 200 "Acesso à comissão revogado com sucesso."
+    Tela --> U : aviso "Sucesso": "Vínculo removido." e a janela atualizada ("Sem vínculo"; o convite é feito em "Comissões", RF11)
   else alguma regra violada
     Svc --> Ctrl : SecurityException ou IllegalArgumentException
     Ctrl --> Handler : exceção propagada
@@ -96,4 +98,7 @@ group Remover o vínculo do integrante com a comissão
   end
   deactivate Svc
 end
+note over Svc : As validações são sequenciais: a primeira falha encerra a operação.\nAs chamadas seguintes só ocorrem se as anteriores forem aprovadas.
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
+note over U : confirmAction usa requestConfirmation do módulo utils/confirmation.\nConfirmationHost apresenta o pedido e executa o callback onConfirm após a confirmação.
 @enduml

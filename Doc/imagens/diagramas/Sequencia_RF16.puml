@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 280
 autonumber "<b>0"
 
 actor "Usuário" as U
@@ -16,6 +17,8 @@ participant ":ProfilePhotoEditor" as Editor
 participant ":ProfilePhotoContext" as FotoCtx
 participant ":profilePhotoPicker" as Picker
 participant ":BiometricContext" as Bio
+participant ":OrganizationScreen" as Org
+participant ":UserAvatar" as Avatar
 end box
 box "API (backend)" #F6FFF4
 participant ":JwtAuthFilter" as Filtro
@@ -29,7 +32,8 @@ participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
 
-note over Tela, Editor : A disponibilidade (Presente, Ausente, Ocupado) é gravada por "Salvar preferências",\ncom o mesmo PUT /api/users/me do RF17 (ver a sequência do RF17).
+note over Tela, Editor : A disponibilidade (Presente, Ausente, Ocupado) fica no próprio menu de "Ajustes",\nno grupo "STATUS DE PRESENÇA", e é gravada no toque, sem botão de salvar (grupo "Alterar a disponibilidade").\nO tema fica no Perfil e é gravado com "Salvar Alterações" (ver a sequência do RF17).
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog\ncom a descrição da alteração de perfil; não é uma variável local.
 
 group Consultar o perfil
   U -> Tela : abrir a aba "Ajustes" (exibe "Carregando perfil...")
@@ -40,81 +44,116 @@ group Consultar o perfil
   Repo --> Svc : Optional<User>
   Svc --> Ctrl : UserProfileResponseDTO (fromEntity)
   Ctrl --> Tela : 200 UserProfileResponseDTO
-  Tela --> U : preenche "Nome completo", "Biografia (opcional)" e "E-mail" (somente leitura)
-  note over Editor, FotoCtx : Ao receber o foco, ProfilePhotoEditor chama ProfilePhotoContext.refresh():\nGET /api/users/me/photo, ProfilePhotoController.get, ProfilePhotoService.get\ne UserProfilePhotoRepository.findByUserId. Sem foto, exibe o avatar com a inicial do nome.
+  Tela --> U : exibe o menu com o cartão (foto, nome e e-mail) e o status marcado em "STATUS DE PRESENÇA"\ne preenche no Perfil "Nome completo", "Biografia (opcional)", "E-mail" (somente leitura) e o tema
+  note over Editor, FotoCtx : Ao abrir a página "Perfil", ProfilePhotoEditor chama ProfilePhotoContext.refresh:\nGET /api/users/me/photo, ProfilePhotoController.get, ProfilePhotoService.get\ne UserProfilePhotoRepository.findByUserId. Sem foto, exibe o avatar com as iniciais do nome.\nNo menu, o cartão usa UserAvatar, com a leitura do grupo "Ver a foto de outra pessoa".
 end
 
 group Alterar nome e biografia
-  U -> Tela : editar "Nome completo" e "Biografia (opcional)"\ne tocar em "Salvar Alterações"
-  note right of Tela : o botão só fica habilitado com alteração ou prévia de foto
+  U -> Tela : no Perfil, editar "Nome completo" e "Biografia (opcional)"\ne tocar em "Salvar Alterações"
+  note right of Tela : o botão só fica habilitado com alteração, tema trocado ou prévia de foto
   alt nome fora de 2 a 100 caracteres ou biografia acima de 500 (validação do aplicativo)
     Tela --> U : exibe o erro sob o campo, sem enviar a requisição
   else dados válidos no aplicativo
-    Tela -> Filtro : PUT /api/users/me (UpdateUserProfileDTO com name e bio)
-    Filtro -> Ctrl : updateMyProfile(dto, authentication)
-    activate Ctrl
-    Ctrl -> Svc : updateMyProfile(email, dto)
-    activate Svc
-    Svc -> Repo : findByEmail(email)
-    Repo --> Svc : Optional<User>
-    Svc -> Repo : save(User com name e bio)
-    Repo --> Svc : User
-    Svc -> AuditRepo : save(AuditLog PROFILE_UPDATED)
-    AuditRepo --> Svc : AuditLog
-    Svc --> Ctrl : UserProfileResponseDTO
-    deactivate Svc
-    alt gravado
+    Tela -> Filtro : PUT /api/users/me (UpdateUserProfileDTO)
+    note right of Tela : corpo com name e bio (e preferredTheme, se o tema foi trocado: RF17)
+    alt nome ou biografia recusados pelo @Valid de UpdateUserProfileDTO
+      note over Ctrl, Handler : O Spring MVC valida o corpo antes do controller;
+      note right of Handler : MethodArgumentNotValidException é tratada pelo handler.
+      Handler --> Tela : 400 {message, errors}
+      Tela --> U : exibe o erro sob "Nome completo" ou "Biografia (opcional)"
+    else corpo válido
+      Filtro -> Ctrl : updateMyProfile(dto, authentication)
+      activate Ctrl
+      Ctrl -> Svc : updateMyProfile(email, dto)
+      activate Svc
+      Svc -> Repo : findByEmail(email)
+      Repo --> Svc : Optional<User>
+      note right of Svc : user recebe o nome e a biografia
+      Svc -> Repo : save(user)
+      Repo --> Svc : User saved
+      Svc -> AuditRepo : save(new AuditLog(saved, "PROFILE_UPDATED", details))
+      AuditRepo --> Svc : AuditLog
+      Svc --> Ctrl : UserProfileResponseDTO
+      deactivate Svc
       Ctrl --> Tela : 200 UserProfileResponseDTO
-      Tela -> Auth : updateSession({name})
+      Tela -> Auth : updateSession({ name: data.name })
       opt há prévia de foto pendente
         Tela -> FotoCtx : save({ quiet: true })
         note right of FotoCtx : mesmo envio do grupo "Adicionar ou trocar a foto"
         FotoCtx --> Tela : true ou false
       end
-      Tela --> U : exibe "Perfil salvo com sucesso.", "Perfil e foto salvos com sucesso."\nou, se a foto falhar, "Os dados do perfil foram salvos, mas a foto não."
-    else nome ou biografia recusados pelo @Valid de UpdateUserProfileDTO
-      Handler --> Tela : 400 {message, errors}
-      Tela --> U : exibe o erro sob "Nome completo" ou "Biografia (opcional)"
+      Tela --> U : exibe "Perfil atualizado: Suas alterações foram salvas."\n(com a foto: "Suas alterações e a foto foram salvas.")\nou, se a foto falhar, "Os dados do perfil foram salvos, mas a foto não."
+      deactivate Ctrl
     end
-    deactivate Ctrl
   end
+end
+
+group Alterar a disponibilidade
+  U -> Tela : no menu, no grupo "STATUS DE PRESENÇA", tocar em "Presente", "Ausente" ou "Ocupado"
+  Tela -> Tela : handleSaveStatus(value)
+  note right of Tela : tocar na opção já marcada não envia nada; durante o envio, as opções\nficam desabilitadas e aparece o indicador "Salvando status"
+  Tela -> Filtro : PUT /api/users/me (UpdateUserProfileDTO)
+  note right of Tela : corpo com availabilityStatus e preferredTheme (o tema salvo, sem mudança)
+  Filtro -> Ctrl : updateMyProfile(dto, authentication)
+  activate Ctrl
+  Ctrl -> Svc : updateMyProfile(email, dto)
+  activate Svc
+  Svc -> Repo : findByEmail(email)
+  Repo --> Svc : Optional<User>
+  note right of Svc : user recebe availabilityStatus em maiúsculas (PRESENT, ONLINE, BUSY ou AWAY);\nvalor desconhecido é ignorado sem erro
+  Svc -> Repo : save(user)
+  Repo --> Svc : User saved
+  Svc -> AuditRepo : save(new AuditLog(saved, "PROFILE_UPDATED", details))
+  AuditRepo --> Svc : AuditLog
+  Svc --> Ctrl : UserProfileResponseDTO
+  deactivate Svc
+  alt gravado
+    Ctrl --> Tela : 200 UserProfileResponseDTO
+    Tela --> U : marca o status salvo e exibe o aviso "Status de presença salvo."
+  else usuário não encontrado ou erro inesperado
+    Ctrl --> Tela : 400 (texto da mensagem) ou 500 "Erro ao atualizar perfil: ..."
+    Tela --> U : mantém a marca no status anterior e exibe, abaixo das opções,\n"Não foi possível salvar o status. Tente novamente."
+  end
+  deactivate Ctrl
 end
 
 group Adicionar ou trocar a foto
   U -> Editor : tocar em "Galeria" (ou "Câmera") e recortar a imagem
   Editor -> FotoCtx : select(source)
   FotoCtx -> Bio : allowExternalScreen()
-  note right of Bio : galeria, câmera e recorte saem do aplicativo;\nessa saída só bloqueia depois de 5 minutos (RF02)
-  FotoCtx -> Picker : pickProfilePhoto(source, isCurrent)
+  Bio --> FotoCtx : endExternalScreen (callback)
+  note right of Bio : galeria, câmera e recorte saem do aplicativo;\nessa saída marcada usa o maior prazo entre o configurado e 5 minutos (RF02)
+  FotoCtx -> Picker : pickProfilePhoto(source, () => current(operation, true))
   Picker --> FotoCtx : DraftPhoto (JPEG quadrado, até 512 px e 1 MB)
-  FotoCtx -> Bio : fim da tela externa
+  note over FotoCtx, Bio : no finally, chama o callback endExternalScreen devolvido por allowExternalScreen
   Editor --> U : exibe a prévia, com "Salvar foto" e "Cancelar foto"
   U -> Editor : tocar em "Salvar foto"
   Editor -> FotoCtx : save()
   FotoCtx -> Filtro : PUT /api/users/me/photo (multipart, parte "photo" com File do expo-file-system)
-  note right of Filtro : Parte acima de 1 MB: MaxUploadSizeExceededException,\ne GlobalExceptionHandler responde 413 {message}
+  note right of FotoCtrl : O serviço limita a foto a 1 MB: excesso dentro do limite multipart devolve 400.\nO multipart permite 10 MB por arquivo e 11 MB por requisição; exceder esse limite\nlança MaxUploadSizeExceededException e oversizedPhoto responde 413 {message}
   Filtro -> FotoCtrl : save(photo, authentication)
   FotoCtrl -> FotoSvc : save(email, photo)
   activate FotoSvc
   note over FotoSvc : transação
   FotoSvc -> Repo : findByEmailForUpdate(email)
   Repo --> FotoSvc : Optional<User>
-  FotoSvc -> FotoSvc : normalizeImage(photo)
+  FotoSvc -> FotoSvc : normalizeImage(file)
   alt JPEG ou PNG quadrado, até 512 px e 1 MB
-    FotoSvc -> FotoRepo : findByUserId(userId)
+    FotoSvc -> FotoRepo : findByUserId(user.getId())
     FotoRepo --> FotoSvc : Optional<UserProfilePhoto>
-    FotoSvc -> FotoRepo : save(UserProfilePhoto com image_data e version)
+    note right of FotoSvc : photo recebe imageData normalizada e version nova
+    FotoSvc -> FotoRepo : save(photo)
     FotoRepo --> FotoSvc : UserProfilePhoto
-    FotoSvc -> AuditRepo : save(AuditLog PROFILE_PHOTO_UPDATED)
+    FotoSvc -> AuditRepo : save(new AuditLog(user, "PROFILE_PHOTO_UPDATED", "Foto de perfil alterada."))
     AuditRepo --> FotoSvc : AuditLog
     FotoSvc --> FotoCtrl : ProfilePhotoResponseDTO
     FotoCtrl --> FotoCtx : 200 ProfilePhotoResponseDTO
-    FotoCtx --> Editor : foto confirmada
+    FotoCtx --> Editor : true
     Editor --> U : exibe a foto salva e o aviso "Foto de perfil salva com sucesso."
   else imagem fora das regras
     FotoSvc --> FotoCtrl : InvalidProfilePhotoException
     FotoCtrl --> FotoCtx : 400 {message}
-    FotoCtx --> Editor : erro
+    FotoCtx --> Editor : false
     Editor --> U : exibe "O servidor não aceitou esta imagem. Escolha outra foto."\n(413: "A foto passou do limite de 1 MB."; rede: "Verifique a conexão e tente novamente.")
   end
   deactivate FotoSvc
@@ -133,33 +172,65 @@ group Remover a foto
   activate FotoSvc
   FotoSvc -> Repo : findByEmailForUpdate(email)
   Repo --> FotoSvc : Optional<User>
-  FotoSvc -> FotoRepo : findByUserId(userId)
+  FotoSvc -> FotoRepo : findByUserId(user.getId())
   FotoRepo --> FotoSvc : Optional<UserProfilePhoto>
   opt o usuário tem foto
-    FotoSvc -> FotoRepo : delete(UserProfilePhoto)
-    FotoSvc -> AuditRepo : save(AuditLog PROFILE_PHOTO_REMOVED)
+    FotoSvc -> FotoRepo : delete(photo)
+    FotoSvc -> AuditRepo : save(new AuditLog(user, "PROFILE_PHOTO_REMOVED", "Foto de perfil removida."))
     AuditRepo --> FotoSvc : AuditLog
   end
   FotoSvc --> FotoCtrl : void
   deactivate FotoSvc
   FotoCtrl --> FotoCtx : 204 sem corpo
-  FotoCtx --> Editor : foto removida
-  Editor --> U : volta ao avatar com a inicial e exibe o aviso "Foto de perfil removida."
+  FotoCtx --> Editor : void
+  Editor --> U : volta ao avatar com as iniciais e exibe o aviso "Foto de perfil removida."
 end
+
 group Sair com alterações não salvas
-  U -> Tela : tocar em outra seção, em outra aba ou no voltar do Android
+  U -> Tela : tocar na seta de voltar ao menu, em outra aba ou no voltar do Android
   Tela -> Tela : askUnsaved(proceed)
   Tela --> U : diálogo "Alterações não salvas" com "Continuar editando", "Descartar" e "Salvar"
-  alt "Salvar"
-    Tela -> Tela : handleSaveProfile() (ou handleSavePreferences(), RF17)
-    note right of Tela : mesmo envio do grupo "Alterar nome e biografia"
-    Tela --> U : segue para a seção ou aba escolhida se a gravação deu certo;\nsenão, continua na seção com a mensagem
+  alt "Salvar" na página Perfil
+    Tela -> Tela : handleSaveProfile()
+    note right of Tela : mesmo envio do grupo "Alterar nome e biografia"; só segue se gravar
   else "Descartar"
+    Tela -> Tela : discardSection(current)
     Tela -> FotoCtx : discard()
-    Tela --> U : volta aos valores gravados e segue
+    Tela --> U : volta aos valores gravados (inclusive o tema) e segue
   else "Continuar editando"
-    Tela --> U : fecha o diálogo e continua na seção
+    Tela --> U : fecha o diálogo e continua na página
   end
-  note over Tela : ao perder o foco, "Ajustes" volta para a seção "Perfil"
+  note over Tela : ao perder o foco, "Ajustes" volta para o menu
+end
+
+group Ver a foto de outra pessoa
+  U -> Org : abrir uma lista de pessoas na aba "Organização"\n(membros, solicitações ou busca de pessoas para convite)
+  Org -> Avatar : UserAvatar({ userId, name, style, textStyle })
+  note right of Avatar : representação da renderização React com um objeto de props
+  Avatar --> U : exibe as iniciais do nome (primeiro e segundo nome)
+  opt foto ainda não guardada no aplicativo (guarda de 1 minuto)
+    Avatar -> Filtro : GET /api/users/{userId}/photo
+    Filtro -> FotoCtrl : getOf(userId, authentication)
+    FotoCtrl -> FotoSvc : getOf(email, userId)
+    FotoSvc -> Repo : findByEmail(email)
+    Repo --> FotoSvc : Optional<User> (e-mail verificado)
+    FotoSvc -> FotoRepo : findByUserId(userId)
+    FotoRepo --> FotoSvc : Optional<UserProfilePhoto>
+    FotoSvc --> FotoCtrl : ProfilePhotoResponseDTO
+    FotoCtrl --> Avatar : 200 ProfilePhotoResponseDTO
+  end
+  alt a pessoa tem foto
+    Avatar --> U : cobre as iniciais com a foto
+  else sem foto, erro ou sem resposta em 15 segundos
+    Avatar --> U : as iniciais continuam
+  end
+  note over FotoCtrl : só leitura: PUT e DELETE em /api/users/{userId}/photo respondem 405
+end
+
+group Ver o status de outra pessoa
+  U -> Org : na aba "Gerenciar", tocar em "Membros"
+  note right of Org : a lista vem de GET /api/organizations/{organizationId}/members (sequência do RF05);\ncada MemberDTO traz availabilityStatus (nulo no banco vira PRESENT)
+  Org -> Org : presenceOf(member)
+  Org --> U : abaixo do e-mail de cada integrante, bolinha e texto: "Presente" (verde),\n"Ausente" (amarela) ou "Ocupado" (vermelha); ONLINE ou sem valor aparece como "Presente"
 end
 @enduml

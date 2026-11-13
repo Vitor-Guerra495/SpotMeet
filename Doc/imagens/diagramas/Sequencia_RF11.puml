@@ -6,6 +6,7 @@ end title
 hide footbox
 skinparam sequenceMessageAlign left
 skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 260
 autonumber "<b>0"
 
 actor "Usuário" as U
@@ -21,49 +22,87 @@ participant ":OrganizationRepository" as OrgRepo
 participant ":OrganizationMemberRepository" as OrgMemRepo
 participant ":CommitteeRepository" as ComRepo
 participant ":CommitteeMemberRepository" as CmRepo
+participant ":EmailService" as Mail
 participant ":AuditLogRepository" as AuditRepo
 participant ":GlobalExceptionHandler" as Handler
 end box
+note over AuditRepo : details representa simbolicamente o parâmetro textual de AuditLog,\ncom a comissão, organização e pessoa envolvida; não é uma variável local.
+
+group Listar quem pode ser convidado (dono, vice ou subdono)
+  U -> Tela : tocar em "Comissões" e, no cartão da comissão, em "Convidar integrantes"
+  Tela -> Filtro : GET /api/committees/{committeeId}/invitations/candidates
+  Filtro -> Ctrl : listInviteCandidates(committeeId, auth)
+  Ctrl -> Svc : listInviteCandidates(committeeId, email)
+  activate Svc
+  Svc -> ComRepo : findById(committeeId)
+  ComRepo --> Svc : Committee
+  Svc -> UserRepo : findByEmail(leaderEmail)
+  UserRepo --> Svc : User (líder)
+  Svc -> Svc : requireOrganizationLeader(leader, committee.getOrganization().getId())
+  Svc -> OrgRepo : findById(organizationId)
+  OrgRepo --> Svc : Organization
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leader.getId(), organizationId)
+  OrgMemRepo --> Svc : Optional<OrganizationMember>
+  alt é líder da organização
+    Svc -> CmRepo : findByCommitteeId(committeeId)
+    CmRepo --> Svc : List<CommitteeMember>
+    Svc -> OrgMemRepo : findByOrganizationId(committee.getOrganization().getId())
+    OrgMemRepo --> Svc : List<OrganizationMember>
+    note right of Svc : ficam os integrantes sem vínculo ou com vínculo DECLINED, em ordem de nome
+    Svc --> Ctrl : List<InviteCandidateDTO>
+    Ctrl --> Tela : 200 List<InviteCandidateDTO>
+    Tela --> U : janela "Convidar para <comissão>" com "Buscar integrante" e o botão "Convidar" em cada pessoa
+  else não é líder ou a comissão não existe
+    Svc --> Ctrl : SecurityException ou IllegalArgumentException
+    Ctrl --> Handler : exceção propagada
+    Handler --> Tela : 403 (não é líder) ou 409 (comissão não encontrada) {message}
+    Tela --> U : "Não foi possível buscar os integrantes." ou a mensagem recebida
+  end
+  deactivate Svc
+end
 
 group Convidar integrante (dono, vice ou subdono)
-  U -> Tela : tocar em "Membros", no integrante, em "Comissões do integrante" e em "Convidar para <comissão>"
-  Tela -> Tela : mutate("/committees/{committeeId}/members/{userId}", "POST")
+  U -> Tela : tocar em "Convidar" ao lado da pessoa, na janela "Convidar para <comissão>"
   Tela -> Filtro : POST /api/committees/{committeeId}/members/{userId}
   Filtro -> Ctrl : addUserToCommittee(committeeId, userId, auth)
   Ctrl -> Svc : addUserToCommittee(committeeId, userId, email)
   activate Svc
   Svc -> ComRepo : findById(committeeId)
   ComRepo --> Svc : Committee
-  Svc -> UserRepo : findByEmail(email)
+  Svc -> UserRepo : findByEmail(leaderEmail)
   UserRepo --> Svc : User (líder)
-  Svc -> Svc : requireOrganizationLeader(leader, organizationId)
+  Svc -> Svc : requireOrganizationLeader(leader, committee.getOrganization().getId())
   Svc -> OrgRepo : findById(organizationId)
   OrgRepo --> Svc : Organization
-  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leaderId, organizationId)
+  Svc -> OrgMemRepo : findByUserIdAndOrganizationId(leader.getId(), organizationId)
   OrgMemRepo --> Svc : Optional<OrganizationMember>
-  Svc -> UserRepo : findById(userId)
+  Svc -> UserRepo : findById(targetUserId)
   UserRepo --> Svc : User (convidado)
-  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(userId, organizationId)
+  Svc -> OrgMemRepo : existsByUserIdAndOrganizationId(target.getId(), committee.getOrganization().getId())
   OrgMemRepo --> Svc : boolean
-  Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  Svc -> CmRepo : findByUserIdAndCommitteeId(target.getId(), committeeId)
   CmRepo --> Svc : Optional<CommitteeMember>
   alt é líder, o convidado é integrante da organização e não está ativo nem com convite pendente
     note over Svc
-      sem vínculo: cria PENDING_USER_ACCEPTANCE, papel MEMBER, invitedBy = líder
-      DECLINED: reabre como PENDING_USER_ACCEPTANCE
-      PENDING_LEADER_APPROVAL: passa direto para ACTIVE
+      cm novo: PENDING_USER_ACCEPTANCE, papel MEMBER, invitedBy = líder
+      cm DECLINED: reabre como PENDING_USER_ACCEPTANCE
+      cm PENDING_LEADER_APPROVAL: passa direto para ACTIVE
     end note
-    Svc -> CmRepo : save(CommitteeMember)
-    CmRepo --> Svc : CommitteeMember
-    Svc -> AuditRepo : save(AuditLog COMMITTEE_INVITATION_SENT)
+    Svc -> CmRepo : save(cm)
+    CmRepo --> Svc : CommitteeMember saved
+    Svc -> AuditRepo : save(new AuditLog(leader, "COMMITTEE_INVITATION_SENT", details))
+    opt saved.status é PENDING_USER_ACCEPTANCE
+      Svc -> Mail : sendCommitteeInvitationEmail(target.getEmail(), target.getName(), committee.getOrganization().getName(), committee.getName(), leader.getName())
+      note right of Mail : envio assíncrono, depois do commit
+    end
     Svc --> Ctrl : CommitteeMemberResponseDTO
     Ctrl --> Tela : 201 CommitteeMemberResponseDTO
-    Tela --> U : aviso "Sucesso": "Convite enviado. Aguarde o aceite do integrante." (ou "Integrante aprovado após seu pedido de ingresso." se status ACTIVE)
+    Tela --> U : aviso "Sucesso": "Convite enviado. Aguarde o aceite do integrante." (ou "Integrante aprovado após seu pedido de ingresso." se status ACTIVE); a lista é lida de novo e a pessoa sai dela
   else alguma regra violada
     Svc --> Ctrl : SecurityException ou IllegalArgumentException ou IllegalStateException
     Ctrl --> Handler : exceção propagada
     Handler --> Tela : 403 (não é líder) ou 409 (comissão ou usuário não encontrado, não é integrante, já ativo ou convite pendente) {message}
-    Tela --> U : exibe a mensagem na janela "Comissões do integrante"
+    Tela --> U : exibe a mensagem na janela "Convidar para <comissão>"
   end
   deactivate Svc
 end
@@ -75,9 +114,9 @@ group Consultar convites pendentes (convidado)
   Filtro -> Ctrl : listMyInvitations(auth)
   Ctrl -> Svc : listMyInvitations(email)
   activate Svc
-  Svc -> UserRepo : findByEmail(email)
+  Svc -> UserRepo : findByEmail(userEmail)
   UserRepo --> Svc : User
-  Svc -> CmRepo : findByUserIdAndStatus(userId, PENDING_USER_ACCEPTANCE)
+  Svc -> CmRepo : findByUserIdAndStatus(user.getId(), CommitteeMembershipStatus.PENDING_USER_ACCEPTANCE)
   CmRepo --> Svc : List<CommitteeMember>
   Svc --> Ctrl : List<CommitteeMemberResponseDTO>
   deactivate Svc
@@ -87,22 +126,22 @@ end
 
 group Aceitar ou recusar convite (convidado)
   U -> Tela : tocar em "Aceitar" ou "Recusar" no convite da comissão
-  Tela -> Tela : mutate("/committees/{committeeId}/invitations/respond?accept={true ou false}", "POST")
-  Tela -> Filtro : POST /api/committees/{committeeId}/invitations/respond?accept={true ou false}
+  Tela -> Filtro : POST /api/committees/{committeeId}/invitations/respond?accept={true|false}
   Filtro -> Ctrl : respondInvitation(committeeId, accept, auth)
   Ctrl -> Svc : respondInvitation(committeeId, email, accept)
   activate Svc
-  Svc -> UserRepo : findByEmail(email)
+  Svc -> UserRepo : findByEmail(userEmail)
   UserRepo --> Svc : User
-  Svc -> CmRepo : findByUserIdAndCommitteeId(userId, committeeId)
+  Svc -> CmRepo : findByUserIdAndCommitteeId(user.getId(), committeeId)
   CmRepo --> Svc : Optional<CommitteeMember>
   alt o convite existe e está em PENDING_USER_ACCEPTANCE
     alt accept = true
-      Svc -> AuditRepo : save(AuditLog COMMITTEE_INVITATION_ACCEPTED)
+      Svc -> AuditRepo : save(new AuditLog(user, "COMMITTEE_INVITATION_ACCEPTED", details))
     else accept = false
-      Svc -> AuditRepo : save(AuditLog COMMITTEE_INVITATION_DECLINED)
+      Svc -> AuditRepo : save(new AuditLog(user, "COMMITTEE_INVITATION_DECLINED", details))
     end
-    Svc -> CmRepo : save(CommitteeMember com status ACTIVE ou DECLINED e responded_at)
+    note right of Svc : cm recebe ACTIVE ou DECLINED e respondedAt atual
+    Svc -> CmRepo : save(cm)
     CmRepo --> Svc : CommitteeMember
     Svc --> Ctrl : CommitteeMemberResponseDTO
     Ctrl --> Tela : 200 CommitteeMemberResponseDTO
@@ -115,4 +154,5 @@ group Aceitar ou recusar convite (convidado)
   end
   deactivate Svc
 end
+note over Svc : Nas consultas que devolvem Optional, o retorno com o nome da entidade\nrepresenta o valor extraído no sucesso; a ausência segue o ramo de erro indicado.
 @enduml
